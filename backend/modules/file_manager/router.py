@@ -285,3 +285,197 @@ async def move_item(req: MoveRequest, user: Dict[str, Any] = Depends(get_current
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CopyRequest(BaseModel):
+    source_paths: List[str]
+    target_dir: str
+
+class MoveMultipleRequest(BaseModel):
+    source_paths: List[str]
+    target_dir: str
+
+class DeleteMultipleRequest(BaseModel):
+    paths: List[str]
+
+class ZipRequest(BaseModel):
+    paths: List[str]
+    archive_path: str
+
+class ExtractRequest(BaseModel):
+    archive_path: str
+    target_dir: str
+
+class ChmodRequest(BaseModel):
+    paths: List[str]
+    mode: str
+
+
+@router.post("/copy")
+async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Copy files and directories to target directory."""
+    try:
+        target_dir = check_safe_path(req.target_dir, user)
+        if not os.path.exists(target_dir):
+            raise HTTPException(status_code=404, detail="Target directory does not exist.")
+        if not os.path.isdir(target_dir):
+            raise HTTPException(status_code=400, detail="Target path is not a directory.")
+
+        for p in req.source_paths:
+            source_path = check_safe_path(p, user)
+            if not os.path.exists(source_path):
+                raise HTTPException(status_code=404, detail=f"Source path not found: {p}")
+            
+            base_name = os.path.basename(source_path)
+            dest = os.path.join(target_dir, base_name)
+            if os.path.exists(dest):
+                dest = os.path.join(target_dir, f"copy_of_{base_name}")
+            
+            if os.path.isdir(source_path):
+                shutil.copytree(source_path, dest)
+            else:
+                shutil.copy2(source_path, dest)
+
+        return {"status": "success", "message": "Items copied successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/move-multiple")
+async def move_multiple_items(req: MoveMultipleRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Move multiple files or directories to target directory."""
+    try:
+        target_dir = check_safe_path(req.target_dir, user)
+        if not os.path.exists(target_dir):
+            raise HTTPException(status_code=404, detail="Target directory does not exist.")
+        if not os.path.isdir(target_dir):
+            raise HTTPException(status_code=400, detail="Target path is not a directory.")
+
+        for p in req.source_paths:
+            source_path = check_safe_path(p, user)
+            if not os.path.exists(source_path):
+                continue
+            
+            base_name = os.path.basename(source_path)
+            dest = os.path.join(target_dir, base_name)
+            if os.path.exists(dest):
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                else:
+                    os.remove(dest)
+            
+            shutil.move(source_path, dest)
+
+        return {"status": "success", "message": "Items moved successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/delete-multiple")
+async def delete_multiple_items(req: DeleteMultipleRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Delete multiple files or directories."""
+    try:
+        for p in req.paths:
+            target_path = check_safe_path(p, user)
+            if not os.path.exists(target_path):
+                continue
+
+            if os.path.isdir(target_path):
+                shutil.rmtree(target_path)
+            else:
+                os.remove(target_path)
+
+        return {"status": "success", "message": "Items deleted successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/zip")
+async def zip_items(req: ZipRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Compress files/folders into a zip archive."""
+    try:
+        import zipfile
+        archive_path = check_safe_path(req.archive_path, user)
+        
+        if not archive_path.endswith('.zip'):
+            archive_path += '.zip'
+            
+        with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for p in req.paths:
+                abs_p = check_safe_path(p, user)
+                if not os.path.exists(abs_p):
+                    continue
+                
+                if os.path.isdir(abs_p):
+                    for root, dirs, files in os.walk(abs_p):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(file_path, os.path.dirname(abs_p))
+                            zip_file.write(file_path, rel_path)
+                else:
+                    zip_file.write(abs_p, os.path.basename(abs_p))
+
+        return {"status": "success", "message": "Items compressed successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/extract")
+async def extract_item(req: ExtractRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Extract a zip archive to the target directory."""
+    try:
+        import zipfile
+        archive_path = check_safe_path(req.archive_path, user)
+        target_dir = check_safe_path(req.target_dir, user)
+        
+        if not os.path.exists(archive_path):
+            raise HTTPException(status_code=404, detail="Archive file not found.")
+        if not zipfile.is_zipfile(archive_path):
+            raise HTTPException(status_code=400, detail="Path is not a valid zip file.")
+            
+        os.makedirs(target_dir, exist_ok=True)
+        with zipfile.ZipFile(archive_path, 'r') as zip_file:
+            zip_file.extractall(target_dir)
+
+        return {"status": "success", "message": "Archive extracted successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chmod")
+async def chmod_items(req: ChmodRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Change item permissions."""
+    try:
+        mode_str = req.mode
+        if not mode_str:
+            mode_str = "755"
+        
+        try:
+            mode_int = int(mode_str, 8)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid octal mode string.")
+
+        for p in req.paths:
+            abs_p = check_safe_path(p, user)
+            if os.path.exists(abs_p):
+                try:
+                    os.chmod(abs_p, mode_int)
+                except Exception:
+                    pass
+
+        return {"status": "success", "message": "Permissions updated successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

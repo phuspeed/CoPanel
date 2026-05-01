@@ -27,8 +27,17 @@ export default function FileManagerDashboard() {
   const [renamingItem, setRenamingItem] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState<string>('');
 
-  // Cut/Copy (Move) state
-  const [clipboardPath, setClipboardPath] = useState<string | null>(null);
+  // Multi-Selection Checkboxes & Clipboard
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<{ paths: string[]; action: 'cut' | 'copy' } | null>(null);
+
+  // Additional action modals
+  const [zipModalOpen, setZipModalOpen] = useState<boolean>(false);
+  const [zipArchiveName, setZipArchiveName] = useState<string>('');
+  const [extractModalOpen, setExtractModalOpen] = useState<boolean>(false);
+  const [extractTargetDir, setExtractTargetDir] = useState<string>('');
+  const [chmodModalOpen, setChmodModalOpen] = useState<boolean>(false);
+  const [chmodValue, setChmodValue] = useState<string>('755');
 
   // Get token helper
   const getAuthHeader = (): Record<string, string> => {
@@ -52,6 +61,7 @@ export default function FileManagerDashboard() {
       const data = await response.json();
       setCurrentPath(data.path || '');
       setFiles(data.files || []);
+      setSelectedPaths([]); // Clear selections upon navigation
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -70,12 +80,28 @@ export default function FileManagerDashboard() {
 
   const handleGoUp = () => {
     if (!currentPath) return;
-    // Strip trailing slashes and split by path separator
     const norm = currentPath.replace(/[\\/]+$/, '');
     const parts = norm.split(/[\\/]/);
     parts.pop();
     const upPath = parts.join('/') || '/';
     fetchPath(upPath);
+  };
+
+  // Checkbox management
+  const handleToggleSelect = (path: string) => {
+    if (selectedPaths.includes(path)) {
+      setSelectedPaths(selectedPaths.filter((p) => p !== path));
+    } else {
+      setSelectedPaths([...selectedPaths, path]);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedPaths.length === files.length && files.length > 0) {
+      setSelectedPaths([]);
+    } else {
+      setSelectedPaths(files.map((f) => f.path));
+    }
   };
 
   // 📝 Open File Editor
@@ -171,55 +197,157 @@ export default function FileManagerDashboard() {
     }
   };
 
-  // 🗑️ Delete Item
-  const handleDelete = async (item: FileItem) => {
-    if (!confirm(`Are you sure you want to delete "${item.name}"?`)) return;
+  // 🗑️ Delete Item (Single or Multiple)
+  const handleDelete = async (item?: FileItem) => {
+    const pathsToDelete = item ? [item.path] : selectedPaths;
+    if (pathsToDelete.length === 0) return;
+    const itemLabel = pathsToDelete.length === 1 ? `"${item?.name || pathsToDelete[0]}"` : `${pathsToDelete.length} items`;
+    if (!confirm(`Are you sure you want to delete ${itemLabel}?`)) return;
+
     try {
-      const res = await fetch('/api/file_manager/delete', {
+      const res = await fetch('/api/file_manager/delete-multiple', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...getAuthHeader()
         },
-        body: JSON.stringify({ path: item.path }),
+        body: JSON.stringify({ paths: pathsToDelete }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || 'Delete failed');
       }
+      setSelectedPaths([]);
       fetchPath(currentPath);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error deleting item');
     }
   };
 
-  // ✂️ Cut / Clipboard (Move)
-  const handleCut = (item: FileItem) => {
-    setClipboardPath(item.path);
+  // Clipboard Actions (Cut / Copy)
+  const handleCut = (item?: FileItem) => {
+    const paths = item ? [item.path] : selectedPaths;
+    if (paths.length === 0) return;
+    setClipboard({ paths, action: 'cut' });
+    setSelectedPaths([]);
   };
 
-  // 📋 Paste
+  const handleCopy = (item?: FileItem) => {
+    const paths = item ? [item.path] : selectedPaths;
+    if (paths.length === 0) return;
+    setClipboard({ paths, action: 'copy' });
+    setSelectedPaths([]);
+  };
+
+  // 📋 Paste (Multi or Single items)
   const handlePaste = async () => {
-    if (!clipboardPath) return;
-    const baseName = clipboardPath.split(/[\\/]/).pop();
-    const newPath = `${currentPath.replace(/[\\/]+$/, '')}/${baseName}`;
+    if (!clipboard) return;
     try {
-      const res = await fetch('/api/file_manager/move', {
+      const endpoint = clipboard.action === 'cut' ? 'move-multiple' : 'copy';
+      const res = await fetch(`/api/file_manager/${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...getAuthHeader()
         },
-        body: JSON.stringify({ source_path: clipboardPath, target_path: newPath }),
+        body: JSON.stringify({
+          source_paths: clipboard.paths,
+          target_dir: currentPath
+        }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || 'Paste failed');
       }
-      setClipboardPath(null);
+      setClipboard(null);
       fetchPath(currentPath);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error moving item');
+      alert(err instanceof Error ? err.message : 'Error executing paste');
+    }
+  };
+
+  // 🗜️ Zip action handler
+  const handleZip = async () => {
+    if (!zipArchiveName || selectedPaths.length === 0) return;
+    const parentPath = currentPath.replace(/[\\/]+$/, '');
+    const archiveFullPath = `${parentPath}/${zipArchiveName}`;
+    try {
+      const res = await fetch('/api/file_manager/zip', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify({
+          paths: selectedPaths,
+          archive_path: archiveFullPath
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Zip compression failed');
+      }
+      setZipModalOpen(false);
+      setZipArchiveName('');
+      setSelectedPaths([]);
+      fetchPath(currentPath);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error compressing files');
+    }
+  };
+
+  // 📂 Extract action handler
+  const handleExtract = async () => {
+    const zipPath = selectedPaths[0] || (files.find((f) => f.path.toLowerCase().endsWith('.zip'))?.path);
+    if (!zipPath || !extractTargetDir) return;
+    try {
+      const res = await fetch('/api/file_manager/extract', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify({
+          archive_path: zipPath,
+          target_dir: extractTargetDir
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Extraction failed');
+      }
+      setExtractModalOpen(false);
+      setSelectedPaths([]);
+      fetchPath(currentPath);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error extracting file');
+    }
+  };
+
+  // 🛡️ Chmod action handler
+  const handleChmod = async () => {
+    if (selectedPaths.length === 0 || !chmodValue) return;
+    try {
+      const res = await fetch('/api/file_manager/chmod', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify({
+          paths: selectedPaths,
+          mode: chmodValue
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Permissions change failed');
+      }
+      setChmodModalOpen(false);
+      setSelectedPaths([]);
+      fetchPath(currentPath);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error updating permissions');
     }
   };
 
@@ -247,7 +375,7 @@ export default function FileManagerDashboard() {
             File Explorer
           </h1>
           <p className="text-slate-400 text-sm md:text-base leading-relaxed max-w-xl">
-            View, upload, modify, and delete your isolated server files with ease.
+            View, modify, copy, move, zip, extract, delete, and manage permissions for files and folders with advanced multi-select capability.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -273,41 +401,126 @@ export default function FileManagerDashboard() {
         </div>
       </div>
 
-      {/* Path Bar / Breadcrumbs */}
-      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-wrap md:flex-row items-center gap-2 backdrop-blur-sm">
-        <button
-          onClick={handleGoUp}
-          disabled={!currentPath || currentPath === '/' || currentPath.includes(':')}
-          className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 disabled:opacity-50 transition"
-          title="Go Up One Level"
-        >
-          <Icons.CornerUpLeft className="w-4 h-4" />
-        </button>
-        <span className="text-slate-500 px-1 font-semibold select-none">/</span>
-        <input
-          type="text"
-          value={currentPath}
-          onChange={(e) => setCurrentPath(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && fetchPath(currentPath)}
-          className="flex-1 bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-4 py-2 rounded-xl text-slate-200 outline-none focus:border-blue-500 text-xs font-mono transition-all"
-          placeholder="e.g. /home/user or C:\"
-        />
-        <button
-          onClick={() => fetchPath(currentPath)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold text-xs transition shadow-lg hover:shadow-blue-500/20"
-        >
-          Go
-        </button>
-        {clipboardPath && (
+      {/* Path Bar & Paste Banner */}
+      <div className="flex flex-col gap-4">
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-wrap md:flex-row items-center gap-2 backdrop-blur-sm">
           <button
-            onClick={handlePaste}
-            className="flex items-center gap-2 px-3 py-2 bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/40 rounded-xl text-amber-200 font-bold text-xs transition shadow-lg hover:shadow-amber-500/10"
-            title={`Paste ${clipboardPath}`}
+            onClick={handleGoUp}
+            disabled={!currentPath || currentPath === '/' || currentPath.includes(':')}
+            className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 disabled:opacity-50 transition"
+            title="Go Up One Level"
           >
-            <Icons.Clipboard className="w-4 h-4" /> Paste
+            <Icons.CornerUpLeft className="w-4 h-4" />
           </button>
+          <span className="text-slate-500 px-1 font-semibold select-none">/</span>
+          <input
+            type="text"
+            value={currentPath}
+            onChange={(e) => setCurrentPath(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && fetchPath(currentPath)}
+            className="flex-1 bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-4 py-2 rounded-xl text-slate-200 outline-none focus:border-blue-500 text-xs font-mono transition-all"
+            placeholder="e.g. /home/user or C:\"
+          />
+          <button
+            onClick={() => fetchPath(currentPath)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold text-xs transition shadow-lg hover:shadow-blue-500/20"
+          >
+            Go
+          </button>
+        </div>
+
+        {clipboard && (
+          <div className="bg-amber-950/30 border border-amber-800/40 p-4 rounded-xl flex items-center justify-between gap-4 backdrop-blur-sm animate-fade-in shadow-xl select-none">
+            <div className="flex items-center gap-2.5">
+              <Icons.Clipboard className="w-5 h-5 text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-amber-100 leading-relaxed">
+                {clipboard.paths.length} items to {clipboard.action}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePaste}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/30 hover:bg-amber-500/40 text-amber-100 font-bold rounded-lg border border-amber-500/30 transition shadow"
+              >
+                <Icons.Clipboard className="w-3.5 h-3.5" /> Paste
+              </button>
+              <button
+                onClick={() => setClipboard(null)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition duration-150"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
       </div>
+
+      {/* Multi Selection Actions Toolbar */}
+      {selectedPaths.length > 0 && (
+        <div className="bg-blue-950/40 border border-blue-800/60 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 animate-fade-in select-none">
+          <div className="flex items-center gap-2">
+            <Icons.CheckSquare className="w-5 h-5 text-blue-400 shrink-0" />
+            <span className="text-xs font-semibold text-blue-200">
+              {selectedPaths.length} items selected
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => handleCut()}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-bold transition duration-150"
+            >
+              <Icons.Scissors className="w-3.5 h-3.5" /> Cut
+            </button>
+            <button
+              onClick={() => handleCopy()}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-bold transition duration-150"
+            >
+              <Icons.Copy className="w-3.5 h-3.5" /> Copy
+            </button>
+            <button
+              onClick={() => {
+                setZipArchiveName('archive.zip');
+                setZipModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-bold transition duration-150"
+            >
+              <Icons.Archive className="w-3.5 h-3.5" /> Zip
+            </button>
+            {selectedPaths.length === 1 && selectedPaths[0].toLowerCase().endsWith('.zip') && (
+              <button
+                onClick={() => {
+                  setExtractTargetDir(currentPath);
+                  setExtractModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-bold transition duration-150"
+              >
+                <Icons.FolderDown className="w-3.5 h-3.5" /> Extract
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setChmodValue('755');
+                setChmodModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-bold transition duration-150"
+            >
+              <Icons.Lock className="w-3.5 h-3.5" /> Chmod
+            </button>
+            <button
+              onClick={() => handleDelete()}
+              className="flex items-center gap-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 hover:border-red-700 text-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition duration-150"
+            >
+              <Icons.Trash2 className="w-3.5 h-3.5" /> Delete
+            </button>
+            <button
+              onClick={() => setSelectedPaths([])}
+              className="text-slate-400 hover:text-slate-200 text-xs px-2 font-bold"
+            >
+              Deselect
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Loader / Empty States */}
       {loading && files.length === 0 ? (
@@ -316,7 +529,7 @@ export default function FileManagerDashboard() {
           <p className="text-slate-400 text-xs">Loading contents...</p>
         </div>
       ) : error ? (
-        <div className="bg-red-950/30 border border-red-500/20 p-4 rounded-xl text-red-400 text-xs flex items-center gap-2 max-w-2xl">
+        <div className="bg-red-950/30 border border-red-500/20 p-4 rounded-xl text-red-400 text-xs flex items-center gap-2 max-w-2xl animate-fade-in">
           <Icons.AlertCircle className="w-4 h-4 shrink-0" />
           <span>Error loading directory contents: {error}</span>
         </div>
@@ -326,84 +539,128 @@ export default function FileManagerDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-950/60 border-b border-slate-800/60 text-slate-300 text-xs uppercase tracking-wider">
+                <tr className="bg-slate-950/60 border-b border-slate-800/60 text-slate-300 text-xs uppercase tracking-wider select-none">
+                  <th className="p-4 w-12 select-none">
+                    <button
+                      onClick={handleSelectAll}
+                      className="p-1 hover:bg-slate-800/80 rounded-lg text-slate-400 hover:text-slate-200 transition-all duration-150"
+                      title="Select/Deselect all"
+                    >
+                      {selectedPaths.length === files.length && files.length > 0 ? (
+                        <Icons.CheckSquare className="w-4 h-4 text-blue-400" />
+                      ) : (
+                        <Icons.Square className="w-4 h-4" />
+                      )}
+                    </button>
+                  </th>
                   <th className="p-4 font-bold select-none">Name</th>
                   <th className="p-4 font-bold w-28 select-none">Size</th>
                   <th className="p-4 font-bold w-48 select-none">Date Modified</th>
-                  <th className="p-4 font-bold w-32 text-center select-none">Actions</th>
+                  <th className="p-4 font-bold w-48 text-center select-none">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/30 text-sm">
                 {files.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-12 text-center text-slate-400 text-xs select-none">
+                    <td colSpan={5} className="p-12 text-center text-slate-400 text-xs select-none">
                       No files or folders in this directory.
                     </td>
                   </tr>
                 )}
-                {files.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-800/30 transition-all duration-200">
-                    <td className="p-4">
-                      {item.is_dir ? (
+                {files.map((item, idx) => {
+                  const isChecked = selectedPaths.includes(item.path);
+                  return (
+                    <tr
+                      key={idx}
+                      onClick={() => handleToggleSelect(item.path)}
+                      className={`hover:bg-slate-800/20 transition-all duration-200 cursor-pointer ${
+                        isChecked ? 'bg-blue-900/20 hover:bg-blue-900/25' : ''
+                      }`}
+                    >
+                      <td className="p-4" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={() => handleOpenFolder(item.path)}
-                          className="flex items-center gap-3 text-blue-400 hover:text-blue-300 font-bold transition-all text-xs select-none"
+                          onClick={() => handleToggleSelect(item.path)}
+                          className="p-1 hover:bg-slate-800/80 rounded-lg text-slate-400 hover:text-slate-200 transition-all duration-150"
                         >
-                          <Icons.Folder className="w-5 h-5 flex-shrink-0 fill-blue-500/20" />
-                          <span className="truncate max-w-sm">{item.name}</span>
+                          {isChecked ? (
+                            <Icons.CheckSquare className="w-4 h-4 text-blue-400" />
+                          ) : (
+                            <Icons.Square className="w-4 h-4" />
+                          )}
                         </button>
-                      ) : (
-                        <div className="flex items-center gap-3 text-slate-200 text-xs font-medium">
-                          <Icons.File className="w-5 h-5 flex-shrink-0 text-slate-500" />
-                          <span className="truncate max-w-sm">{item.name}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-4 text-slate-400 font-mono text-xs">
-                      {item.is_dir ? '—' : formatSize(item.size)}
-                    </td>
-                    <td className="p-4 text-slate-400 text-xs">
-                      {item.modified > 0 ? formatDate(item.modified) : '—'}
-                    </td>
-                    <td className="p-4 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {!item.is_dir && (
+                      </td>
+                      <td className="p-4">
+                        {item.is_dir ? (
                           <button
-                            onClick={() => handleEditFile(item)}
-                            className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-blue-400 border border-slate-700/60 transition-all"
-                            title="Edit file"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenFolder(item.path);
+                            }}
+                            className="flex items-center gap-3 text-blue-400 hover:text-blue-300 font-bold transition-all text-xs select-none"
                           >
-                            <Icons.Edit3 className="w-3.5 h-3.5" />
+                            <Icons.Folder className="w-5 h-5 flex-shrink-0 fill-blue-500/20" />
+                            <span className="truncate max-w-sm">{item.name}</span>
                           </button>
+                        ) : (
+                          <div className="flex items-center gap-3 text-slate-200 text-xs font-medium">
+                            <Icons.File className="w-5 h-5 flex-shrink-0 text-slate-500" />
+                            <span className="truncate max-w-sm">{item.name}</span>
+                          </div>
                         )}
-                        <button
-                          onClick={() => {
-                            setRenameValue(item.name);
-                            setRenamingItem(item);
-                          }}
-                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-slate-300 border border-slate-700/60 transition-all"
-                          title="Rename item"
-                        >
-                          <Icons.Scissors className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleCut(item)}
-                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-amber-400 border border-slate-700/60 transition-all"
-                          title="Cut / Move item"
-                        >
-                          <Icons.Scissors className="w-3.5 h-3.5 rotate-90" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(item)}
-                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-red-400 border border-slate-700/60 transition-all"
-                          title="Delete item"
-                        >
-                          <Icons.Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="p-4 text-slate-400 font-mono text-xs">
+                        {item.is_dir ? '—' : formatSize(item.size)}
+                      </td>
+                      <td className="p-4 text-slate-400 text-xs">
+                        {item.modified > 0 ? formatDate(item.modified) : '—'}
+                      </td>
+                      <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                          {!item.is_dir && (
+                            <button
+                              onClick={() => handleEditFile(item)}
+                              className="p-1.5 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-blue-400 border border-slate-700/60 transition-all"
+                              title="Edit file"
+                            >
+                              <Icons.Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              setRenameValue(item.name);
+                              setRenamingItem(item);
+                            }}
+                            className="p-1.5 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-slate-300 border border-slate-700/60 transition-all"
+                            title="Rename item"
+                          >
+                            <Icons.Scissors className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleCut(item)}
+                            className="p-1.5 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-amber-400 border border-slate-700/60 transition-all"
+                            title="Cut / Move"
+                          >
+                            <Icons.Scissors className="w-3.5 h-3.5 rotate-90" />
+                          </button>
+                          <button
+                            onClick={() => handleCopy(item)}
+                            className="p-1.5 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-indigo-400 border border-slate-700/60 transition-all"
+                            title="Copy item"
+                          >
+                            <Icons.Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(item)}
+                            className="p-1.5 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-red-400 border border-slate-700/60 transition-all"
+                            title="Delete item"
+                          >
+                            <Icons.Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -538,6 +795,134 @@ export default function FileManagerDashboard() {
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-blue-500/20"
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ZIP MODAL */}
+      {zipModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100">
+              <Icons.Archive className="w-4 h-4 text-blue-400" /> Compress into ZIP
+            </h3>
+            <div className="space-y-1">
+              <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
+                Archive File Name
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={zipArchiveName}
+                onChange={(e) => setZipArchiveName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleZip()}
+                className="w-full bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-3.5 py-2 rounded-xl text-slate-200 outline-none text-xs font-mono transition-all"
+                placeholder="e.g. backup.zip"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setZipArchiveName('');
+                  setZipModalOpen(false);
+                }}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleZip}
+                disabled={!zipArchiveName}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-500/20"
+              >
+                Compress
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EXTRACT MODAL */}
+      {extractModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100">
+              <Icons.FolderDown className="w-4 h-4 text-blue-400" /> Extract ZIP Archive
+            </h3>
+            <div className="space-y-1">
+              <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
+                Destination Path
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={extractTargetDir}
+                onChange={(e) => setExtractTargetDir(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleExtract()}
+                className="w-full bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-3.5 py-2 rounded-xl text-slate-200 outline-none text-xs font-mono transition-all"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setExtractTargetDir('');
+                  setExtractModalOpen(false);
+                }}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExtract}
+                disabled={!extractTargetDir}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-500/20"
+              >
+                Extract
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHMOD MODAL */}
+      {chmodModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100">
+              <Icons.Lock className="w-4 h-4 text-blue-400" /> Change Permissions (Chmod)
+            </h3>
+            <div className="space-y-1">
+              <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
+                Mode String
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={chmodValue}
+                onChange={(e) => setChmodValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleChmod()}
+                className="w-full bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-3.5 py-2 rounded-xl text-slate-200 outline-none text-xs font-mono transition-all"
+                placeholder="e.g. 755 or 644"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setChmodValue('');
+                  setChmodModalOpen(false);
+                }}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChmod}
+                disabled={!chmodValue}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-500/20"
+              >
+                Apply
               </button>
             </div>
           </div>
