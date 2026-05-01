@@ -118,4 +118,24 @@ export default function Layout() {
             className="p-2 hover:bg-slate-800 rounded-lg lg:hidden"
           >
             {sidebarOpen ? (
-              <Icons.
+              <Icons.X className="w-5 h-5" />
+            ) : (
+              <Icons.Menu className="w-5 h-5" />
+            )}
+          </button>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-400">Admin</span>
+            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+              <Icons.User className="w-4 h-4" />
+            </div>
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
