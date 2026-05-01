@@ -12,6 +12,15 @@ interface UserProfile {
   permitted_folders: string | string[];
 }
 
+const ALL_MODULES = [
+  { id: 'system_monitor', label: 'System Monitor' },
+  { id: 'file_manager', label: 'File Manager' },
+  { id: 'package_manager', label: 'Package Manager' },
+  { id: 'firewall', label: 'Firewall' },
+  { id: 'docker_manager', label: 'Docker Manager' },
+  { id: 'web_manager', label: 'Web Manager' },
+];
+
 export default function UsersDashboard() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,7 +30,7 @@ export default function UsersDashboard() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'superadmin' | 'user'>('user');
-  const [moduleInput, setModuleInput] = useState<string>('system_monitor, file_manager');
+  const [selectedModules, setSelectedModules] = useState<string[]>(['system_monitor', 'file_manager']);
   const [folderInput, setFolderInput] = useState<string>('/home/');
 
   const token = localStorage.getItem('copanel_token');
@@ -57,8 +66,7 @@ export default function UsersDashboard() {
 
     setError(null);
 
-    // Convert comma strings to lists
-    const pModules = moduleInput.split(',').map(m => m.trim().toLowerCase()).filter(Boolean);
+    // Filter permitted folders
     const pFolders = folderInput.split(',').map(f => f.trim()).filter(Boolean);
 
     try {
@@ -72,7 +80,7 @@ export default function UsersDashboard() {
           username,
           password,
           role,
-          permitted_modules: pModules,
+          permitted_modules: selectedModules,
           permitted_folders: pFolders
         })
       });
@@ -80,7 +88,7 @@ export default function UsersDashboard() {
       if (res.ok) {
         setUsername('');
         setPassword('');
-        setModuleInput('system_monitor, file_manager');
+        setSelectedModules(['system_monitor', 'file_manager']);
         setFolderInput('/home/');
         fetchUsers();
       } else {
@@ -89,6 +97,22 @@ export default function UsersDashboard() {
       }
     } catch {
       setError('Failed to reach authentication backend.');
+    }
+  };
+
+  const toggleModule = (id: string) => {
+    if (selectedModules.includes(id)) {
+      setSelectedModules(selectedModules.filter((m) => m !== id));
+    } else {
+      setSelectedModules([...selectedModules, id]);
+    }
+  };
+
+  const toggleSelectAllModules = () => {
+    if (selectedModules.length === ALL_MODULES.length) {
+      setSelectedModules([]);
+    } else {
+      setSelectedModules(ALL_MODULES.map((m) => m.id));
     }
   };
 
@@ -118,7 +142,7 @@ export default function UsersDashboard() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
       {/* Dynamic Ambient Background Banner */}
       <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900 to-slate-950 border border-slate-800 p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
         <div className="space-y-2 max-w-2xl">
@@ -163,6 +187,7 @@ export default function UsersDashboard() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="user1"
+                required
                 className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
               />
             </div>
@@ -174,6 +199,7 @@ export default function UsersDashboard() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                required
                 className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
               />
             </div>
@@ -190,16 +216,36 @@ export default function UsersDashboard() {
               </select>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Permitted Modules</label>
-              <input
-                type="text"
-                value={moduleInput}
-                onChange={(e) => setModuleInput(e.target.value)}
-                placeholder="system_monitor, file_manager"
-                className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
-              />
-              <span className="text-[10px] text-slate-500 block leading-tight">Enter module IDs separated by commas. Use 'all' for full access.</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Permitted Modules</label>
+                <button
+                  type="button"
+                  onClick={toggleSelectAllModules}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 transition"
+                >
+                  {selectedModules.length === ALL_MODULES.length ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5 p-3.5 bg-slate-950/40 border border-slate-800/60 rounded-xl min-h-[90px]">
+                {ALL_MODULES.map((m) => {
+                  const isSelected = selectedModules.includes(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleModule(m.id)}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-xl border transition-all duration-200 cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/10'
+                          : 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-300'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-1">

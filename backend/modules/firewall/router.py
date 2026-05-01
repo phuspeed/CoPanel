@@ -55,6 +55,15 @@ async def get_firewall_status() -> Dict[str, Any]:
             "rules": MOCK_RULES
         }
 
+    import shutil
+    if not IS_WINDOWS and not shutil.which("ufw"):
+        return {
+            "status": "success",
+            "active": False,
+            "rules": [],
+            "error_message": "UFW Firewall is not installed on this system."
+        }
+
     try:
         # Check ufw status
         out = run_cmd(["sudo", "ufw", "status"])
@@ -80,7 +89,13 @@ async def get_firewall_status() -> Dict[str, Any]:
             "rules": rules
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Prevent crash if command fails
+        return {
+            "status": "success",
+            "active": False,
+            "rules": [],
+            "error_message": f"Failed to execute UFW status check: {str(e)}"
+        }
 
 
 @router.post("/add")

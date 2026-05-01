@@ -208,10 +208,12 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                 {installedPackages.map((pkg) => (
                   <Link
                     key={pkg.id}
-                    to="/package-manager"
+                    to={`/package-manager?id=${pkg.id}`}
                     className={cn(
                       'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
-                      'text-slate-300 hover:bg-slate-800'
+                      location.search === `?id=${pkg.id}`
+                        ? 'bg-blue-600 text-white font-bold'
+                        : 'text-slate-300 hover:bg-slate-800'
                     )}
                     title={pkg.description}
                   >

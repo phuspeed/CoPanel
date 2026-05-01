@@ -1,8 +1,9 @@
 /**
  * Premium Package Manager Component
- * Stunning, dynamic, and glassmorphic UI.
+ * Stunning, dynamic, and glassmorphic UI with direct highlighting.
  */
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 interface Package {
@@ -19,6 +20,10 @@ export default function PackageManagerDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const selectedPackageId = searchParams.get('id');
 
   const categories = ['All', 'Web Server', 'Database & Caching', 'Security & System'];
 
@@ -47,8 +52,10 @@ export default function PackageManagerDashboard() {
   const handleAction = async (id: string, action: 'install' | 'restart' | 'stop' | 'remove') => {
     setActionLoading(`${id}-${action}`);
     try {
+      const token = localStorage.getItem('copanel_token');
       const res = await fetch(`/api/package_manager/${id}/${action}`, {
         method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
       if (res.ok) {
         fetchPackages();
@@ -79,12 +86,14 @@ export default function PackageManagerDashboard() {
     return <IconComponent className="w-6 h-6" />;
   };
 
-  const filteredPackages = selectedCategory === 'All'
-    ? packages
-    : packages.filter((p) => p.category === selectedCategory);
+  const filteredPackages = selectedPackageId
+    ? packages.filter((p) => p.id === selectedPackageId)
+    : (selectedCategory === 'All'
+      ? packages
+      : packages.filter((p) => p.category === selectedCategory));
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
       {/* Premium Header Banner */}
       <div className="relative overflow-hidden bg-gradient-to-br from-blue-600/20 via-slate-900 to-slate-950 border border-slate-800 p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
         <div className="space-y-2 max-w-2xl">
@@ -106,21 +115,38 @@ export default function PackageManagerDashboard() {
       </div>
 
       {/* Categories Filter Tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 pb-1">
-        {categories.map((cat) => (
+      {!selectedPackageId && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 pb-1">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all rounded-t-lg border-b-2 duration-200 ${
+                selectedCategory === cat
+                  ? 'border-blue-500 text-blue-400 bg-blue-500/5'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selectedPackageId && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-blue-400 text-xs bg-blue-950/40 px-3 py-2 border border-blue-900/40 rounded-xl">
+            <Icons.Eye className="w-4 h-4" />
+            Showing focused package details
+          </div>
           <button
-            key={cat}
-            onClick={() => setSelectedCategory(cat)}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all rounded-t-lg border-b-2 duration-200 ${
-              selectedCategory === cat
-                ? 'border-blue-500 text-blue-400 bg-blue-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
-            }`}
+            onClick={() => window.history.replaceState(null, '', window.location.pathname)}
+            className="text-xs text-slate-400 hover:text-slate-200 transition"
           >
-            {cat}
+            Show All Packages
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       {loading && packages.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-12 border border-slate-800 rounded-xl bg-slate-900/20">
@@ -132,7 +158,9 @@ export default function PackageManagerDashboard() {
           {filteredPackages.map((pkg) => (
             <div
               key={pkg.id}
-              className="group relative flex flex-col justify-between bg-slate-900/60 border border-slate-800 hover:border-blue-500/30 p-6 rounded-2xl transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5 hover:-translate-y-1 backdrop-blur-sm"
+              className={`group relative flex flex-col justify-between bg-slate-900/60 border hover:border-blue-500/30 p-6 rounded-2xl transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5 hover:-translate-y-1 backdrop-blur-sm ${
+                pkg.id === selectedPackageId ? 'border-blue-500 bg-blue-950/20 shadow-xl shadow-blue-500/5 ring-1 ring-blue-500/40' : 'border-slate-800'
+              }`}
             >
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
