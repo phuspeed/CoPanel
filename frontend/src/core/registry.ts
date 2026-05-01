@@ -1,5 +1,5 @@
 /**
- * LVP-Panel Frontend Module Registry
+ * CoPanel Frontend Module Registry
  * Dynamically discovers and registers modules from the modules directory
  */
 

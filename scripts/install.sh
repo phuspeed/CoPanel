@@ -23,9 +23,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-LVP_USER="lvpanel"
-LVP_HOME="/opt/copanel"
-VENV_PATH="$LVP_HOME/venv"
+CoPanel_USER="copanel"
+CoPanel_HOME="/opt/copanel"
+VENV_PATH="$CoPanel_HOME/venv"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
 NGINX_PORT=8686
@@ -108,27 +108,27 @@ install_dependencies() {
 }
 
 ###############################################################################
-# Step 2: Create LVP User & Directories
+# Step 2: Create CoPanel User & Directories
 ###############################################################################
 
 setup_user_and_dirs() {
     log_info "Setting up user and directories..."
     
     # Create user if doesn't exist
-    if ! id "$LVP_USER" &>/dev/null; then
-        useradd -r -s /bin/bash -d "$LVP_HOME" -m "$LVP_USER"
-        log_success "Created user: $LVP_USER"
+    if ! id "$CoPanel_USER" &>/dev/null; then
+        useradd -r -s /bin/bash -d "$CoPanel_HOME" -m "$CoPanel_USER"
+        log_success "Created user: $CoPanel_USER"
     else
-        log_success "User exists: $LVP_USER"
+        log_success "User exists: $CoPanel_USER"
     fi
     
     # Ensure directory exists with correct permissions
-    if [[ ! -d "$LVP_HOME" ]]; then
-        mkdir -p "$LVP_HOME"
+    if [[ ! -d "$CoPanel_HOME" ]]; then
+        mkdir -p "$CoPanel_HOME"
     fi
     
-    chown -R "$LVP_USER:$LVP_USER" "$LVP_HOME"
-    chmod 755 "$LVP_HOME"
+    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    chmod 755 "$CoPanel_HOME"
     
     log_success "Directories ready"
 }
@@ -153,8 +153,8 @@ setup_backend() {
     
     pip install --upgrade pip setuptools wheel >/dev/null 2>&1
     
-    if [[ -f "$LVP_HOME/backend/requirements.txt" ]]; then
-        pip install -r "$LVP_HOME/backend/requirements.txt" >/dev/null 2>&1
+    if [[ -f "$CoPanel_HOME/backend/requirements.txt" ]]; then
+        pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
         log_success "Python dependencies installed"
     fi
     
@@ -168,8 +168,8 @@ setup_backend() {
 setup_frontend() {
     log_info "Setting up React frontend..."
     
-    if [[ -f "$LVP_HOME/frontend/package.json" ]]; then
-        cd "$LVP_HOME/frontend"
+    if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
+        cd "$CoPanel_HOME/frontend"
         
         # Install dependencies
         npm ci >/dev/null 2>&1 || npm install >/dev/null 2>&1
@@ -191,7 +191,7 @@ setup_nginx() {
     
     # Create Nginx configuration
     cat > "$NGINX_CONF" << 'EOF'
-upstream lvp_backend {
+upstream copanel_backend {
     server 127.0.0.1:8000;
 }
 
@@ -211,7 +211,7 @@ server {
     
     # API endpoints
     location /api/ {
-        proxy_pass http://lvp_backend;
+        proxy_pass http://copanel_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -224,7 +224,7 @@ server {
     
     # Health check
     location /health {
-        proxy_pass http://lvp_backend;
+        proxy_pass http://copanel_backend;
     }
 }
 EOF
@@ -348,8 +348,8 @@ ${GREEN}╚═══════════════════════
 
 ${BLUE}Installation Summary:${NC}
 
-📍 Location:          ${LVP_HOME}
-👤 Service User:      ${LVP_USER}
+📍 Location:          ${CoPanel_HOME}
+👤 Service User:      ${CoPanel_USER}
 🌐 Access URL:        http://localhost:${NGINX_PORT}
 📊 Backend API:       http://localhost:${BACKEND_PORT}
 🔧 Frontend Dev:      http://localhost:${FRONTEND_PORT}
@@ -364,11 +364,11 @@ Service status:       systemctl status copanel
 
 ${BLUE}Adding New Modules:${NC}
 
-1. Create folder in:  ${LVP_HOME}/backend/modules/{module_name}/
+1. Create folder in:  ${CoPanel_HOME}/backend/modules/{module_name}/
 2. Add router.py      (Backend API routes)
 3. Restart service:   systemctl restart copanel
 
-Frontend modules:     ${LVP_HOME}/frontend/src/modules/
+Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
 
 ${YELLOW}Next Steps:${NC}
 
@@ -378,9 +378,9 @@ ${YELLOW}Next Steps:${NC}
 
 ${BLUE}Documentation:${NC}
 
-Architecture:         ${LVP_HOME}/README.md
-Backend Setup:        ${LVP_HOME}/backend/README.md
-Frontend Setup:       ${LVP_HOME}/frontend/README.md
+Architecture:         ${CoPanel_HOME}/README.md
+Backend Setup:        ${CoPanel_HOME}/backend/README.md
+Frontend Setup:       ${CoPanel_HOME}/frontend/README.md
 
 EOF
 }

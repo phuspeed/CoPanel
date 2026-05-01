@@ -1,5 +1,5 @@
 """
-LVP-Panel Dynamic Module Loader
+CoPanel Dynamic Module Loader
 Automatically discovers and registers API routes from the modules directory.
 """
 import importlib.util

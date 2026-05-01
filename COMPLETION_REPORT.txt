@@ -183,10 +183,10 @@ Time to Deploy:        ~10 minutes
 🔧 SERVICE MANAGEMENT
 
    systemctl start copanel        # Start service
-   systemctl stop lvp-panel         # Stop service
-   systemctl restart lvp-panel      # Restart (after changes)
-   systemctl status lvp-panel       # Check status
-   journalctl -u lvp-panel -f       # View logs in real-time
+   systemctl stop copanel         # Stop service
+   systemctl restart copanel      # Restart (after changes)
+   systemctl status copanel       # Check status
+   journalctl -u copanel -f       # View logs in real-time
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -269,7 +269,7 @@ GET /api/system_monitor/network    # Network stats
 ✅ JWT authentication framework
 ✅ CORS configured for dev/prod
 ✅ HTTPS ready (Nginx SSL templates)
-✅ Runs as unprivileged user (lvpanel)
+✅ Runs as unprivileged user (copanel)
 ✅ Security headers configured
 ✅ Type safety throughout (TypeScript + Python)
 ✅ Error handling without exposing internals
@@ -423,7 +423,7 @@ Documentation:
 
 🎉 PROJECT COMPLETE!
 
-LVP-Panel is ready for development, testing, and production deployment.
+CoPanel is ready for development, testing, and production deployment.
 
 The fully pluggable architecture allows unlimited module expansion without
 modifying core code. Simply create new module folders and they auto-register.

@@ -55,7 +55,7 @@ export default function Layout() {
           <div className="p-6 border-b border-slate-800">
             <h1 className="text-xl font-bold flex items-center gap-2">
               <Icons.Server className="w-6 h-6 text-blue-400" />
-              LVP-Panel
+              CoPanel
             </h1>
             <p className="text-xs text-slate-400 mt-1">VPS Management</p>
           </div>

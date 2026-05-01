@@ -240,7 +240,7 @@ Frontend dev server at `http://localhost:5173`
 
 ### Backend won't start
 ```bash
-journalctl -u lvp-panel -f
+journalctl -u copanel -f
 ```
 
 ### Nginx connection refused
@@ -255,7 +255,7 @@ systemctl restart nginx
 ls -la backend/modules/your_module/
 # Ensure router.py exists
 # Restart service
-systemctl restart lvp-panel
+systemctl restart copanel
 ```
 
 ### Frontend not updating
@@ -269,13 +269,13 @@ npm run build
 
 | Path | Purpose |
 |------|---------|
-| `/opt/lvp-panel` | Installation directory (production) |
+| `/opt/copanel` | Installation directory (production) |
 | `backend/modules/` | Backend plugin directory |
 | `frontend/src/modules/` | Frontend plugin directory |
-| `/opt/lvp-panel/venv/` | Python virtual environment |
-| `/opt/lvp-panel/frontend/dist/` | Built frontend assets |
-| `/etc/systemd/system/lvp-panel.service` | Systemd service file |
-| `/etc/nginx/sites-available/lvp-panel` | Nginx configuration |
+| `/opt/copanel/venv/` | Python virtual environment |
+| `/opt/copanel/frontend/dist/` | Built frontend assets |
+| `/etc/systemd/system/copanel.service` | Systemd service file |
+| `/etc/nginx/sites-available/copanel` | Nginx configuration |
 
 ## 🤝 Contributing
 

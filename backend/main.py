@@ -1,5 +1,5 @@
 """
-LVP-Panel: Lightweight Linux VPS Management Panel
+CoPanel: Lightweight Linux VPS Management Panel
 Main FastAPI Application Entry Point
 """
 import logging
@@ -26,15 +26,15 @@ MODULES_DIR = BASE_DIR / "modules"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler."""
-    logger.info("🚀 LVP-Panel starting...")
+    logger.info("🚀 CoPanel starting...")
     logger.info(f"📦 Scanning modules in: {MODULES_DIR}")
     yield
-    logger.info("🛑 LVP-Panel shutting down...")
+    logger.info("🛑 CoPanel shutting down...")
 
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="LVP-Panel API",
+    title="CoPanel API",
     description="Lightweight Linux VPS Management Panel",
     version="1.0.0",
     lifespan=lifespan
@@ -57,7 +57,7 @@ async def health_check():
         status_code=200,
         content={
             "status": "healthy",
-            "service": "LVP-Panel",
+            "service": "CoPanel",
             "version": "1.0.0"
         }
     )
@@ -69,7 +69,7 @@ async def api_root():
     return JSONResponse(
         status_code=200,
         content={
-            "message": "LVP-Panel API",
+            "message": "CoPanel API",
             "version": "1.0.0",
             "endpoints": {
                 "health": "/health",

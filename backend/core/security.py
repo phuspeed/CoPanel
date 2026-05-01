@@ -1,5 +1,5 @@
 """
-JWT and authentication utilities for LVP-Panel.
+JWT and authentication utilities for CoPanel.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional

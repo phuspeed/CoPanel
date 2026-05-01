@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get LVP-Panel up and running in minutes!
+Get CoPanel up and running in minutes!
 
 ## 📋 Prerequisites
 
@@ -36,7 +36,7 @@ Open your browser and navigate to:
 http://localhost:8686
 ```
 
-You'll see the LVP-Panel dashboard with System Monitor module!
+You'll see the CoPanel dashboard with System Monitor module!
 
 ## 📊 What's Included
 
@@ -50,25 +50,25 @@ You'll see the LVP-Panel dashboard with System Monitor module!
 
 ```bash
 # Start
-systemctl start lvp-panel
+systemctl start copanel
 
 # Stop
-systemctl stop lvp-panel
+systemctl stop copanel
 
 # Restart (after changes)
-systemctl restart lvp-panel
+systemctl restart copanel
 
 # View logs
-journalctl -u lvp-panel -f
+journalctl -u copanel -f
 
 # Check status
-systemctl status lvp-panel
+systemctl status copanel
 ```
 
 ## 🏗️ Project Directories
 
 ```
-/opt/lvp-panel/              # Installation location
+/opt/copanel/              # Installation location
 ├── backend/
 │   ├── main.py              # FastAPI server
 │   ├── core/                # Core system
@@ -124,7 +124,7 @@ export default function HelloWorld() {
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold">Hello World!</h1>
-      <p className="text-slate-400">This is my first LVP module!</p>
+      <p className="text-slate-400">This is my first CoPanel module!</p>
     </div>
   );
 }
@@ -133,7 +133,7 @@ export default function HelloWorld() {
 ### Deploy
 
 ```bash
-systemctl restart lvp-panel
+systemctl restart copanel
 ```
 
 Your module appears automatically in the sidebar! ✨
@@ -216,7 +216,7 @@ Built files go to `frontend/dist/`
 ### Restart Service
 
 ```bash
-systemctl restart lvp-panel
+systemctl restart copanel
 ```
 
 Nginx automatically serves the latest build!
@@ -234,13 +234,13 @@ Nginx automatically serves the latest build!
 
 ```bash
 # Check logs
-journalctl -u lvp-panel -n 50
+journalctl -u copanel -n 50
 
 # Check service status
-systemctl status lvp-panel
+systemctl status copanel
 
 # Try restart
-systemctl restart lvp-panel
+systemctl restart copanel
 ```
 
 ### Can't access web UI
@@ -267,7 +267,7 @@ ls -la frontend/src/modules/your_module/
 cd frontend && npm run build
 
 # Restart service
-systemctl restart lvp-panel
+systemctl restart copanel
 
 # Hard refresh browser (Ctrl+Shift+Delete)
 ```
@@ -276,10 +276,10 @@ systemctl restart lvp-panel
 
 ```bash
 # Check ownership
-ls -la /opt/lvp-panel/
+ls -la /opt/copanel/
 
 # Fix if needed
-sudo chown -R lvpanel:lvpanel /opt/lvp-panel
+sudo chown -R copanel:copanel /opt/copanel
 ```
 
 ## 💡 Tips
@@ -287,7 +287,7 @@ sudo chown -R lvpanel:lvpanel /opt/lvp-panel
 1. **Keep frontend rebuilt**: Changes to frontend modules require `npm run build`
 2. **Backend auto-reloads**: Changes to Python code auto-reload in development
 3. **Check API docs**: Visit `http://localhost:8000/docs` to explore API
-4. **Watch logs**: `journalctl -u lvp-panel -f` helps debug issues
+4. **Watch logs**: `journalctl -u copanel -f` helps debug issues
 5. **Use dark mode**: Easier to see what's happening!
 
 ## 🎯 Next Steps
@@ -300,11 +300,11 @@ sudo chown -R lvpanel:lvpanel /opt/lvp-panel
 
 ## ❓ Need Help?
 
-- Check logs: `journalctl -u lvp-panel -f`
-- Review documentation in `/opt/lvp-panel/`
+- Check logs: `journalctl -u copanel -f`
+- Review documentation in `/opt/copanel/`
 - Visit GitHub repository for issues
 - Check installation script output for details
 
 ---
 
-**Enjoy LVP-Panel! 🎉**
+**Enjoy CoPanel! 🎉**

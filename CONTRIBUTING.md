@@ -1,8 +1,8 @@
-# Contributing to LVP-Panel
+# Contributing to CoPanel
 
 ## Adding Your Own Module
 
-LVP-Panel's pluggable architecture makes it easy to add new features without modifying core code!
+CoPanel's pluggable architecture makes it easy to add new features without modifying core code!
 
 ## Backend Module Template
 

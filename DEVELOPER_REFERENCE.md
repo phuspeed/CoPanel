@@ -243,10 +243,10 @@ const data = [
 
 ```bash
 # After creating a module, restart the service
-systemctl restart lvp-panel
+systemctl restart copanel
 
 # Watch logs for errors
-journalctl -u lvp-panel -f
+journalctl -u copanel -f
 
 # Check if module loaded
 curl http://localhost:8000/api/modules
@@ -311,7 +311,7 @@ curl http://localhost:8000/api/modules
 |-------|----------|
 | Module not loading | Check router.py exports `router` |
 | Module not in sidebar | Run `npm run build` after adding frontend files |
-| API returns 404 | Restart service: `systemctl restart lvp-panel` |
+| API returns 404 | Restart service: `systemctl restart copanel` |
 | CORS error | Check frontend proxy in vite.config.ts |
 | TypeScript error | Run `npx tsc --noEmit` to check types |
 | Styling issues | Hard refresh browser (Ctrl+Shift+Delete) |
@@ -322,7 +322,7 @@ curl http://localhost:8000/api/modules
 - [ ] frontend config.ts has all required fields
 - [ ] Module folder is in correct location
 - [ ] No TypeScript/Python errors in console
-- [ ] `systemctl restart lvp-panel` executed
+- [ ] `systemctl restart copanel` executed
 - [ ] Frontend rebuilt with `npm run build`
 - [ ] Module appears in sidebar
 - [ ] API responds at correct endpoint

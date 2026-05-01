@@ -84,7 +84,7 @@ class YourLogic:
 
 ```bash
 # In production
-systemctl restart lvp-panel
+systemctl restart copanel
 
 # In development, the --reload flag restarts automatically
 ```
@@ -153,7 +153,7 @@ BACKEND_PORT=8000
 HOST=0.0.0.0
 
 # Database
-DATABASE_URL="sqlite:///./lvp_panel.db"
+DATABASE_URL="sqlite:///./copanel.db"
 
 # Logging
 LOG_LEVEL="INFO"
@@ -176,12 +176,12 @@ pytest --cov=. tests/
 
 ### Using Systemd
 
-Service file: `/etc/systemd/system/lvp-panel.service`
+Service file: `/etc/systemd/system/copanel.service`
 
 ```bash
-systemctl start lvp-panel
-systemctl status lvp-panel
-journalctl -u lvp-panel -f
+systemctl start copanel
+systemctl status copanel
+journalctl -u copanel -f
 ```
 
 ### Using Docker (Optional)
@@ -278,7 +278,7 @@ View logs:
 
 ```bash
 # In production
-journalctl -u lvp-panel -f
+journalctl -u copanel -f
 
 # In development
 # Check console output
