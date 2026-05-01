@@ -131,16 +131,89 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
             "message": "Firewall rule added successfully (Mock Mode)."
         }
 
+def run_ufw_cmd(action: str, port: str) -> bool:
+    """Helper to run UFW commands natively or with sudo."""
+    import shutil
+    from pathlib import Path
+    ufw_path = shutil.which("ufw") or ("/usr/sbin/ufw" if Path("/usr/sbin/ufw").exists() else "/sbin/ufw")
     try:
-        # Construct ufw command
-        # e.g., sudo ufw allow 80/tcp
-        cmd = ["sudo", "ufw", req.action.lower(), req.port]
-        run_cmd(cmd)
+        res = subprocess.run([ufw_path, action, port], shell=False, capture_output=True, text=True)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    if shutil.which("sudo"):
+        try:
+            res = subprocess.run(["sudo", ufw_path, action, port], shell=False, capture_output=True, text=True)
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def run_ufw_delete_cmd(action: str, port: str) -> bool:
+    """Helper to run UFW delete commands natively or with sudo."""
+    import shutil
+    from pathlib import Path
+    ufw_path = shutil.which("ufw") or ("/usr/sbin/ufw" if Path("/usr/sbin/ufw").exists() else "/sbin/ufw")
+    try:
+        res = subprocess.run([ufw_path, "delete", action, port], shell=False, capture_output=True, text=True)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    if shutil.which("sudo"):
+        try:
+            res = subprocess.run(["sudo", ufw_path, "delete", action, port], shell=False, capture_output=True, text=True)
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+@router.post("/add")
+async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
+    """Add a rule to the firewall."""
+    global MOCK_RULES
+
+    # Always enforce SSH safety check
+    if "22" in req.port and req.action.upper() == "DENY":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot add a rule blocking SSH port 22 to prevent lockout."
+        )
+
+    if IS_WINDOWS:
+        # Check if rule exists
+        for rule in MOCK_RULES:
+            if rule["port"] == req.port:
+                raise HTTPException(status_code=400, detail="Rule already exists.")
+        MOCK_RULES.append({
+            "port": req.port,
+            "action": req.action.upper(),
+            "comment": req.comment or ""
+        })
+        return {
+            "status": "success",
+            "message": "Firewall rule added successfully (Mock Mode)."
+        }
+
+    try:
+        if not run_ufw_cmd(req.action.lower(), req.port):
+            raise HTTPException(status_code=500, detail="Failed to apply firewall rule via ufw CLI.")
 
         return {
             "status": "success",
             "message": "Firewall rule added successfully."
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -168,14 +241,14 @@ async def delete_firewall_rule(req: DeleteRuleRequest) -> Dict[str, Any]:
         }
 
     try:
-        # Construct ufw delete command
-        # e.g., sudo ufw delete allow 80/tcp
-        cmd = ["sudo", "ufw", "delete", req.action.lower(), req.port]
-        run_cmd(cmd)
+        if not run_ufw_delete_cmd(req.action.lower(), req.port):
+            raise HTTPException(status_code=500, detail="Failed to delete firewall rule via ufw CLI.")
 
         return {
             "status": "success",
             "message": "Firewall rule deleted successfully."
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
