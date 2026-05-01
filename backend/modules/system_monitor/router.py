@@ -1,6 +1,6 @@
 """
 System Monitor Module Router
-Provides FastAPI endpoints for system monitoring
+Provides FastAPI endpoints for system monitoring, processes, and PM2 management.
 """
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
@@ -69,5 +69,34 @@ async def get_system() -> Dict[str, Any]:
         if "error" in system:
             raise HTTPException(status_code=500, detail=system["error"])
         return {"status": "success", "data": system}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/processes")
+async def get_top_processes() -> Dict[str, Any]:
+    """Get top CPU/Memory processes."""
+    try:
+        procs = SystemMonitor.get_top_processes()
+        return {"status": "success", "data": procs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/pm2")
+async def get_pm2_processes() -> Dict[str, Any]:
+    """Get PM2 processes details."""
+    try:
+        pm2_procs = SystemMonitor.get_pm2_processes()
+        return {"status": "success", "data": pm2_procs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/pm2/{action}/{name_or_id}")
+async def action_pm2_process(action: str, name_or_id: str) -> Dict[str, Any]:
+    """Action for a PM2 process (restart, stop, delete, start)."""
+    try:
+        ok = SystemMonitor.manage_pm2(action, name_or_id)
+        if not ok:
+            raise HTTPException(status_code=400, detail="Failed to run action or PM2 is not installed.")
+        return {"status": "success", "message": f"Successfully performed {action} on {name_or_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,0 +1,1 @@
+# AppStore Manager Module Init
