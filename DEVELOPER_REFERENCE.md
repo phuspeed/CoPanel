@@ -1,4 +1,4 @@
-# LVP-Panel Developer Reference Card
+# CoPanel Developer Reference Card
 
 ## Quick Reference for Module Development
 

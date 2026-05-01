@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ###############################################################################
-# LVP-Panel Installation Script
+# CoPanel Installation Script
 # One-click setup for Linux VPS Management Panel
 # 
 # Usage: sudo bash install.sh
@@ -24,13 +24,13 @@ NC='\033[0m' # No Color
 
 # Configuration
 LVP_USER="lvpanel"
-LVP_HOME="/opt/lvp-panel"
+LVP_HOME="/opt/copanel"
 VENV_PATH="$LVP_HOME/venv"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
 NGINX_PORT=8686
-NGINX_CONF="/etc/nginx/sites-available/lvp-panel"
-NGINX_ENABLED="/etc/nginx/sites-enabled/lvp-panel"
+NGINX_CONF="/etc/nginx/sites-available/copanel"
+NGINX_ENABLED="/etc/nginx/sites-enabled/copanel"
 
 ###############################################################################
 # Helper Functions
@@ -205,7 +205,7 @@ server {
     
     # Frontend (static files)
     location / {
-        root /opt/lvp-panel/frontend/dist;
+        root /opt/copanel/frontend/dist;
         try_files $uri $uri/ /index.html;
     }
     
@@ -252,19 +252,19 @@ EOF
 setup_systemd_service() {
     log_info "Creating Systemd service..."
     
-    cat > /etc/systemd/system/lvp-panel.service << 'EOF'
+    cat > /etc/systemd/system/copanel.service << 'EOF'
 [Unit]
-Description=LVP-Panel - Linux VPS Management Panel
+Description=CoPanel - Linux VPS Management Panel
 After=network.target
 
 [Service]
 Type=simple
-User=lvpanel
-Group=lvpanel
-WorkingDirectory=/opt/lvp-panel/backend
+User=copanel
+Group=copanel
+WorkingDirectory=/opt/copanel/backend
 
-Environment="PATH=/opt/lvp-panel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
-ExecStart=/opt/lvp-panel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 # Restart policy
 Restart=always
@@ -284,7 +284,7 @@ EOF
     
     # Reload systemd and enable service
     systemctl daemon-reload
-    systemctl enable lvp-panel.service
+    systemctl enable copanel.service
     
     log_success "Systemd service created and enabled"
 }
@@ -296,13 +296,13 @@ EOF
 start_services() {
     log_info "Starting services..."
     
-    systemctl start lvp-panel.service
+    systemctl start copanel.service
     
-    if systemctl is-active --quiet lvp-panel; then
-        log_success "LVP-Panel service started"
+    if systemctl is-active --quiet copanel; then
+        log_success "CoPanel service started"
     else
-        log_error "Failed to start LVP-Panel service"
-        systemctl status lvp-panel.service
+        log_error "Failed to start CoPanel service"
+        systemctl status copanel.service
         exit 1
     fi
     
@@ -343,7 +343,7 @@ print_summary() {
     cat << EOF
 
 ${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
-${GREEN}║          LVP-Panel Installation Complete! ✓                    ║${NC}
+${GREEN}║          CoPanel Installation Complete! ✓                    ║${NC}
 ${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}
 
 ${BLUE}Installation Summary:${NC}
@@ -356,17 +356,17 @@ ${BLUE}Installation Summary:${NC}
 
 ${BLUE}Useful Commands:${NC}
 
-Start service:        systemctl start lvp-panel
-Stop service:         systemctl stop lvp-panel
-Restart service:      systemctl restart lvp-panel
-View logs:            journalctl -u lvp-panel -f
-Service status:       systemctl status lvp-panel
+Start service:        systemctl start copanel
+Stop service:         systemctl stop copanel
+Restart service:      systemctl restart copanel
+View logs:            journalctl -u copanel -f
+Service status:       systemctl status copanel
 
 ${BLUE}Adding New Modules:${NC}
 
 1. Create folder in:  ${LVP_HOME}/backend/modules/{module_name}/
 2. Add router.py      (Backend API routes)
-3. Restart service:   systemctl restart lvp-panel
+3. Restart service:   systemctl restart copanel
 
 Frontend modules:     ${LVP_HOME}/frontend/src/modules/
 
@@ -374,7 +374,7 @@ ${YELLOW}Next Steps:${NC}
 
 1. Open browser: http://localhost:${NGINX_PORT}
 2. Access API docs: http://localhost:${BACKEND_PORT}/docs
-3. Review logs: journalctl -u lvp-panel -f
+3. Review logs: journalctl -u copanel -f
 
 ${BLUE}Documentation:${NC}
 
@@ -394,7 +394,7 @@ main() {
     
     cat << 'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
-    ║   LVP-Panel - Linux VPS Management System Installer          ║
+    ║   CoPanel - Linux VPS Management System Installer          ║
     ║   v1.0.0 - Pluggable Architecture                            ║
     ╚═══════════════════════════════════════════════════════════════╝
 EOF

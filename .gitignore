@@ -1,4 +1,4 @@
-# .gitignore for LVP-Panel
+# .gitignore for CoPanel
 
 # Python
 __pycache__/

@@ -1,4 +1,4 @@
-# LVP-Panel - Lightweight Linux VPS Management Panel
+# CoPanel - Lightweight Linux VPS Management Panel
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
@@ -24,7 +24,7 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 ## 📂 Project Structure
 
 ```
-/lvp-panel
+/copanel
 ├── backend/
 │   ├── main.py                      # FastAPI entry point
 │   ├── core/
@@ -111,7 +111,7 @@ async def get_info():
 ```
 
 3. Create `__init__.py` (empty is fine)
-4. Restart service: `systemctl restart lvp-panel`
+4. Restart service: `systemctl restart copanel`
 
 The module loads automatically at `/api/{your_module}`!
 
@@ -167,19 +167,19 @@ The included System Monitor module demonstrates the pluggable architecture:
 
 ```bash
 # Start
-systemctl start lvp-panel
+systemctl start copanel
 
 # Stop
-systemctl stop lvp-panel
+systemctl stop copanel
 
 # Restart
-systemctl restart lvp-panel
+systemctl restart copanel
 
 # View logs
-journalctl -u lvp-panel -f
+journalctl -u copanel -f
 
 # Check status
-systemctl status lvp-panel
+systemctl status copanel
 ```
 
 ## 🛠️ Development Mode

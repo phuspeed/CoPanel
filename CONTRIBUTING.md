@@ -426,7 +426,7 @@ cd frontend
 npm run build
 
 # Restart service
-systemctl restart lvp-panel
+systemctl restart copanel
 ```
 
 ### Hot Reload During Development
@@ -446,7 +446,7 @@ npm run dev
 
 ## License
 
-All modules inherit LVP-Panel's MIT License. Ensure your code is compatible.
+All modules inherit CoPanel's MIT License. Ensure your code is compatible.
 
 ---
 
