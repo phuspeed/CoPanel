@@ -75,7 +75,7 @@ Một bảng điều khiển quản lý VPS Linux gọn nhẹ, hiệu suất cao
 ### Cài Đặt (Chỉ Với Một Lệnh)
 
 ```bash
-sudo bash scripts/install.sh
+curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 ```
 
 Trình cài đặt sẽ:

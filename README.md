@@ -75,7 +75,7 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 ### Installation (One Command)
 
 ```bash
-sudo bash scripts/install.sh
+curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 ```
 
 The installer will:
