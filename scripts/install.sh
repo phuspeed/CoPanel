@@ -1,0 +1,426 @@
+#!/bin/bash
+
+###############################################################################
+# LVP-Panel Installation Script
+# One-click setup for Linux VPS Management Panel
+# 
+# Usage: sudo bash install.sh
+# 
+# Features:
+# - Python virtual environment setup
+# - Nginx reverse proxy configuration (port 8686)
+# - Systemd service installation
+# - Idempotent (safe to run multiple times)
+###############################################################################
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+LVP_USER="lvpanel"
+LVP_HOME="/opt/lvp-panel"
+VENV_PATH="$LVP_HOME/venv"
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
+NGINX_PORT=8686
+NGINX_CONF="/etc/nginx/sites-available/lvp-panel"
+NGINX_ENABLED="/etc/nginx/sites-enabled/lvp-panel"
+
+###############################################################################
+# Helper Functions
+###############################################################################
+
+log_info() {
+    echo -e "${BLUE}ℹ${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}✗${NC} $1"
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log_error "This script must be run as root (use sudo)"
+        exit 1
+    fi
+}
+
+check_os() {
+    if [[ ! -f /etc/os-release ]]; then
+        log_error "Unable to detect OS"
+        exit 1
+    fi
+    
+    . /etc/os-release
+    log_info "Detected OS: $ID $VERSION_ID"
+}
+
+command_exists() {
+    command -v "$1" &> /dev/null
+}
+
+###############################################################################
+# Step 1: System Dependencies
+###############################################################################
+
+install_dependencies() {
+    log_info "Installing system dependencies..."
+    
+    # Detect package manager
+    if command_exists apt-get; then
+        apt-get update
+        apt-get install -y \
+            python3 python3-pip python3-venv \
+            nginx \
+            curl wget git \
+            build-essential \
+            nodejs npm \
+            2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
+        
+    elif command_exists yum; then
+        yum install -y \
+            python3 python3-pip \
+            nginx \
+            curl wget git \
+            gcc gcc-c++ make \
+            nodejs npm \
+            2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
+    else
+        log_error "Unsupported package manager"
+        exit 1
+    fi
+    
+    log_success "Dependencies installed"
+}
+
+###############################################################################
+# Step 2: Create LVP User & Directories
+###############################################################################
+
+setup_user_and_dirs() {
+    log_info "Setting up user and directories..."
+    
+    # Create user if doesn't exist
+    if ! id "$LVP_USER" &>/dev/null; then
+        useradd -r -s /bin/bash -d "$LVP_HOME" -m "$LVP_USER"
+        log_success "Created user: $LVP_USER"
+    else
+        log_success "User exists: $LVP_USER"
+    fi
+    
+    # Ensure directory exists with correct permissions
+    if [[ ! -d "$LVP_HOME" ]]; then
+        mkdir -p "$LVP_HOME"
+    fi
+    
+    chown -R "$LVP_USER:$LVP_USER" "$LVP_HOME"
+    chmod 755 "$LVP_HOME"
+    
+    log_success "Directories ready"
+}
+
+###############################################################################
+# Step 3: Backend Setup
+###############################################################################
+
+setup_backend() {
+    log_info "Setting up Python backend..."
+    
+    # Create virtual environment
+    if [[ ! -d "$VENV_PATH" ]]; then
+        python3 -m venv "$VENV_PATH"
+        log_success "Virtual environment created"
+    else
+        log_success "Virtual environment exists"
+    fi
+    
+    # Activate venv and install dependencies
+    source "$VENV_PATH/bin/activate"
+    
+    pip install --upgrade pip setuptools wheel >/dev/null 2>&1
+    
+    if [[ -f "$LVP_HOME/backend/requirements.txt" ]]; then
+        pip install -r "$LVP_HOME/backend/requirements.txt" >/dev/null 2>&1
+        log_success "Python dependencies installed"
+    fi
+    
+    deactivate
+}
+
+###############################################################################
+# Step 4: Frontend Setup
+###############################################################################
+
+setup_frontend() {
+    log_info "Setting up React frontend..."
+    
+    if [[ -f "$LVP_HOME/frontend/package.json" ]]; then
+        cd "$LVP_HOME/frontend"
+        
+        # Install dependencies
+        npm ci >/dev/null 2>&1 || npm install >/dev/null 2>&1
+        
+        # Build frontend
+        npm run build >/dev/null 2>&1
+        
+        log_success "Frontend built and ready"
+        cd - >/dev/null
+    fi
+}
+
+###############################################################################
+# Step 5: Nginx Configuration
+###############################################################################
+
+setup_nginx() {
+    log_info "Configuring Nginx reverse proxy..."
+    
+    # Create Nginx configuration
+    cat > "$NGINX_CONF" << 'EOF'
+upstream lvp_backend {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 8686;
+    listen [::]:8686;
+    
+    server_name localhost;
+    
+    client_max_body_size 100M;
+    
+    # Frontend (static files)
+    location / {
+        root /opt/lvp-panel/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # API endpoints
+    location /api/ {
+        proxy_pass http://lvp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Health check
+    location /health {
+        proxy_pass http://lvp_backend;
+    }
+}
+EOF
+    
+    # Enable site
+    if [[ ! -L "$NGINX_ENABLED" ]]; then
+        ln -s "$NGINX_CONF" "$NGINX_ENABLED"
+    fi
+    
+    # Test configuration
+    if nginx -t >/dev/null 2>&1; then
+        systemctl restart nginx
+        log_success "Nginx configured and restarted"
+    else
+        log_error "Nginx configuration error"
+        nginx -t
+        exit 1
+    fi
+}
+
+###############################################################################
+# Step 6: Systemd Service
+###############################################################################
+
+setup_systemd_service() {
+    log_info "Creating Systemd service..."
+    
+    cat > /etc/systemd/system/lvp-panel.service << 'EOF'
+[Unit]
+Description=LVP-Panel - Linux VPS Management Panel
+After=network.target
+
+[Service]
+Type=simple
+User=lvpanel
+Group=lvpanel
+WorkingDirectory=/opt/lvp-panel/backend
+
+Environment="PATH=/opt/lvp-panel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+ExecStart=/opt/lvp-panel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=65536
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Reload systemd and enable service
+    systemctl daemon-reload
+    systemctl enable lvp-panel.service
+    
+    log_success "Systemd service created and enabled"
+}
+
+###############################################################################
+# Step 7: Start Services
+###############################################################################
+
+start_services() {
+    log_info "Starting services..."
+    
+    systemctl start lvp-panel.service
+    
+    if systemctl is-active --quiet lvp-panel; then
+        log_success "LVP-Panel service started"
+    else
+        log_error "Failed to start LVP-Panel service"
+        systemctl status lvp-panel.service
+        exit 1
+    fi
+    
+    if systemctl is-active --quiet nginx; then
+        log_success "Nginx is running"
+    fi
+}
+
+###############################################################################
+# Step 8: Verification
+###############################################################################
+
+verify_installation() {
+    log_info "Verifying installation..."
+    
+    sleep 2
+    
+    # Check backend health
+    if curl -s http://localhost:8000/health | grep -q "healthy"; then
+        log_success "Backend health check passed"
+    else
+        log_warning "Could not verify backend health"
+    fi
+    
+    # Check Nginx
+    if curl -s http://localhost:8686/health | grep -q "healthy"; then
+        log_success "Nginx reverse proxy working"
+    else
+        log_warning "Could not verify Nginx proxy"
+    fi
+}
+
+###############################################################################
+# Summary
+###############################################################################
+
+print_summary() {
+    cat << EOF
+
+${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
+${GREEN}║          LVP-Panel Installation Complete! ✓                    ║${NC}
+${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}
+
+${BLUE}Installation Summary:${NC}
+
+📍 Location:          ${LVP_HOME}
+👤 Service User:      ${LVP_USER}
+🌐 Access URL:        http://localhost:${NGINX_PORT}
+📊 Backend API:       http://localhost:${BACKEND_PORT}
+🔧 Frontend Dev:      http://localhost:${FRONTEND_PORT}
+
+${BLUE}Useful Commands:${NC}
+
+Start service:        systemctl start lvp-panel
+Stop service:         systemctl stop lvp-panel
+Restart service:      systemctl restart lvp-panel
+View logs:            journalctl -u lvp-panel -f
+Service status:       systemctl status lvp-panel
+
+${BLUE}Adding New Modules:${NC}
+
+1. Create folder in:  ${LVP_HOME}/backend/modules/{module_name}/
+2. Add router.py      (Backend API routes)
+3. Restart service:   systemctl restart lvp-panel
+
+Frontend modules:     ${LVP_HOME}/frontend/src/modules/
+
+${YELLOW}Next Steps:${NC}
+
+1. Open browser: http://localhost:${NGINX_PORT}
+2. Access API docs: http://localhost:${BACKEND_PORT}/docs
+3. Review logs: journalctl -u lvp-panel -f
+
+${BLUE}Documentation:${NC}
+
+Architecture:         ${LVP_HOME}/README.md
+Backend Setup:        ${LVP_HOME}/backend/README.md
+Frontend Setup:       ${LVP_HOME}/frontend/README.md
+
+EOF
+}
+
+###############################################################################
+# Main Execution
+###############################################################################
+
+main() {
+    clear
+    
+    cat << 'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║   LVP-Panel - Linux VPS Management System Installer          ║
+    ║   v1.0.0 - Pluggable Architecture                            ║
+    ╚═══════════════════════════════════════════════════════════════╝
+EOF
+    
+    echo ""
+    
+    check_root
+    check_os
+    
+    log_info "Starting installation..."
+    echo ""
+    
+    install_dependencies
+    setup_user_and_dirs
+    setup_backend
+    setup_frontend
+    setup_nginx
+    setup_systemd_service
+    start_services
+    
+    echo ""
+    verify_installation
+    
+    echo ""
+    print_summary
+}
+
+# Run main installation
+main "$@"
