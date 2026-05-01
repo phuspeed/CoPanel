@@ -4,6 +4,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { moduleRegistry, ModuleConfig } from './registry';
 import Layout from './Layout';
+import Dashboard from './Dashboard';
 
 export function createRoutes() {
   const modules = moduleRegistry.getAll();
@@ -13,6 +14,8 @@ export function createRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+
           
           {/* Dynamic module routes */}
           {modules.map((module: ModuleConfig) => (
