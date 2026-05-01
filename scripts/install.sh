@@ -140,4 +140,304 @@ setup_user_and_dirs() {
     # Sync files from REPO_DIR to CoPanel_HOME if different
     if [[ "$REPO_DIR" != "$CoPanel_HOME" ]]; then
         log_info "Copying project files from $REPO_DIR to $CoPanel_HOME..."
-        cp -a "$REPO_DIR"/. "
+        cp -a "$REPO_DIR"/. "$CoPanel_HOME"/
+    fi
+    
+    # Secure permissions and ownership
+    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    chmod -R u+rwX,go+rX "$CoPanel_HOME"
+    
+    log_success "Directories ready"
+}
+
+###############################################################################
+# Step 3: Backend Setup
+###############################################################################
+
+setup_backend() {
+    log_info "Setting up Python backend..."
+    
+    # Create virtual environment
+    if [[ ! -d "$VENV_PATH" ]]; then
+        python3 -m venv "$VENV_PATH"
+        log_success "Virtual environment created"
+    else
+        log_success "Virtual environment exists"
+    fi
+    
+    # Activate venv and install dependencies
+    source "$VENV_PATH/bin/activate"
+    
+    pip install --upgrade pip setuptools wheel >/dev/null 2>&1
+    
+    if [[ -f "$CoPanel_HOME/backend/requirements.txt" ]]; then
+        pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
+        log_success "Python dependencies installed"
+    fi
+    
+    deactivate
+}
+
+###############################################################################
+# Step 4: Frontend Setup
+###############################################################################
+
+setup_frontend() {
+    log_info "Setting up React frontend..."
+    
+    if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
+        cd "$CoPanel_HOME/frontend"
+        
+        # Install dependencies
+        npm ci >/dev/null 2>&1 || npm install >/dev/null 2>&1
+        
+        # Build frontend
+        npm run build >/dev/null 2>&1
+        
+        log_success "Frontend built and ready"
+        cd - >/dev/null
+    fi
+}
+
+###############################################################################
+# Step 5: Nginx Configuration
+###############################################################################
+
+setup_nginx() {
+    log_info "Configuring Nginx reverse proxy..."
+    
+    # Create Nginx configuration
+    cat > "$NGINX_CONF" << 'EOF'
+upstream copanel_backend {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 8686;
+    listen [::]:8686;
+    
+    server_name localhost;
+    
+    client_max_body_size 100M;
+    
+    # Frontend (static files)
+    location / {
+        root /opt/copanel/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # API endpoints
+    location /api/ {
+        proxy_pass http://copanel_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Health check
+    location /health {
+        proxy_pass http://copanel_backend;
+    }
+}
+EOF
+    
+    # Enable site
+    if [[ ! -L "$NGINX_ENABLED" ]]; then
+        ln -s "$NGINX_CONF" "$NGINX_ENABLED"
+    fi
+    
+    # Test configuration
+    if nginx -t >/dev/null 2>&1; then
+        systemctl restart nginx
+        log_success "Nginx configured and restarted"
+    else
+        log_error "Nginx configuration error"
+        nginx -t
+        exit 1
+    fi
+}
+
+###############################################################################
+# Step 6: Systemd Service
+###############################################################################
+
+setup_systemd_service() {
+    log_info "Creating Systemd service..."
+    
+    cat > /etc/systemd/system/copanel.service << 'EOF'
+[Unit]
+Description=CoPanel - Linux VPS Management Panel
+After=network.target
+
+[Service]
+Type=simple
+User=copanel
+Group=copanel
+WorkingDirectory=/opt/copanel/backend
+
+Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=65536
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Reload systemd and enable service
+    systemctl daemon-reload
+    systemctl enable copanel.service
+    
+    log_success "Systemd service created and enabled"
+}
+
+###############################################################################
+# Step 7: Start Services
+###############################################################################
+
+start_services() {
+    log_info "Starting services..."
+    
+    systemctl start copanel.service
+    
+    if systemctl is-active --quiet copanel; then
+        log_success "CoPanel service started"
+    else
+        log_error "Failed to start CoPanel service"
+        systemctl status copanel.service
+        exit 1
+    fi
+    
+    if systemctl is-active --quiet nginx; then
+        log_success "Nginx is running"
+    fi
+}
+
+###############################################################################
+# Step 8: Verification
+###############################################################################
+
+verify_installation() {
+    log_info "Verifying installation..."
+    
+    sleep 2
+    
+    # Check backend health
+    if curl -s http://localhost:8000/health | grep -q "healthy"; then
+        log_success "Backend health check passed"
+    else
+        log_warning "Could not verify backend health"
+    fi
+    
+    # Check Nginx
+    if curl -s http://localhost:8686/health | grep -q "healthy"; then
+        log_success "Nginx reverse proxy working"
+    else
+        log_warning "Could not verify Nginx proxy"
+    fi
+}
+
+###############################################################################
+# Summary
+###############################################################################
+
+print_summary() {
+    cat << EOF
+
+${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
+${GREEN}║          CoPanel Installation Complete! ✓                    ║${NC}
+${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}
+
+${BLUE}Installation Summary:${NC}
+
+📍 Location:          ${CoPanel_HOME}
+👤 Service User:      ${CoPanel_USER}
+🌐 Access URL:        http://localhost:${NGINX_PORT}
+📊 Backend API:       http://localhost:${BACKEND_PORT}
+🔧 Frontend Dev:      http://localhost:${FRONTEND_PORT}
+
+${BLUE}Useful Commands:${NC}
+
+Start service:        systemctl start copanel
+Stop service:         systemctl stop copanel
+Restart service:      systemctl restart copanel
+View logs:            journalctl -u copanel -f
+Service status:       systemctl status copanel
+
+${BLUE}Adding New Modules:${NC}
+
+1. Create folder in:  ${CoPanel_HOME}/backend/modules/{module_name}/
+2. Add router.py      (Backend API routes)
+3. Restart service:   systemctl restart copanel
+
+Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
+
+${YELLOW}Next Steps:${NC}
+
+1. Open browser: http://localhost:${NGINX_PORT}
+2. Access API docs: http://localhost:${BACKEND_PORT}/docs
+3. Review logs: journalctl -u copanel -f
+
+${BLUE}Documentation:${NC}
+
+Architecture:         ${CoPanel_HOME}/README.md
+Backend Setup:        ${CoPanel_HOME}/backend/README.md
+Frontend Setup:       ${CoPanel_HOME}/frontend/README.md
+
+EOF
+}
+
+###############################################################################
+# Main Execution
+###############################################################################
+
+main() {
+    clear
+    
+    cat << 'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║   CoPanel - Linux VPS Management System Installer          ║
+    ║   v1.0.0 - Pluggable Architecture                            ║
+    ╚═══════════════════════════════════════════════════════════════╝
+EOF
+    
+    echo ""
+    
+    check_root
+    check_os
+    
+    log_info "Starting installation..."
+    echo ""
+    
+    install_dependencies
+    setup_user_and_dirs
+    setup_backend
+    setup_frontend
+    setup_nginx
+    setup_systemd_service
+    start_services
+    
+    echo ""
+    verify_installation
+    
+    echo ""
+    print_summary
+}
+
+# Run main installation
+main "$@"
