@@ -190,6 +190,9 @@ setup_backend() {
         pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
         log_success "Python dependencies installed"
     fi
+
+    # Pre-initialize database to immediately create initial admin user & password file
+    python3 -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
     
     deactivate
 }
