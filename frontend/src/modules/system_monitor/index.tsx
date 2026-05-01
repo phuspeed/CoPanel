@@ -35,8 +35,6 @@ interface HistoryData {
   memory: number;
 }
 
-const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
-
 export default function SystemMonitorDashboard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [history, setHistory] = useState<HistoryData[]>([]);
@@ -266,7 +264,7 @@ export default function SystemMonitorDashboard() {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value) => `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`}
+                formatter={(value: any) => `${(Number(value) / (1024 * 1024 * 1024)).toFixed(2)} GB`}
                 contentStyle={{
                   backgroundColor: '#1e293b',
                   border: '1px solid #475569',
@@ -298,7 +296,7 @@ export default function SystemMonitorDashboard() {
               <XAxis dataKey="name" stroke="#64748b" />
               <YAxis stroke="#64748b" />
               <Tooltip
-                formatter={(value) => `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`}
+                formatter={(value: any) => `${(Number(value) / (1024 * 1024 * 1024)).toFixed(2)} GB`}
                 contentStyle={{
                   backgroundColor: '#1e293b',
                   border: '1px solid #475569',

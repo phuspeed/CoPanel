@@ -17,12 +17,12 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   Activity: Icons.Activity,
   BarChart3: Icons.BarChart3,
   BarChart: Icons.BarChart,
-  
+
   // File Manager
   Folder: Icons.Folder,
   FileText: Icons.FileText,
   Upload: Icons.Upload,
-  
+
   // Default
   Grid: Icons.Grid,
   Settings: Icons.Settings,

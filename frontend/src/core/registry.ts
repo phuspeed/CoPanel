@@ -13,7 +13,6 @@ export interface ModuleConfig {
 
 class ModuleRegistry {
   private modules: Map<string, ModuleConfig> = new Map();
-  private rawModules: Record<string, any> = {};
 
   constructor() {
     this.loadModules();
@@ -29,10 +28,10 @@ class ModuleRegistry {
    */
   private loadModules(): void {
     // This uses Vite's import.meta.glob to find all config.ts files
-    const moduleConfigs = import.meta.glob<any>(
+    const moduleConfigs = (import.meta as any).glob(
       '../modules/*/config.ts',
       { eager: true }
-    );
+    ) as Record<string, any>;
 
     for (const [filePath, module] of Object.entries(moduleConfigs)) {
       try {
