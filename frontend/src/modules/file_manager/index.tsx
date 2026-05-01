@@ -30,13 +30,21 @@ export default function FileManagerDashboard() {
   // Cut/Copy (Move) state
   const [clipboardPath, setClipboardPath] = useState<string | null>(null);
 
+  // Get token helper
+  const getAuthHeader = (): Record<string, string> => {
+    const token = localStorage.getItem('copanel_token');
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  };
+
   // Fetch current path on load or path change
   const fetchPath = async (path: string = '') => {
     setLoading(true);
     setError(null);
     try {
       const url = `/api/file_manager/list${path ? `?path=${encodeURIComponent(path)}` : ''}`;
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to list directory');
@@ -73,7 +81,9 @@ export default function FileManagerDashboard() {
   // 📝 Open File Editor
   const handleEditFile = async (item: FileItem) => {
     try {
-      const res = await fetch(`/api/file_manager/read?path=${encodeURIComponent(item.path)}`);
+      const res = await fetch(`/api/file_manager/read?path=${encodeURIComponent(item.path)}`, {
+        headers: getAuthHeader()
+      });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || 'Could not read file');
@@ -92,7 +102,10 @@ export default function FileManagerDashboard() {
     try {
       const res = await fetch('/api/file_manager/write', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
         body: JSON.stringify({ path: editingFile, content: fileContent }),
       });
       if (!res.ok) {
@@ -114,7 +127,10 @@ export default function FileManagerDashboard() {
       const endpoint = createType === 'file' ? 'create-file' : 'create-dir';
       const res = await fetch(`/api/file_manager/${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
         body: JSON.stringify({ path: itemPath }),
       });
       if (!res.ok) {
@@ -137,7 +153,10 @@ export default function FileManagerDashboard() {
     try {
       const res = await fetch('/api/file_manager/rename', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
         body: JSON.stringify({ old_path: renamingItem.path, new_path: newPath }),
       });
       if (!res.ok) {
@@ -158,7 +177,10 @@ export default function FileManagerDashboard() {
     try {
       const res = await fetch('/api/file_manager/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
         body: JSON.stringify({ path: item.path }),
       });
       if (!res.ok) {
@@ -184,7 +206,10 @@ export default function FileManagerDashboard() {
     try {
       const res = await fetch('/api/file_manager/move', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
         body: JSON.stringify({ source_path: clipboardPath, target_path: newPath }),
       });
       if (!res.ok) {
@@ -213,32 +238,34 @@ export default function FileManagerDashboard() {
   };
 
   return (
-    <div className="p-8">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
       {/* Top Header */}
-      <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
+      <div className="relative overflow-hidden bg-gradient-to-br from-blue-600/20 via-slate-900 to-slate-950 border border-slate-800 p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent flex items-center gap-2">
             <Icons.Folder className="w-8 h-8 text-blue-400" />
-            File Manager
+            File Explorer
           </h1>
-          <p className="text-slate-400">View and manage system files</p>
+          <p className="text-slate-400 text-sm md:text-base leading-relaxed max-w-xl">
+            View, upload, modify, and delete your isolated server files with ease.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setCreateType('file')}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium transition"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs transition shadow-lg hover:shadow-blue-500/20"
           >
             <Icons.FilePlus className="w-4 h-4" /> Create File
           </button>
           <button
             onClick={() => setCreateType('dir')}
-            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-medium transition"
+            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2.5 rounded-xl font-bold text-xs transition"
           >
             <Icons.FolderPlus className="w-4 h-4" /> Create Dir
           </button>
           <button
             onClick={() => fetchPath(currentPath)}
-            className="flex items-center bg-slate-800 hover:bg-slate-700 p-2.5 rounded-lg text-slate-300 transition"
+            className="flex items-center bg-slate-800 hover:bg-slate-700 p-3 rounded-xl text-slate-300 transition"
             title="Refresh current path"
           >
             <Icons.RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
@@ -247,11 +274,11 @@ export default function FileManagerDashboard() {
       </div>
 
       {/* Path Bar / Breadcrumbs */}
-      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 mb-6 flex flex-wrap md:flex-row items-center gap-2">
+      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex flex-wrap md:flex-row items-center gap-2 backdrop-blur-sm">
         <button
           onClick={handleGoUp}
           disabled={!currentPath || currentPath === '/' || currentPath.includes(':')}
-          className="p-2 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-300 disabled:opacity-50 transition"
+          className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 disabled:opacity-50 transition"
           title="Go Up One Level"
         >
           <Icons.CornerUpLeft className="w-4 h-4" />
@@ -262,19 +289,19 @@ export default function FileManagerDashboard() {
           value={currentPath}
           onChange={(e) => setCurrentPath(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && fetchPath(currentPath)}
-          className="flex-1 bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-md text-slate-200 outline-none focus:border-blue-500 text-sm font-mono"
-          placeholder="e.g. /var/www or C:\"
+          className="flex-1 bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-4 py-2 rounded-xl text-slate-200 outline-none focus:border-blue-500 text-xs font-mono transition-all"
+          placeholder="e.g. /home/user or C:\"
         />
         <button
           onClick={() => fetchPath(currentPath)}
-          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-md text-white font-medium text-sm transition"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold text-xs transition shadow-lg hover:shadow-blue-500/20"
         >
           Go
         </button>
         {clipboardPath && (
           <button
             onClick={handlePaste}
-            className="flex items-center gap-2 px-3 py-1.5 bg-amber-600/30 border border-amber-500 hover:bg-amber-600/50 rounded-md text-amber-200 font-medium text-sm transition"
+            className="flex items-center gap-2 px-3 py-2 bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/40 rounded-xl text-amber-200 font-bold text-xs transition shadow-lg hover:shadow-amber-500/10"
             title={`Paste ${clipboardPath}`}
           >
             <Icons.Clipboard className="w-4 h-4" /> Paste
@@ -284,48 +311,49 @@ export default function FileManagerDashboard() {
 
       {/* Loader / Empty States */}
       {loading && files.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64">
+        <div className="flex flex-col items-center justify-center h-64 border border-slate-800/60 rounded-2xl bg-slate-900/30">
           <Icons.Loader className="w-10 h-10 animate-spin text-blue-500 mb-2" />
-          <p className="text-slate-400">Loading contents...</p>
+          <p className="text-slate-400 text-xs">Loading contents...</p>
         </div>
       ) : error ? (
-        <div className="bg-red-900/20 border border-red-600 p-4 rounded-lg mb-8">
-          <p className="text-red-200">Error fetching files: {error}</p>
+        <div className="bg-red-950/30 border border-red-500/20 p-4 rounded-xl text-red-400 text-xs flex items-center gap-2 max-w-2xl">
+          <Icons.AlertCircle className="w-4 h-4 shrink-0" />
+          <span>Error loading directory contents: {error}</span>
         </div>
       ) : (
-        <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden select-none">
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-sm shadow-xl">
           {/* Table of items */}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-800/50 border-b border-slate-800 text-slate-300 text-xs uppercase">
-                  <th className="p-4 font-semibold">Name</th>
-                  <th className="p-4 font-semibold w-28">Size</th>
-                  <th className="p-4 font-semibold w-48">Date Modified</th>
-                  <th className="p-4 font-semibold w-32 text-center">Actions</th>
+                <tr className="bg-slate-950/60 border-b border-slate-800/60 text-slate-300 text-xs uppercase tracking-wider">
+                  <th className="p-4 font-bold select-none">Name</th>
+                  <th className="p-4 font-bold w-28 select-none">Size</th>
+                  <th className="p-4 font-bold w-48 select-none">Date Modified</th>
+                  <th className="p-4 font-bold w-32 text-center select-none">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/30 text-sm">
                 {files.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-400">
-                      Folder is empty
+                    <td colSpan={4} className="p-12 text-center text-slate-400 text-xs select-none">
+                      No files or folders in this directory.
                     </td>
                   </tr>
                 )}
                 {files.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-800/40 transition">
+                  <tr key={idx} className="hover:bg-slate-800/30 transition-all duration-200">
                     <td className="p-4">
                       {item.is_dir ? (
                         <button
                           onClick={() => handleOpenFolder(item.path)}
-                          className="flex items-center gap-3 text-blue-400 hover:text-blue-300 font-medium transition"
+                          className="flex items-center gap-3 text-blue-400 hover:text-blue-300 font-bold transition-all text-xs select-none"
                         >
                           <Icons.Folder className="w-5 h-5 flex-shrink-0 fill-blue-500/20" />
                           <span className="truncate max-w-sm">{item.name}</span>
                         </button>
                       ) : (
-                        <div className="flex items-center gap-3 text-slate-200">
+                        <div className="flex items-center gap-3 text-slate-200 text-xs font-medium">
                           <Icons.File className="w-5 h-5 flex-shrink-0 text-slate-500" />
                           <span className="truncate max-w-sm">{item.name}</span>
                         </div>
@@ -342,10 +370,10 @@ export default function FileManagerDashboard() {
                         {!item.is_dir && (
                           <button
                             onClick={() => handleEditFile(item)}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-blue-400 transition"
+                            className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-blue-400 border border-slate-700/60 transition-all"
                             title="Edit file"
                           >
-                            <Icons.Edit3 className="w-4 h-4" />
+                            <Icons.Edit3 className="w-3.5 h-3.5" />
                           </button>
                         )}
                         <button
@@ -353,24 +381,24 @@ export default function FileManagerDashboard() {
                             setRenameValue(item.name);
                             setRenamingItem(item);
                           }}
-                          className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 transition"
+                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-slate-300 border border-slate-700/60 transition-all"
                           title="Rename item"
                         >
-                          <Icons.Scissors className="w-4 h-4" />
+                          <Icons.Scissors className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleCut(item)}
-                          className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-amber-400 transition"
+                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-amber-400 border border-slate-700/60 transition-all"
                           title="Cut / Move item"
                         >
-                          <Icons.Scissors className="w-4 h-4 rotate-90" />
+                          <Icons.Scissors className="w-3.5 h-3.5 rotate-90" />
                         </button>
                         <button
                           onClick={() => handleDelete(item)}
-                          className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-red-400 transition"
+                          className="p-2 bg-slate-800/60 hover:bg-slate-700 rounded-xl text-red-400 border border-slate-700/60 transition-all"
                           title="Delete item"
                         >
-                          <Icons.Trash2 className="w-4 h-4" />
+                          <Icons.Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -382,25 +410,23 @@ export default function FileManagerDashboard() {
         </div>
       )}
 
-      {/* MODALS */}
-
       {/* CREATE FILE / DIRECTORY MODAL */}
       {createType && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-100">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100">
               {createType === 'file' ? (
                 <>
-                  <Icons.FilePlus className="w-5 h-5 text-blue-400" /> Create New File
+                  <Icons.FilePlus className="w-4 h-4 text-blue-400" /> Create New File
                 </>
               ) : (
                 <>
-                  <Icons.FolderPlus className="w-5 h-5 text-blue-400" /> Create New Directory
+                  <Icons.FolderPlus className="w-4 h-4 text-blue-400" /> Create New Directory
                 </>
               )}
             </h3>
-            <div className="mb-4">
-              <label className="text-slate-400 text-xs font-semibold mb-2 block uppercase">
+            <div className="space-y-1">
+              <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
                 Name
               </label>
               <input
@@ -409,24 +435,24 @@ export default function FileManagerDashboard() {
                 value={newItemName}
                 onChange={(e) => setNewItemName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateItem()}
-                className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
+                className="w-full bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-3.5 py-2 rounded-xl text-slate-200 outline-none text-xs font-mono transition-all"
                 placeholder={`e.g. ${createType === 'file' ? 'config.txt' : 'new-folder'}`}
               />
             </div>
-            <div className="flex items-center justify-end gap-3 mt-6">
+            <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 onClick={() => {
                   setNewItemName('');
                   setCreateType(null);
                 }}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition"
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateItem}
                 disabled={!newItemName}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 transition"
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-500/20"
               >
                 Create
               </button>
@@ -437,13 +463,13 @@ export default function FileManagerDashboard() {
 
       {/* RENAME MODAL */}
       {renamingItem && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-md shadow-2xl">
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-100">
-              <Icons.Edit3 className="w-5 h-5 text-blue-400" /> Rename Item
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100">
+              <Icons.Edit3 className="w-4 h-4 text-blue-400" /> Rename Item
             </h3>
-            <div className="mb-4">
-              <label className="text-slate-400 text-xs font-semibold mb-2 block uppercase">
+            <div className="space-y-1">
+              <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
                 New Name
               </label>
               <input
@@ -452,23 +478,23 @@ export default function FileManagerDashboard() {
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-                className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
+                className="w-full bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 px-3.5 py-2 rounded-xl text-slate-200 outline-none text-xs font-mono transition-all"
               />
             </div>
-            <div className="flex items-center justify-end gap-3 mt-6">
+            <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 onClick={() => {
                   setRenameValue('');
                   setRenamingItem(null);
                 }}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition"
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
               >
                 Cancel
               </button>
               <button
                 onClick={handleRename}
                 disabled={!renameValue || renameValue === renamingItem.name}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 transition"
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition-all shadow-lg hover:shadow-blue-500/20"
               >
                 Rename
               </button>
@@ -479,10 +505,10 @@ export default function FileManagerDashboard() {
 
       {/* TEXT EDITOR MODAL */}
       {editingFile && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between mb-4 flex-shrink-0">
-              <h3 className="text-lg font-bold flex items-center gap-2 text-slate-100 truncate max-w-lg">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl space-y-4">
+            <div className="flex items-center justify-between flex-shrink-0">
+              <h3 className="text-sm font-bold flex items-center gap-2 text-slate-100 truncate max-w-lg">
                 <Icons.FileText className="w-5 h-5 text-blue-400 flex-shrink-0" />
                 <span>Editing: {editingFile.split(/[\\/]/).pop()}</span>
               </h3>
@@ -490,26 +516,26 @@ export default function FileManagerDashboard() {
                 onClick={() => setEditingFile(null)}
                 className="text-slate-500 hover:text-slate-300 transition"
               >
-                &times;
+                <Icons.X className="w-4 h-4" />
               </button>
             </div>
             <textarea
               value={fileContent}
               onChange={(e) => setFileContent(e.target.value)}
-              className="flex-1 bg-slate-950 border border-slate-800 p-4 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm resize-none"
+              className="flex-1 bg-slate-950/60 border border-slate-800/80 p-4 rounded-xl text-slate-200 outline-none focus:border-blue-500 font-mono text-xs resize-none transition-all"
               placeholder="File content..."
               spellCheck={false}
             />
-            <div className="flex items-center justify-end gap-3 mt-4 flex-shrink-0">
+            <div className="flex items-center justify-end gap-2 flex-shrink-0 pt-2">
               <button
                 onClick={() => setEditingFile(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveFile}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-blue-500/20"
               >
                 Save Changes
               </button>

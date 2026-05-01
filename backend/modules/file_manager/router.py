@@ -1,51 +1,65 @@
 """
-File Manager Module Router
+File Manager Module Router - Role-Based Sandbox
 Handles listing, creating, renaming, deleting, moving, reading, and writing files.
+Includes full system access for SuperAdmins and isolated sandbox for regular Users.
 """
 import os
+import json
 import shutil
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Depends
+from pydantic import BaseModel
+from modules.auth.router import get_current_user
 
 router = APIRouter()
 
-# On Windows (non-Linux), fall back to mock data or localized project workspace path
 IS_WINDOWS = os.name == 'nt'
 
-# Define base/allowed directories
-if IS_WINDOWS:
-    # Current directory and workspace for Dev Compatibility
-    ALLOWED_ROOTS = [os.path.abspath(os.getcwd()), "C:\\"]
-else:
-    ALLOWED_ROOTS = ["/var/www", "/root", "/opt", "/tmp"]
+def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
+    """Validate and return safe absolute path depending on User Role."""
+    if not requested_path:
+        # Default starting location based on role
+        if user["role"] == "superadmin":
+            requested_path = "C:\\" if IS_WINDOWS else "/"
+        else:
+            # First permitted folder or fallback
+            p_folders = user.get("permitted_folders", "[]")
+            if isinstance(p_folders, str):
+                try:
+                    p_folders = json.loads(p_folders)
+                except:
+                    p_folders = [p_folders]
+            requested_path = p_folders[0] if (p_folders and len(p_folders) > 0) else "/home"
 
-def get_base_root(requested_path: str) -> Optional[str]:
-    """Check if the requested path starts with one of the allowed roots."""
-    abs_requested = os.path.abspath(requested_path)
-    for root in ALLOWED_ROOTS:
+    # 1. SuperAdmin has unrestricted system-wide access
+    if user["role"] == "superadmin":
+        return os.path.abspath(requested_path)
+
+    # 2. Regular User is strictly restricted to their permitted directories
+    p_folders = user.get("permitted_folders", "[]")
+    if isinstance(p_folders, str):
         try:
-            abs_root = os.path.abspath(root)
-            if abs_requested.startswith(abs_root):
-                return abs_root
+            p_folders = json.loads(p_folders)
+        except:
+            p_folders = [p_folders]
+
+    if not p_folders:
+        p_folders = ["/home"]
+
+    abs_requested = os.path.abspath(requested_path)
+    # Check if starts with any allowed user path
+    for p in p_folders:
+        try:
+            abs_p = os.path.abspath(p)
+            if abs_requested.startswith(abs_p):
+                return abs_requested
         except:
             continue
-    return None
 
-def check_safe_path(requested_path: str) -> str:
-    """Validate and return safe absolute path."""
-    # Return directly if not safe
-    base = get_base_root(requested_path)
-    if not base:
-        # For full Dev Compatibility, if on Windows and path doesn't start with any allowed root,
-        # fallback to current workspace's root.
-        if IS_WINDOWS:
-            return os.path.abspath(requested_path)
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied. Path must be inside: {ALLOWED_ROOTS}"
-        )
-    return os.path.abspath(requested_path)
+    raise HTTPException(
+        status_code=403,
+        detail=f"Access denied. Normal users are strictly isolated to their home folders: {p_folders}"
+    )
 
 
 # Schemas
@@ -73,14 +87,10 @@ class WriteFileRequest(BaseModel):
 
 
 @router.get("/list")
-async def list_directory(path: Optional[str] = Query(None)) -> Dict[str, Any]:
+async def list_directory(path: Optional[str] = Query(None), user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """List directory contents."""
     try:
-        if not path:
-            # Provide default path based on environment
-            path = ALLOWED_ROOTS[0]
-        
-        target_path = check_safe_path(path)
+        target_path = check_safe_path(path, user)
         if not os.path.exists(target_path):
             return {
                 "status": "success",
@@ -121,10 +131,10 @@ async def list_directory(path: Optional[str] = Query(None)) -> Dict[str, Any]:
 
 
 @router.get("/read")
-async def read_file(path: str) -> Dict[str, Any]:
+async def read_file(path: str, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Read file content."""
     try:
-        target_path = check_safe_path(path)
+        target_path = check_safe_path(path, user)
         if not os.path.exists(target_path):
             raise HTTPException(status_code=404, detail="File not found.")
 
@@ -146,10 +156,10 @@ async def read_file(path: str) -> Dict[str, Any]:
 
 
 @router.post("/write")
-async def write_file(req: WriteFileRequest) -> Dict[str, Any]:
+async def write_file_content(req: WriteFileRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Write content to a file."""
     try:
-        target_path = check_safe_path(req.path)
+        target_path = check_safe_path(req.path, user)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(req.content)
 
@@ -164,10 +174,10 @@ async def write_file(req: WriteFileRequest) -> Dict[str, Any]:
 
 
 @router.post("/create-file")
-async def create_file(req: CreateFileRequest) -> Dict[str, Any]:
+async def create_file(req: CreateFileRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Create a new file."""
     try:
-        target_path = check_safe_path(req.path)
+        target_path = check_safe_path(req.path, user)
         if os.path.exists(target_path):
             raise HTTPException(status_code=400, detail="Path already exists.")
 
@@ -185,10 +195,10 @@ async def create_file(req: CreateFileRequest) -> Dict[str, Any]:
 
 
 @router.post("/create-dir")
-async def create_dir(req: CreateDirRequest) -> Dict[str, Any]:
+async def create_dir(req: CreateDirRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Create a new directory."""
     try:
-        target_path = check_safe_path(req.path)
+        target_path = check_safe_path(req.path, user)
         if os.path.exists(target_path):
             raise HTTPException(status_code=400, detail="Path already exists.")
 
@@ -205,11 +215,11 @@ async def create_dir(req: CreateDirRequest) -> Dict[str, Any]:
 
 
 @router.post("/rename")
-async def rename_item(req: RenameRequest) -> Dict[str, Any]:
+async def rename_item(req: RenameRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Rename a file or directory."""
     try:
-        old_path = check_safe_path(req.old_path)
-        new_path = check_safe_path(req.new_path)
+        old_path = check_safe_path(req.old_path, user)
+        new_path = check_safe_path(req.new_path, user)
 
         if not os.path.exists(old_path):
             raise HTTPException(status_code=404, detail="Source path not found.")
@@ -230,10 +240,10 @@ async def rename_item(req: RenameRequest) -> Dict[str, Any]:
 
 
 @router.post("/delete")
-async def delete_item(req: DeleteRequest) -> Dict[str, Any]:
+async def delete_item(req: DeleteRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Delete a file or directory."""
     try:
-        target_path = check_safe_path(req.path)
+        target_path = check_safe_path(req.path, user)
         if not os.path.exists(target_path):
             raise HTTPException(status_code=404, detail="Path not found.")
 
@@ -253,11 +263,11 @@ async def delete_item(req: DeleteRequest) -> Dict[str, Any]:
 
 
 @router.post("/move")
-async def move_item(req: MoveRequest) -> Dict[str, Any]:
+async def move_item(req: MoveRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Move/Cut-and-paste a file or directory."""
     try:
-        source_path = check_safe_path(req.source_path)
-        target_path = check_safe_path(req.target_path)
+        source_path = check_safe_path(req.source_path, user)
+        target_path = check_safe_path(req.target_path, user)
 
         if not os.path.exists(source_path):
             raise HTTPException(status_code=404, detail="Source path not found.")

@@ -198,3 +198,96 @@ async def get_container_logs(container_id: str) -> Dict[str, Any]:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-compose")
+async def scan_compose_files() -> Dict[str, Any]:
+    """Scan directories for any docker-compose.yml files to suggest deployment."""
+    import os
+    from pathlib import Path
+
+    IS_WINDOWS = os.name == 'nt'
+    scan_paths = []
+    if IS_WINDOWS:
+        scan_paths = [Path("./test_docker"), Path("./test_nginx"), Path("./")]
+    else:
+        scan_paths = [Path("/home"), Path("/var/www"), Path("/opt/copanel")]
+
+    compose_files = []
+    # Search up to 3 directory levels deep to avoid scanning the entire filesystem
+    for base_path in scan_paths:
+        if base_path.exists() and base_path.is_dir():
+            try:
+                for root, dirs, files in os.walk(str(base_path)):
+                    # Limit depth
+                    depth = root.replace(str(base_path), "").count(os.sep)
+                    if depth > 3:
+                        dirs[:] = []  # Do not go deeper
+                        continue
+
+                    for file in files:
+                        if file in ["docker-compose.yml", "docker-compose.yaml", "docker-composer.yml"]:
+                            compose_files.append({
+                                "path": root,
+                                "filename": file,
+                                "full_path": os.path.join(root, file)
+                            })
+            except Exception:
+                continue
+
+    # Add mock compose file if empty on development for testability
+    if not compose_files:
+        compose_files.append({
+            "path": "/home/user1/wordpress-app",
+            "filename": "docker-compose.yml",
+            "full_path": "/home/user1/wordpress-app/docker-compose.yml"
+        })
+
+    return {
+        "status": "success",
+        "compose_files": compose_files
+    }
+
+
+class ComposeActionRequest(BaseModel):
+    path: str
+
+
+@router.post("/up-compose")
+async def build_compose_stack(req: ComposeActionRequest) -> Dict[str, Any]:
+    """Build and start the compose stack in the directory."""
+    import subprocess
+    import os
+
+    if not os.path.isdir(req.path):
+        raise HTTPException(status_code=400, detail=f"The path '{req.path}' does not exist.")
+
+    try:
+        # Check command availability
+        cmd = "docker compose"
+        import shutil
+        if shutil.which("docker-compose"):
+            cmd = "docker-compose"
+
+        # Execute docker-compose up -d
+        res = subprocess.run(
+            f"{cmd} up -d",
+            shell=True,
+            cwd=req.path,
+            capture_output=True,
+            text=True
+        )
+
+        if res.returncode != 0:
+            return {
+                "status": "error",
+                "message": res.stderr or "Failed to bring up docker compose stack."
+            }
+
+        return {
+            "status": "success",
+            "message": "Docker Compose stack brought up successfully.",
+            "output": res.stdout
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

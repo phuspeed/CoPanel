@@ -126,6 +126,14 @@ setup_user_and_dirs() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     REPO_DIR="$(dirname "$SCRIPT_DIR")"
     
+    # Check if running via one-liner (curl/wget), clone from GitHub directly
+    if [[ ! -d "$REPO_DIR/backend" ]] || [[ ! -f "$REPO_DIR/backend/main.py" ]]; then
+        log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
+        rm -rf "$CoPanel_HOME"
+        git clone https://github.com/phuspeed/CoPanel.git "$CoPanel_HOME"
+        REPO_DIR="$CoPanel_HOME"
+    fi
+
     # Ensure directory exists with correct permissions
     if [[ ! -d "$CoPanel_HOME" ]]; then
         mkdir -p "$CoPanel_HOME"
@@ -151,7 +159,6 @@ setup_user_and_dirs() {
         fi
     fi
 
-    
     # Secure permissions and ownership
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
     chmod -R u+rwX,go+rX "$CoPanel_HOME"
@@ -368,6 +375,11 @@ verify_installation() {
 ###############################################################################
 
 print_summary() {
+    ADMIN_PWD="admin (or previously generated)"
+    if [[ -f "${CoPanel_HOME}/config/admin_password.txt" ]]; then
+        ADMIN_PWD=$(cat "${CoPanel_HOME}/config/admin_password.txt")
+    fi
+
     cat << EOF
 
 ${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
@@ -376,6 +388,7 @@ ${GREEN}╚═══════════════════════
 
 ${BLUE}Installation Summary:${NC}
 
+📍 Initial Admin Password: ${GREEN}${ADMIN_PWD}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
 🌐 Access URL:        http://localhost:${NGINX_PORT}
