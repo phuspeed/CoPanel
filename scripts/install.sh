@@ -139,9 +139,18 @@ setup_user_and_dirs() {
 
     # Sync files from REPO_DIR to CoPanel_HOME if different
     if [[ "$REPO_DIR" != "$CoPanel_HOME" ]]; then
-        log_info "Copying project files from $REPO_DIR to $CoPanel_HOME..."
-        cp -a "$REPO_DIR"/. "$CoPanel_HOME"/
+        log_info "Syncing project files from $REPO_DIR to $CoPanel_HOME..."
+        if command -v rsync &> /dev/null; then
+            rsync -a --delete \
+                --exclude "venv" \
+                --exclude "node_modules" \
+                --exclude ".git" \
+                "$REPO_DIR/" "$CoPanel_HOME/"
+        else
+            cp -a "$REPO_DIR"/. "$CoPanel_HOME"/
+        fi
     fi
+
     
     # Secure permissions and ownership
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
