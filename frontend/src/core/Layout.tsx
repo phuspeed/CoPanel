@@ -13,16 +13,12 @@ interface IconProps {
 
 // Icon mapping
 const iconMap: Record<string, React.ComponentType<IconProps>> = {
-  // System Monitor
   Activity: Icons.Activity,
   BarChart3: Icons.BarChart3,
   BarChart: Icons.BarChart,
-
-  // File Manager
   Folder: Icons.Folder,
   FileText: Icons.FileText,
   Upload: Icons.Upload,
-
   Globe: Icons.Globe,
   Zap: Icons.Zap,
   Database: Icons.Database,
@@ -34,8 +30,6 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   Package: Icons.Package,
   Server: Icons.Server,
   Users: Icons.Users,
-
-  // Default
   Grid: Icons.Grid,
   Settings: Icons.Settings,
   Home: Icons.Home,
@@ -46,12 +40,62 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const location = useLocation();
   const modules = moduleRegistry.getAll();
   const [installedPackages, setInstalledPackages] = useState<any[]>([]);
-  
-  // Change password modal state
+
+  // Theme & Language Global States
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'dark';
+  });
+  const [language, setLanguage] = useState<'en' | 'vi'>(() => {
+    return (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en';
+  });
+
+  // Modal states
   const [changePwdOpen, setChangePwdOpen] = useState(false);
   const [oldPwdInput, setOldPwdInput] = useState('');
   const [newPwdInput, setNewPwdInput] = useState('');
   const [pwdMsg, setPwdMsg] = useState('');
+
+  const isDark = theme === 'dark';
+
+  const t = {
+    en: {
+      dashboard: 'Dashboard',
+      modules: 'Modules',
+      installed: 'Installed',
+      manageUsers: 'Manage Users',
+      changePassword: 'Change Password',
+      logout: 'Logout',
+      vpsManagement: 'VPS Management',
+      oldPassword: 'Old Password',
+      newPassword: 'New Password',
+      update: 'Update',
+      cancel: 'Cancel',
+      language: 'English',
+      themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark'
+    },
+    vi: {
+      dashboard: 'Tổng quan',
+      modules: 'Các Module',
+      installed: 'Đã cài đặt',
+      manageUsers: 'Quản lý người dùng',
+      changePassword: 'Đổi mật khẩu',
+      logout: 'Đăng xuất',
+      vpsManagement: 'Quản lý VPS',
+      oldPassword: 'Mật khẩu cũ',
+      newPassword: 'Mật khẩu mới',
+      update: 'Cập nhật',
+      cancel: 'Hủy',
+      language: 'Tiếng Việt',
+      themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'
+    }
+  };
+
+  const tr = t[language];
+
+  useEffect(() => {
+    localStorage.setItem('copanel_theme', theme);
+    localStorage.setItem('copanel_lang', language);
+  }, [theme, language]);
 
   const handlePasswordChange = async () => {
     if (!oldPwdInput || !newPwdInput) {
@@ -106,7 +150,6 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
   const isActive = (path: string) => location.pathname === path;
 
-  // Enforce module restrictions in sidebar
   const allowedModules = modules.filter((mod) => {
     if (!user || user.role === 'superadmin') return true;
     try {
@@ -124,22 +167,27 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   });
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-50">
+    <div className={`flex h-screen transition-colors duration-200 ${
+      isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
+    }`}>
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 bg-slate-900 border-r border-slate-800 transition-transform duration-300 lg:static lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 border-r transition-transform duration-300 lg:static lg:translate-x-0',
+          isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-md',
           sidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full w-64'
         )}
       >
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="p-6 border-b border-slate-800">
+          <div className={`p-6 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
             <h1 className="text-xl font-bold flex items-center gap-2">
-              <Icons.Server className="w-6 h-6 text-blue-400" />
+              <Icons.Server className={`w-6 h-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
               CoPanel
             </h1>
-            <p className="text-xs text-slate-400 mt-1">VPS Management</p>
+            <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+              {tr.vpsManagement}
+            </p>
           </div>
 
           {/* Navigation */}
@@ -150,19 +198,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
               className={cn(
                 'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
                 isActive('/')
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-300 hover:bg-slate-800'
+                  ? 'bg-blue-600 text-white font-bold'
+                  : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
               )}
             >
               <Icons.Home className="w-5 h-5" />
-              <span>Dashboard</span>
+              <span>{tr.dashboard}</span>
             </Link>
 
             {/* Allowed Core Module links */}
             {allowedModules.length > 0 && (
               <>
-                <div className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase mt-6 mb-2">
-                  Modules ({allowedModules.length})
+                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${
+                  isDark ? 'text-slate-400' : 'text-slate-500'
+                }`}>
+                  {tr.modules} ({allowedModules.length})
                 </div>
                 {allowedModules.map((module) => (
                   <Link
@@ -171,8 +221,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                     className={cn(
                       'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
                       isActive(module.path)
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-300 hover:bg-slate-800'
+                        ? 'bg-blue-600 text-white font-bold'
+                        : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
                     )}
                     title={module.description}
                   >
@@ -183,27 +233,29 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
               </>
             )}
 
-            {/* Only SuperAdmins can view dynamic user manager */}
+            {/* Manage Users (SuperAdmin only) */}
             {user && user.role === 'superadmin' && (
               <Link
                 to="/users"
                 className={cn(
                   'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mt-4',
                   isActive('/users')
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-800'
+                    ? 'bg-indigo-600 text-white font-bold'
+                    : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
                 )}
               >
-                <Icons.Users className="w-5 h-5 text-indigo-400" />
-                <span>Manage Users</span>
+                <Icons.Users className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                <span>{tr.manageUsers}</span>
               </Link>
             )}
 
             {/* Installed Dynamic Packages */}
             {installedPackages.length > 0 && (
               <>
-                <div className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase mt-6 mb-2">
-                  Installed ({installedPackages.length})
+                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${
+                  isDark ? 'text-slate-400' : 'text-slate-500'
+                }`}>
+                  {tr.installed} ({installedPackages.length})
                 </div>
                 {installedPackages.map((pkg) => (
                   <Link
@@ -213,7 +265,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                       'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
                       location.search === `?id=${pkg.id}`
                         ? 'bg-blue-600 text-white font-bold'
-                        : 'text-slate-300 hover:bg-slate-800'
+                        : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
                     )}
                     title={pkg.description}
                   >
@@ -226,7 +278,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
           </nav>
 
           {/* Footer */}
-          <div className="p-4 border-t border-slate-800 text-xs text-slate-400">
+          <div className={`p-4 border-t text-xs ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'}`}>
             <p>v1.0.0</p>
           </div>
         </div>
@@ -235,25 +287,50 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Bar */}
-        <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-slate-800 rounded-lg lg:hidden"
-          >
-            {sidebarOpen ? (
-              <Icons.X className="w-5 h-5" />
-            ) : (
-              <Icons.Menu className="w-5 h-5" />
-            )}
-          </button>
+        <header className={`px-6 py-4 flex items-center justify-between border-b transition-colors duration-200 ${
+          isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+        }`}>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className={`p-2 rounded-lg lg:hidden ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}
+            >
+              {sidebarOpen ? <Icons.X className="w-5 h-5" /> : <Icons.Menu className="w-5 h-5" />}
+            </button>
+
+            {/* Language & Theme switches in Layout Top bar */}
+            <div className="flex items-center gap-2 ml-2">
+              <button
+                onClick={() => setTheme(isDark ? 'light' : 'dark')}
+                className={`p-2 rounded-xl border transition duration-150 ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'
+                }`}
+                title={tr.themeTitle}
+              >
+                {isDark ? <Icons.Sun className="w-4 h-4" /> : <Icons.Moon className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => setLanguage(language === 'en' ? 'vi' : 'en')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                }`}
+              >
+                <Icons.Globe className="w-3.5 h-3.5" />
+                {language === 'en' ? 'EN' : 'VI'}
+              </button>
+            </div>
+          </div>
+
           <div className="flex items-center gap-4">
             <div className="flex flex-col text-right">
-              <span className="text-sm font-bold text-slate-100">{user?.username || 'Guest'}</span>
+              <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+                {user?.username || 'Guest'}
+              </span>
               <button
                 onClick={() => { setChangePwdOpen(!changePwdOpen); setPwdMsg(''); }}
                 className="text-[10px] text-blue-400 hover:text-blue-300 underline text-right"
               >
-                Change Password
+                {tr.changePassword}
               </button>
             </div>
             {onLogout && (
@@ -262,40 +339,50 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-950/40 hover:bg-red-900/40 border border-red-900/40 text-red-400 font-bold rounded-xl transition-all"
               >
                 <Icons.LogOut className="w-3.5 h-3.5" />
-                Logout
+                {tr.logout}
               </button>
             )}
           </div>
         </header>
 
-        {/* Change Password Modal Popup Overlay */}
+        {/* Change Password Modal */}
         {changePwdOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl relative">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-fade-in select-none">
+            <div className={`p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl relative border ${
+              isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+            }`}>
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-100">Change Password</h3>
+                <h3 className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{tr.changePassword}</h3>
                 <button onClick={() => setChangePwdOpen(false)} className="text-slate-500 hover:text-slate-300">
                   <Icons.X className="w-4 h-4" />
                 </button>
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">Old Password</label>
+                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">{tr.oldPassword}</label>
                 <input
                   type="password"
                   value={oldPwdInput}
                   onChange={(e) => setOldPwdInput(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full bg-slate-950/60 border border-slate-800 hover:border-slate-700 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none transition-all"
+                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${
+                    isDark
+                      ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
+                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
+                  }`}
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">New Password</label>
+                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">{tr.newPassword}</label>
                 <input
                   type="password"
                   value={newPwdInput}
                   onChange={(e) => setNewPwdInput(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full bg-slate-950/60 border border-slate-800 hover:border-slate-700 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none transition-all"
+                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${
+                    isDark
+                      ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
+                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
+                  }`}
                 />
               </div>
               {pwdMsg && (
@@ -306,15 +393,17 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setChangePwdOpen(false)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                  }`}
                 >
-                  Cancel
+                  {tr.cancel}
                 </button>
                 <button
                   onClick={handlePasswordChange}
                   className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all"
                 >
-                  Update
+                  {tr.update}
                 </button>
               </div>
             </div>
@@ -322,8 +411,10 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         )}
 
         {/* Content */}
-        <main className="flex-1 overflow-auto">
-          <Outlet />
+        <main className={`flex-1 overflow-auto transition-colors duration-200 ${
+          isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
+        }`}>
+          <Outlet context={{ theme, setTheme, language, setLanguage }} />
         </main>
       </div>
     </div>

@@ -1,9 +1,10 @@
 /**
  * File Manager - Complete Component
  * Premium file explorer with advanced editing and action capabilities.
- * Includes Light/Dark theme and En/Vi translations.
+ * Synchronized with the global Light/Dark theme and En/Vi languages.
  */
 import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 interface FileItem {
@@ -20,9 +21,23 @@ export default function FileManagerDashboard() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Localization and Theme settings
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [language, setLanguage] = useState<'en' | 'vi'>('en');
+  // Global Context synchronization fallback
+  const context = useOutletContext<{
+    theme: 'dark' | 'light';
+    language: 'en' | 'vi';
+    setTheme: (t: 'dark' | 'light') => void;
+    setLanguage: (l: 'en' | 'vi') => void;
+  }>();
+
+  const [localTheme] = useState<'dark' | 'light'>(
+    (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'dark'
+  );
+  const [localLanguage] = useState<'en' | 'vi'>(
+    (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en'
+  );
+
+  const theme = context?.theme || localTheme;
+  const language = context?.language || localLanguage;
 
   // Modals / Dialogs state
   const [editingFile, setEditingFile] = useState<string | null>(null);
@@ -465,7 +480,6 @@ export default function FileManagerDashboard() {
     return new Date(timestamp * 1000).toLocaleString();
   };
 
-  // Base background style based on dark/light
   const containerStyle = isDark
     ? 'bg-slate-950 text-slate-100 min-h-screen'
     : 'bg-slate-50 text-slate-900 min-h-screen';
@@ -486,26 +500,6 @@ export default function FileManagerDashboard() {
               <Icons.Folder className={`w-8 h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
               {tr.title}
             </h1>
-            <div className="flex items-center gap-1.5 ml-4">
-              <button
-                onClick={() => setTheme(isDark ? 'light' : 'dark')}
-                className={`p-2 rounded-xl border transition duration-150 ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-400' : 'bg-slate-200 hover:bg-slate-300 border-slate-300 text-slate-600'
-                }`}
-                title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              >
-                {isDark ? <Icons.Sun className="w-4 h-4" /> : <Icons.Moon className="w-4 h-4" />}
-              </button>
-              <button
-                onClick={() => setLanguage(language === 'en' ? 'vi' : 'en')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-200 hover:bg-slate-300 border-slate-300 text-slate-700'
-                }`}
-              >
-                <Icons.Globe className="w-4 h-4" />
-                {language === 'en' ? 'EN' : 'VI'}
-              </button>
-            </div>
           </div>
           <p className={`${isDark ? 'text-slate-400' : 'text-slate-500'} text-sm md:text-base leading-relaxed max-w-xl`}>
             {tr.description}
