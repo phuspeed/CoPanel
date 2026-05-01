@@ -104,32 +104,7 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
 
-@router.post("/add")
-async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
-    """Add a rule to the firewall."""
-    global MOCK_RULES
 
-    # Always enforce SSH safety check
-    if "22" in req.port and req.action.upper() == "DENY":
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot add a rule blocking SSH port 22 to prevent lockout."
-        )
-
-    if IS_WINDOWS:
-        # Check if rule exists
-        for rule in MOCK_RULES:
-            if rule["port"] == req.port:
-                raise HTTPException(status_code=400, detail="Rule already exists.")
-        MOCK_RULES.append({
-            "port": req.port,
-            "action": req.action.upper(),
-            "comment": req.comment or ""
-        })
-        return {
-            "status": "success",
-            "message": "Firewall rule added successfully (Mock Mode)."
-        }
 
 def run_ufw_cmd(action: str, port: str) -> bool:
     """Helper to run UFW commands natively or with sudo."""
