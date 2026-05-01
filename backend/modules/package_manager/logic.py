@@ -92,6 +92,7 @@ def load_packages() -> List[Dict[str, Any]]:
         "apache": "apache2",
         "redis": "redis-server",
         "memcached": "memcached",
+        "firewall_service": "ufw",
     }
 
     try:
@@ -138,6 +139,7 @@ def get_package(pkg_id: str) -> Dict[str, Any]:
 
 def install_package(pkg_id: str) -> Dict[str, Any]:
     """Simulates package installation and generates backend modules."""
+    import subprocess
     packages = load_packages()
     target_pkg = None
     for p in packages:
@@ -147,6 +149,20 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
             break
 
     if target_pkg:
+        # If the user clicks install on 'firewall_service', physically install ufw
+        if pkg_id == "firewall_service":
+            if not shutil.which("ufw"):
+                if shutil.which("apt-get"):
+                    try:
+                        subprocess.run(["apt-get", "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["apt-get", "install", "-y", "ufw"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+                elif shutil.which("yum"):
+                    try:
+                        subprocess.run(["yum", "install", "-y", "ufw"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
         save_packages(packages)
         # Load the module dynamically to backend/modules/<pkg_id>
         pkg_module_dir = MODULES_DIR / pkg_id
