@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { moduleRegistry } from './registry';
 import * as Icons from 'lucide-react';
-import { cn } from '../lib/utils.ts';
+import { cn } from '../lib/utils';
 
 interface IconProps {
   className?: string;
@@ -122,20 +122,4 @@ export default function Layout() {
             ) : (
               <Icons.Menu className="w-5 h-5" />
             )}
-          </button>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-400">Admin</span>
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
-              <Icons.User className="w-4 h-4" />
-            </div>
-          </div>
-        </header>
-
-        {/* Content */}
-        <main className="flex-1 overflow-auto">
-          <Outlet />
-        </main>
-      </div>
-    </div>
-  );
-}
+          </butt
