@@ -227,7 +227,7 @@ server {
     listen 8686;
     listen [::]:8686;
     
-    server_name localhost;
+    server_name _;
     
     client_max_body_size 100M;
     
