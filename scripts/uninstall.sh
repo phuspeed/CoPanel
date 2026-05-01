@@ -54,14 +54,14 @@ echo -e "${YELLOW}Please select uninstallation mode:${NC}"
 echo "1) Safe Uninstall (Only remove CoPanel and its UI - Keeps websites, Nginx, Docker & user data intact) [Recommended]"
 echo "2) Complete Purge (Remove everything - CoPanel, system-wide Nginx, Docker, and all associated user files)"
 echo ""
-read -p "Enter your choice (1 or 2, default: 1): " UNINSTALL_MODE
+read -p "Enter your choice (1 or 2, default: 1): " UNINSTALL_MODE < /dev/tty
 UNINSTALL_MODE=${UNINSTALL_MODE:-1}
 
 echo ""
 
 if [[ "$UNINSTALL_MODE" == "2" ]]; then
     log_warning "CAUTION: This mode will completely purge Nginx, Docker, and delete all user data."
-    read -p "Are you absolutely sure you want to completely wipe out everything? (yes/no): " CONFIRM_PURGE
+    read -p "Are you absolutely sure you want to completely wipe out everything? (yes/no): " CONFIRM_PURGE < /dev/tty
     if [[ "$CONFIRM_PURGE" != "yes" ]]; then
         log_info "Reverting back to Safe Uninstall mode."
         UNINSTALL_MODE=1
