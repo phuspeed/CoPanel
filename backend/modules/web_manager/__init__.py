@@ -1,0 +1,3 @@
+"""
+Web Manager Module
+"""
