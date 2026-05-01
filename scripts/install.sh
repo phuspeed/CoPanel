@@ -189,10 +189,12 @@ setup_frontend() {
         cd "$CoPanel_HOME/frontend"
         
         # Install dependencies
-        npm ci >/dev/null 2>&1 || npm install >/dev/null 2>&1
+        log_info "Installing npm packages..."
+        npm install
         
         # Build frontend
-        npm run build >/dev/null 2>&1
+        log_info "Building frontend..."
+        npm run build
         
         log_success "Frontend built and ready"
         cd - >/dev/null
