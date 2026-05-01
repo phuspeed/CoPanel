@@ -35,13 +35,10 @@ class DeleteRuleRequest(BaseModel):
 def run_cmd(cmd: List[str]) -> str:
     """Run system command using subprocess safely."""
     try:
-        res = subprocess.run(cmd, shell=False, capture_output=True, text=True, check=True)
-        return res.stdout
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Command execution failed: {e.stderr}"
-        )
+        res = subprocess.run(cmd, shell=False, capture_output=True, text=True, check=False)
+        return res.stdout if res.returncode == 0 else res.stderr
+    except Exception as e:
+        return ""
 
 
 @router.get("/status")
@@ -56,7 +53,9 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
     import shutil
-    if not IS_WINDOWS and not shutil.which("ufw"):
+    from pathlib import Path
+    has_ufw = shutil.which("ufw") or Path("/usr/sbin/ufw").exists() or Path("/sbin/ufw").exists()
+    if not IS_WINDOWS and not has_ufw:
         return {
             "status": "success",
             "active": False,
@@ -65,8 +64,15 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
     try:
-        # Check ufw status
-        out = run_cmd(["sudo", "ufw", "status"])
+        # Check ufw status without requiring sudo if we are root
+        if shutil.which("sudo"):
+            out = run_cmd(["sudo", "ufw", "status"])
+        else:
+            out = run_cmd(["ufw", "status"])
+        
+        if not out or "Status:" not in out:
+            out = run_cmd(["/usr/sbin/ufw", "status"]) or run_cmd(["/sbin/ufw", "status"])
+            
         is_active = "Status: active" in out
 
         # Extract rules
