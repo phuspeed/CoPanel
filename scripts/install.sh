@@ -122,9 +122,19 @@ setup_user_and_dirs() {
         log_success "User exists: $CoPanel_USER"
     fi
     
+    # Resolve project root and source directory
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_DIR="$(dirname "$SCRIPT_DIR")"
+    
     # Ensure directory exists with correct permissions
     if [[ ! -d "$CoPanel_HOME" ]]; then
         mkdir -p "$CoPanel_HOME"
+    fi
+    
+    # Sync files from REPO_DIR to CoPanel_HOME if different
+    if [[ "$REPO_DIR" != "$CoPanel_HOME" ]]; then
+        log_info "Copying project files from $REPO_DIR to $CoPanel_HOME..."
+        cp -a "$REPO_DIR"/. "$CoPanel_HOME"/
     fi
     
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
