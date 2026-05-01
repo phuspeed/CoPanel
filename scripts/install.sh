@@ -287,8 +287,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=copanel
-Group=copanel
+User=root
+Group=root
 WorkingDirectory=/opt/copanel/backend
 
 Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
