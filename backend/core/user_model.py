@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from .security import hash_password
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "copanel.db"
+if Path("/opt/copanel").exists():
+    DB_PATH = Path("/opt/copanel/config/copanel.db")
+    PWD_PATH = Path("/opt/copanel/config/admin_password.txt")
+else:
+    DB_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "copanel.db"
+    PWD_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "admin_password.txt"
 
 
 def get_db_connection():
@@ -36,15 +41,15 @@ def init_db():
     conn.commit()
 
     # Seed default superadmin
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'superadmin';")
-    row = cursor.fetchone()
-    if row["count"] == 0:
-        import secrets
-        import string
-        
-        alphabet = string.ascii_letters + string.digits
+    cursor.execute("SELECT id, username, password_hash FROM users WHERE role = 'superadmin';")
+    rows = cursor.fetchall()
+    
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    
+    if len(rows) == 0:
         random_pass = ''.join(secrets.choice(alphabet) for i in range(12))
-        
         admin_pass_hash = hash_password(random_pass)
         cursor.execute(
             "INSERT INTO users (username, password_hash, role, permitted_modules, permitted_folders) VALUES (?, ?, ?, ?, ?)",
@@ -53,8 +58,23 @@ def init_db():
         conn.commit()
         
         # Write plaintext password to file for installer/admin usage
-        pwd_file = Path(__file__).resolve().parent.parent.parent / "config" / "admin_password.txt"
-        pwd_file.write_text(random_pass)
+        PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PWD_PATH.write_text(random_pass)
+    else:
+        admin_row = rows[0]
+        p_hash = admin_row["password_hash"]
+        # If legacy passlib or invalid, reset it to random and update password file
+        if not (p_hash.startswith("$2b$") or p_hash.startswith("$2a$")):
+            random_pass = ''.join(secrets.choice(alphabet) for i in range(12))
+            admin_pass_hash = hash_password(random_pass)
+            cursor.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (admin_pass_hash, admin_row["id"])
+            )
+            conn.commit()
+            
+            PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PWD_PATH.write_text(random_pass)
     conn.close()
 
 
