@@ -314,6 +314,16 @@ EOF
         nginx -t
         exit 1
     fi
+
+    # Open necessary ports if UFW is installed
+    if command_v ufw &> /dev/null || command -v ufw &> /dev/null; then
+        log_info "Configuring UFW rules for CoPanel..."
+        ufw allow 8686/tcp || true
+        ufw allow 8000/tcp || true
+        ufw allow 22/tcp || true
+        ufw allow 80/tcp || true
+        ufw allow 443/tcp || true
+    fi
 }
 
 ###############################################################################
