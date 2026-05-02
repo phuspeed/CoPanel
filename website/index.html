@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoPanel - Advanced Linux VPS Management System</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-color: #030712;
+            --surface-color: rgba(31, 41, 55, 0.4);
+            --border-color: rgba(75, 85, 99, 0.3);
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-indigo: #6366f1;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --gradient-text: linear-gradient(135deg, #60a5fa, #c084fc, #e879f9);
+            --glass-bg: rgba(17, 24, 39, 0.6);
+        }
+
+        /* Base styles */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+        }
+
+        /* Subtle glowing dots in background */
+        .bg-glow {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+            top: -100px;
+            right: -100px;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .bg-glow-bottom {
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.12) 0%, rgba(0, 0, 0, 0) 70%);
+            bottom: -300px;
+            left: -300px;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: rgba(3, 7, 18, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8%;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: #ffffff;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .logo i {
+            color: var(--accent-blue);
+            font-size: 1.6rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo span {
+            background: var(--gradient-text);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 36px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: #ffffff;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+        }
+
+        .cta-btn {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: #ffffff;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .cta-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(59, 130, 246, 0.4);
+            filter: brightness(1.1);
+        }
+
+        /* Hero Section */
+        .hero {
+            position: relative;
+            padding: 160px 8% 100px 8%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            min-height: 90vh;
+            justify-content: center;
+        }
+
+        .badge {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #60a5fa;
+            padding: 6px 16px;
+            border-radius: 30px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 24px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            animation: fadeInDown 0.8s ease;
+        }
+
+        .badge i {
+            font-size: 0.75rem;
+        }
+
+        .hero-title {
+            font-size: 4rem;
+            line-height: 1.15;
+            letter-spacing: -2px;
+            margin-bottom: 24px;
+            background: linear-gradient(to right, #ffffff 30%, #a5b4fc 60%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            max-width: 950px;
+            animation: fadeInUp 0.8s ease 0.2s both;
+        }
+
+        .hero-desc {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 750px;
+            margin-bottom: 40px;
+            animation: fadeInUp 0.8s ease 0.4s both;
+        }
+
+        .hero-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            animation: fadeInUp 0.8s ease 0.6s both;
+        }
+
+        .secondary-btn {
+            background: rgba(31, 41, 55, 0.5);
+            color: var(--text-main);
+            padding: 12px 28px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .secondary-btn:hover {
+            background: rgba(55, 65, 81, 0.6);
+            border-color: var(--text-muted);
+            color: #ffffff;
+        }
+
+        /* Preview Video/Image Frame */
+        .preview-frame {
+            margin-top: 80px;
+            position: relative;
+            width: 100%;
+            max-width: 1100px;
+            border-radius: 24px;
+            border: 1px solid var(--border-color);
+            background: rgba(17, 24, 39, 0.4);
+            padding: 12px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(99, 102, 241, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            animation: fadeInUp 1s ease 0.8s both;
+        }
+
+        .preview-inner {
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            aspect-ratio: 16/9;
+            background: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .preview-inner img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: brightness(0.9);
+            transition: all 0.5s ease;
+        }
+
+        .preview-frame:hover img {
+            filter: brightness(1);
+            transform: scale(1.01);
+        }
+
+        /* Feature Section */
+        .features {
+            padding: 100px 8%;
+            position: relative;
+        }
+
+        .section-header {
+            text-align: center;
+            max-width: 700px;
+            margin: 0 auto 70px auto;
+        }
+
+        .section-title {
+            font-size: 2.75rem;
+            letter-spacing: -1px;
+            margin-bottom: 16px;
+            background: linear-gradient(to right, #ffffff, #e2e8f0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .section-desc {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            padding: 40px 32px;
+            border-radius: 20px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            cursor: default;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(99, 102, 241, 0.4);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.1);
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent-blue);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover .feature-icon {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: #ffffff;
+            box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3);
+            border-color: transparent;
+        }
+
+        .feature-card h3 {
+            font-size: 1.35rem;
+            color: #ffffff;
+            letter-spacing: -0.5px;
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        /* Call To Action Banner */
+        .cta-banner {
+            padding: 100px 8%;
+            position: relative;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, rgba(31, 41, 55, 0.5), rgba(17, 24, 39, 0.7));
+            border: 1px solid var(--border-color);
+            border-radius: 28px;
+            padding: 60px 40px;
+            max-width: 1100px;
+            margin: 0 auto;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 28px;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .cta-box::before {
+            content: '';
+            position: absolute;
+            top: -100%;
+            left: -100%;
+            width: 300%;
+            height: 300%;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, rgba(0,0,0,0) 60%);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .cta-box h2 {
+            font-size: 2.75rem;
+            line-height: 1.25;
+            color: #ffffff;
+            z-index: 1;
+            max-width: 750px;
+            letter-spacing: -1px;
+        }
+
+        .cta-box p {
+            font-size: 1.15rem;
+            color: var(--text-muted);
+            z-index: 1;
+            max-width: 600px;
+        }
+
+        /* Footer */
+        footer {
+            padding: 60px 8%;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 24px;
+            background: rgba(3, 7, 18, 0.8);
+            position: relative;
+            z-index: 10;
+        }
+
+        .footer-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: #ffffff;
+        }
+
+        .footer-logo span {
+            background: var(--gradient-text);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 24px;
+            list-style: none;
+        }
+
+        .footer-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .footer-links a:hover {
+            color: #ffffff;
+        }
+
+        .copyright {
+            color: #4b5563;
+            font-size: 0.85rem;
+        }
+
+        /* Animations */
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive Breakpoints */
+        @media (max-width: 1024px) {
+            .hero-title {
+                font-size: 3.25rem;
+            }
+            .section-title {
+                font-size: 2.25rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            nav {
+                padding: 0 5%;
+            }
+            .nav-links {
+                display: none;
+            }
+            .hero {
+                padding-top: 130px;
+                padding-left: 5%;
+                padding-right: 5%;
+            }
+            .hero-title {
+                font-size: 2.5rem;
+            }
+            .features {
+                padding: 70px 5%;
+            }
+            .cta-box h2 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <div class="bg-glow-bottom"></div>
+
+    <!-- Navigation -->
+    <nav>
+        <a href="#" class="logo">
+            <i class="fa-solid fa-server"></i>
+            <span>CoPanel</span>
+        </a>
+        <ul class="nav-links">
+            <li><a href="#features">Tính năng</a></li>
+            <li><a href="#architecture">Kiến trúc</a></li>
+            <li><a href="#installation">Cài đặt</a></li>
+        </ul>
+        <a href="https://github.com/phuspeed/CoPanel" class="cta-btn" target="_blank">
+            <i class="fa-brands fa-github"></i> Xem GitHub
+        </a>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <span class="badge">
+            <i class="fa-solid fa-shield-halved"></i> v1.0.0 Ready for Deployment
+        </span>
+        <h1 class="hero-title">Trình quản lý VPS Linux thế hệ mới cực kỳ mạnh mẽ</h1>
+        <p class="hero-desc">Hệ thống quản lý VPS Pluggable mã nguồn mở đỉnh cao với giao diện tuyệt đẹp, hỗ trợ cài đặt các Module tùy chỉnh dễ dàng và mượt mà.</p>
+        
+        <div class="hero-actions">
+            <a href="https://github.com/phuspeed/CoPanel" class="cta-btn" target="_blank">
+                <i class="fa-solid fa-rocket"></i> Bắt đầu ngay
+            </a>
+            <a href="#features" class="secondary-btn">
+                <i class="fa-solid fa-circle-play"></i> Xem tính năng
+            </a>
+        </div>
+
+        <div class="preview-frame">
+            <div class="preview-inner">
+                <!-- Using a beautifully designed dark placeholder image -->
+                <img src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1200&q=80" alt="CoPanel Dashboard Preview">
+            </div>
+        </div>
+    </section>
+
+    <!-- Feature Grid -->
+    <section class="features" id="features">
+        <div class="section-header">
+            <h2 class="section-title">Hệ thống Module đa dạng & mạnh mẽ</h2>
+            <p class="section-desc">Mọi tính năng quan trọng nhất cho máy chủ của bạn được đóng gói thành các Module có kiến trúc cắm (Pluggable Architecture).</p>
+        </div>
+
+        <div class="features-grid">
+            <!-- 1 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-solid fa-chart-line"></i></div>
+                <h3>System Monitor</h3>
+                <p>Theo dõi thời gian thực các thông số phần cứng bao gồm CPU, RAM, Disk I/O, và quy trình xử lý mạng để tối ưu tài nguyên.</p>
+            </div>
+            <!-- 2 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-regular fa-folder-open"></i></div>
+                <h3>File Manager</h3>
+                <p>Khám phá, chỉnh sửa, tải lên/tải xuống, sao chép, di chuyển, phân quyền file và nén ZIP trực tiếp trên trình duyệt.</p>
+            </div>
+            <!-- 3 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-brands fa-docker"></i></div>
+                <h3>Docker Manager</h3>
+                <p>Tạo mới, dừng, chạy, xóa các Container và Images trực quan chỉ bằng một vài thao tác đơn giản.</p>
+            </div>
+            <!-- 4 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                <h3>Backup Manager</h3>
+                <p>Tự động sao lưu dữ liệu máy chủ lên các dịch vụ đám mây nổi tiếng như Google Drive, OneDrive sử dụng Rclone mạnh mẽ.</p>
+            </div>
+            <!-- 5 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-solid fa-lock"></i></div>
+                <h3>SSL Certbot</h3>
+                <p>Đăng ký và tự động gia hạn chứng chỉ SSL miễn phí từ Let's Encrypt cho mọi tên miền website của bạn.</p>
+            </div>
+            <!-- 6 -->
+            <div class="feature-card">
+                <div class="feature-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                <h3>Tường lửa & Bảo mật</h3>
+                <p>Bật/tắt tường lửa UFW, cấu hình chặn và cho phép các cổng kết nối mạng an toàn để bảo vệ VPS toàn diện.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Call To Action -->
+    <section class="cta-banner" id="installation">
+        <div class="cta-box">
+            <h2>Kiến trúc mở rộng không giới hạn</h2>
+            <p>Xây dựng các Module riêng của bạn bằng Python và React để tùy biến dịch vụ quản lý VPS theo cách riêng của mình.</p>
+            <a href="https://github.com/phuspeed/CoPanel" class="cta-btn" target="_blank">
+                <i class="fa-solid fa-download"></i> Cài đặt ngay hôm nay
+            </a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <a href="#" class="footer-logo">
+            <i class="fa-solid fa-server" style="color: var(--accent-blue);"></i>
+            <span>CoPanel</span>
+        </a>
+        <ul class="footer-links">
+            <li><a href="#features">Tính năng</a></li>
+            <li><a href="#installation">Cài đặt</a></li>
+            <li><a href="https://github.com/phuspeed/CoPanel" target="_blank">GitHub</a></li>
+        </ul>
+        <p class="copyright">&copy; 2026 CoPanel Open Source Project. All rights reserved.</p>
+    </footer>
+</body>
+</html>
