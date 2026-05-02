@@ -112,21 +112,30 @@ class SSLManager:
 
         content = vhost_path.read_text(encoding="utf-8")
 
-        # Check if already has 443 ssl listener
+        # If already has 443 ssl listener, don't duplicate
         if "listen 443 ssl;" in content:
             return
 
-        ssl_block = f"\n    listen 443 ssl;\n    ssl_certificate {cert_path};\n    ssl_certificate_key {key_path};\n"
+        import re
+        ssl_directives = f"listen 443 ssl;\n    ssl_certificate {cert_path};\n    ssl_certificate_key {key_path};\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_prefer_server_ciphers on;"
 
-        if f"server_name {domain};" in content:
-            content = content.replace(f"server_name {domain};", f"server_name {domain};{ssl_block}")
-        elif "server_name" in content:
-            lines = content.splitlines()
-            for idx, line in enumerate(lines):
-                if "server_name" in line:
-                    lines[idx] = line + ssl_block
-                    break
-            content = "\n".join(lines)
+        # Replace 'listen 80;' or similar listen directive
+        if re.search(r'listen\s+[^;]+;', content):
+            content = re.sub(r'listen\s+[^;]+;', ssl_directives, content, count=1)
+        else:
+            if f"server_name {domain};" in content:
+                content = content.replace(f"server_name {domain};", f"server_name {domain};\n    {ssl_directives}")
+            elif "server_name" in content:
+                lines = content.splitlines()
+                for idx, line in enumerate(lines):
+                    if "server_name" in line:
+                        lines[idx] = line + "\n    " + ssl_directives
+                        break
+                content = "\n".join(lines)
+
+        # Now append the HTTP redirect block to the file
+        redirect_block = f"\n\nserver {{\n    listen 80;\n    server_name {domain};\n    return 301 https://$host$request_uri;\n}}\n"
+        content += redirect_block
 
         vhost_path.write_text(content, encoding="utf-8")
 
