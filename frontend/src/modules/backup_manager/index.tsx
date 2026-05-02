@@ -221,6 +221,9 @@ export default function BackupAndSyncDashboard() {
                   rows={3}
                   className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all font-mono"
                 />
+                <span className="text-[10px] text-indigo-400 block leading-tight mt-1">
+                  💡 Tip: Run <code>rclone authorize "drive" "YOUR_CLIENT_ID" "YOUR_CLIENT_SECRET"</code> on your local computer CLI to complete the Google OAuth login and get your token.
+                </span>
               </div>
             </div>
           </div>

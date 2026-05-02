@@ -116,6 +116,12 @@ install_dependencies() {
         fi
     fi
 
+    # Install Rclone using official Rclone convenience script if not installed
+    if ! command_exists rclone; then
+        log_info "Installing Rclone via official installation script..."
+        curl https://rclone.org/install.sh | sudo bash || true
+    fi
+
     # Ensure Docker daemon is started & enabled
     if command_exists systemctl; then
         systemctl start docker || true
