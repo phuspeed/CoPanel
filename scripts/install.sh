@@ -306,8 +306,9 @@ EOF
     
     # Test configuration
     if nginx -t >/dev/null 2>&1; then
+        systemctl enable nginx || true
         systemctl restart nginx
-        log_success "Nginx configured and restarted"
+        log_success "Nginx configured, enabled, and restarted"
     else
         log_error "Nginx configuration error"
         nginx -t
@@ -325,7 +326,8 @@ setup_systemd_service() {
     cat > /etc/systemd/system/copanel.service << 'EOF'
 [Unit]
 Description=CoPanel - Linux VPS Management Panel
-After=network.target
+After=network.target network-online.target nginx.service
+Wants=network-online.target
 
 [Service]
 Type=simple
