@@ -30,7 +30,7 @@ export default function FileManagerDashboard() {
   }>();
 
   const [localTheme] = useState<'dark' | 'light'>(
-    (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'dark'
+    (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'light'
   );
   const [localLanguage] = useState<'en' | 'vi'>(
     (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en'

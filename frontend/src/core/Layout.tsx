@@ -43,7 +43,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
   // Theme & Language Global States
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'dark';
+    return (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'light';
   });
   const [language, setLanguage] = useState<'en' | 'vi'>(() => {
     return (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en';
@@ -95,6 +95,11 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   useEffect(() => {
     localStorage.setItem('copanel_theme', theme);
     localStorage.setItem('copanel_lang', language);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [theme, language]);
 
   const handlePasswordChange = async () => {
