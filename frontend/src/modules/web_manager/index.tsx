@@ -25,6 +25,7 @@ export default function WebManagerDashboard() {
   const [root, setRoot] = useState<string>('/var/www/html');
   const [port, setPort] = useState<number>(80);
   const [proxyPort, setProxyPort] = useState<number | ''>('');
+  const [siteType, setSiteType] = useState<'static' | 'proxy'>('static');
 
   // Site Viewer state
   const [viewingSite, setViewingSite] = useState<SiteItem | null>(null);
@@ -98,9 +99,9 @@ export default function WebManagerDashboard() {
         body: JSON.stringify({
           filename,
           domain,
-          root,
+          root: siteType === 'static' ? root : '',
           port,
-          proxy_port: proxyPort || null,
+          proxy_port: siteType === 'proxy' ? (proxyPort || null) : null,
         }),
       });
       if (!response.ok) {
@@ -235,6 +236,34 @@ export default function WebManagerDashboard() {
             </h3>
             <div className="space-y-4">
               <div>
+                <label className="text-slate-400 text-xs font-semibold mb-2 block uppercase">
+                  Service Type
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setSiteType('static')}
+                    className={`p-3 rounded-lg border font-bold text-xs flex flex-col items-center justify-center gap-1 transition ${
+                      siteType === 'static'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    <Icons.Globe className="w-4 h-4" /> Static Web Service
+                  </button>
+                  <button
+                    onClick={() => setSiteType('proxy')}
+                    className={`p-3 rounded-lg border font-bold text-xs flex flex-col items-center justify-center gap-1 transition ${
+                      siteType === 'proxy'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    <Icons.Shield className="w-4 h-4" /> Nginx Port Proxy (Reverse Proxy)
+                  </button>
+                </div>
+              </div>
+
+              <div>
                 <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
                   Configuration Filename
                 </label>
@@ -260,18 +289,6 @@ export default function WebManagerDashboard() {
                 />
               </div>
 
-              <div>
-                <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
-                  Root Path
-                </label>
-                <input
-                  type="text"
-                  value={root}
-                  onChange={(e) => setRoot(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
@@ -284,18 +301,32 @@ export default function WebManagerDashboard() {
                     className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
                   />
                 </div>
-                <div>
-                  <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
-                    Reverse Proxy Port (Optional)
-                  </label>
-                  <input
-                    type="number"
-                    value={proxyPort}
-                    onChange={(e) => setProxyPort(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
-                    placeholder="e.g. 8000"
-                  />
-                </div>
+                {siteType === 'static' ? (
+                  <div>
+                    <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
+                      Root Path
+                    </label>
+                    <input
+                      type="text"
+                      value={root}
+                      onChange={(e) => setRoot(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-slate-400 text-xs font-semibold mb-1 block uppercase">
+                      Proxy Port
+                    </label>
+                    <input
+                      type="number"
+                      value={proxyPort}
+                      onChange={(e) => setProxyPort(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full bg-slate-950 border border-slate-800 px-4 py-2 rounded-lg text-slate-200 outline-none focus:border-blue-500 font-mono text-sm"
+                      placeholder="e.g. 8000"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
