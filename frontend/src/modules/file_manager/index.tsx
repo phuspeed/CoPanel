@@ -260,6 +260,56 @@ export default function FileManagerDashboard() {
     }
   };
 
+  // 📥 Download File
+  const handleDownloadFile = async (item: FileItem) => {
+    try {
+      const res = await fetch(`/api/file_manager/download?path=${encodeURIComponent(item.path)}`, {
+        headers: getAuthHeader()
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Could not download file');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error downloading file');
+    }
+  };
+
+  // 📤 Upload File
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`/api/file_manager/upload?path=${encodeURIComponent(currentPath)}`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Upload failed');
+      }
+
+      fetchPath(currentPath);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error uploading file');
+    }
+  };
+
   // ➕ Create Item
   const handleCreateItem = async () => {
     if (!newItemName) return;
@@ -520,6 +570,14 @@ export default function FileManagerDashboard() {
           >
             <Icons.FolderPlus className="w-4 h-4" /> {tr.createDir}
           </button>
+          <label
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer shrink-0 ${
+              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+            }`}
+          >
+            <Icons.Upload className="w-4 h-4" /> Upload
+            <input type="file" className="hidden" onChange={handleUploadFile} />
+          </label>
           <button
             onClick={() => fetchPath(currentPath)}
             className={`flex items-center p-3 rounded-xl transition ${
@@ -796,6 +854,17 @@ export default function FileManagerDashboard() {
                               title={tr.editFile}
                             >
                               <Icons.Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!item.is_dir && (
+                            <button
+                              onClick={() => handleDownloadFile(item)}
+                              className={`p-1.5 rounded-xl border transition-all ${
+                                isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-green-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-green-600 border-slate-200'
+                              }`}
+                              title="Download file"
+                            >
+                              <Icons.Download className="w-3.5 h-3.5" />
                             </button>
                           )}
                           <button

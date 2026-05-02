@@ -479,3 +479,58 @@ async def chmod_items(req: ChmodRequest, user: Dict[str, Any] = Depends(get_curr
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+from fastapi import File, UploadFile
+from fastapi.responses import FileResponse
+
+@router.get("/download")
+async def download_file(path: str, user: Dict[str, Any] = Depends(get_current_user)):
+    """Download a file."""
+    try:
+        target_path = check_safe_path(path, user)
+        if not os.path.exists(target_path):
+            raise HTTPException(status_code=404, detail="File not found.")
+        if not os.path.isfile(target_path):
+            raise HTTPException(status_code=400, detail="Path is a directory, not a file.")
+        
+        return FileResponse(
+            path=target_path,
+            filename=os.path.basename(target_path),
+            media_type="application/octet-stream"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload")
+async def upload_file(
+    path: str = Query(...), 
+    file: UploadFile = File(...), 
+    user: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Upload a file to the target directory."""
+    try:
+        target_dir = check_safe_path(path, user)
+        if not os.path.isdir(target_dir):
+            raise HTTPException(status_code=400, detail="Path is not a directory.")
+        
+        filename = file.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="Missing filename.")
+        
+        file_path = os.path.join(target_dir, filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        return {
+            "status": "success",
+            "message": f"File '{filename}' uploaded successfully."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
