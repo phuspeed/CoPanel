@@ -2,6 +2,7 @@
  * Premium Users and Permissions Management Dashboard
  */
 import { useEffect, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 interface UserProfile {
@@ -26,14 +27,83 @@ export default function UsersDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // New User Form State
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'superadmin' | 'user'>('user');
   const [selectedModules, setSelectedModules] = useState<string[]>(['system_monitor', 'file_manager']);
   const [folderInput, setFolderInput] = useState<string>('/home/');
 
+  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const isDark = theme === 'dark';
+
   const token = localStorage.getItem('copanel_token');
+
+  const t = {
+    en: {
+      title: 'User Accounts & Roles',
+      desc: 'As a SuperAdmin, you can create, modify, or remove user accounts. Isolate their accessible files via specific home directory paths (e.g., /home/user1/) and specify accessible dynamic modules.',
+      activeAccounts: 'Active Accounts',
+      totalRecords: 'Total Records',
+      createAccount: 'Create Account',
+      usernameLabel: 'Username',
+      passwordLabel: 'Password',
+      roleLabel: 'Role',
+      user: 'User',
+      superAdmin: 'SuperAdmin',
+      permittedModules: 'Permitted Modules',
+      deselectAll: 'Deselect All',
+      selectAll: 'Select All',
+      isolatedDirs: 'Isolated Directories',
+      dirTip: "Accessible folder path. Set to '/' for full system access.",
+      addBtn: 'Add User Profile',
+      registeredTitle: 'Registered Accounts',
+      colUsername: 'Username',
+      colRole: 'Role',
+      colPermissions: 'Permissions',
+      colAction: 'Action',
+      modules: 'Modules',
+      restrictedHome: 'Restricted Home',
+      deleteBtn: 'Delete',
+      loadingUsers: 'Loading user accounts...',
+      fillError: 'Please fill in username and password.',
+      regError: 'Failed to register new user profile.',
+      commError: 'Failed to reach authentication backend.',
+      deleteConfirm: 'Are you sure you want to delete this user?'
+    },
+    vi: {
+      title: 'Tài khoản người dùng & Quyền hạn',
+      desc: 'Là quản trị viên cao cấp, bạn có thể tạo mới, chỉnh sửa hoặc xóa các tài khoản người dùng khác. Thiết lập thư mục cô lập (ví dụ: /home/user1/) và các module mà họ được phép sử dụng.',
+      activeAccounts: 'Tài khoản hoạt động',
+      totalRecords: 'Tổng số tài khoản',
+      createAccount: 'Tạo tài khoản',
+      usernameLabel: 'Tên tài khoản',
+      passwordLabel: 'Mật khẩu',
+      roleLabel: 'Vai trò',
+      user: 'Người dùng',
+      superAdmin: 'Quản trị viên',
+      permittedModules: 'Các module được phép',
+      deselectAll: 'Bỏ chọn hết',
+      selectAll: 'Chọn tất cả',
+      isolatedDirs: 'Thư mục cô lập',
+      dirTip: "Đường dẫn thư mục được truy cập. Đặt thành '/' để cấp quyền truy cập toàn bộ hệ thống.",
+      addBtn: 'Thêm tài khoản',
+      registeredTitle: 'Tài khoản đã đăng ký',
+      colUsername: 'Tên tài khoản',
+      colRole: 'Vai trò',
+      colPermissions: 'Quyền truy cập',
+      colAction: 'Thao tác',
+      modules: 'Các module',
+      restrictedHome: 'Thư mục giới hạn',
+      deleteBtn: 'Xóa',
+      loadingUsers: 'Đang tải danh sách tài khoản...',
+      fillError: 'Vui lòng điền tên đăng nhập và mật khẩu.',
+      regError: 'Không thể đăng ký tài khoản mới này.',
+      commError: 'Không thể kết nối tới máy chủ.',
+      deleteConfirm: 'Bạn có chắc chắn muốn xóa tài khoản này không?'
+    }
+  };
+
+  const tr = t[language || 'en'];
 
   const fetchUsers = () => {
     setLoading(true);
@@ -55,18 +125,17 @@ export default function UsersDashboard() {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [language]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password) {
-      setError('Please fill in username and password.');
+      setError(tr.fillError);
       return;
     }
 
     setError(null);
 
-    // Filter permitted folders
     const pFolders = folderInput.split(',').map(f => f.trim()).filter(Boolean);
 
     try {
@@ -93,10 +162,10 @@ export default function UsersDashboard() {
         fetchUsers();
       } else {
         const errData = await res.json();
-        setError(errData.detail || 'Failed to register new user profile.');
+        setError(errData.detail || tr.regError);
       }
     } catch {
-      setError('Failed to reach authentication backend.');
+      setError(tr.commError);
     }
   };
 
@@ -117,7 +186,7 @@ export default function UsersDashboard() {
   };
 
   const handleDeleteUser = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this user?')) return;
+    if (!window.confirm(tr.deleteConfirm)) return;
     try {
       const res = await fetch(`/api/auth/users/${id}`, {
         method: 'DELETE',
@@ -142,25 +211,26 @@ export default function UsersDashboard() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
-      {/* Dynamic Ambient Background Banner */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900 to-slate-950 border border-slate-800 p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="space-y-2 max-w-2xl">
-          <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-200 to-white bg-clip-text text-transparent">
-            User Accounts & Roles
+    <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
+        isDark ? 'bg-gradient-to-br from-indigo-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-indigo-50/40 via-white to-slate-50 border-slate-200 shadow-slate-100'
+      }`}>
+        <div className="space-y-2 max-w-2xl text-center md:text-left">
+          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight ${
+            isDark ? 'bg-gradient-to-r from-indigo-400 via-purple-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-indigo-600 via-purple-600 to-slate-800 bg-clip-text text-transparent'
+          }`}>
+            {tr.title}
           </h2>
-          <p className="text-slate-400 text-sm md:text-base leading-relaxed">
-            As a SuperAdmin, you can create, modify, or remove user accounts.
-            Isolate their accessible files via specific home directory paths (e.g., /home/user1/)
-            and specify accessible dynamic modules.
+          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+            {tr.desc}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1 text-right bg-slate-900/50 p-4 rounded-xl border border-slate-800 backdrop-blur-sm self-stretch md:self-auto min-w-[200px]">
-          <span className="text-xs font-semibold text-indigo-400 uppercase tracking-widest">Active Accounts</span>
-          <span className="text-2xl font-mono font-bold text-slate-100">
-            {users.length}
-          </span>
-          <span className="text-xs text-slate-400">Total Records</span>
+        <div className={`flex flex-col items-center md:items-end gap-1 text-right p-4 rounded-xl border backdrop-blur-sm self-stretch md:self-auto min-w-[180px] ${
+          isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50/60 border-slate-200 shadow-sm'
+        }`}>
+          <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{tr.activeAccounts}</span>
+          <span className={`text-lg md:text-2xl font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{users.length}</span>
+          <span className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.totalRecords}</span>
         </div>
       </div>
 
@@ -171,63 +241,68 @@ export default function UsersDashboard() {
         </div>
       )}
 
-      {/* Actionable User Creation Form */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <form onSubmit={handleCreateUser} className="bg-slate-900/50 border border-slate-800/80 p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 h-fit">
-          <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <Icons.UserPlus className="w-5 h-5 text-indigo-400" />
-            Create Account
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
+        <form onSubmit={handleCreateUser} className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 h-fit ${isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200'}`}>
+          <h3 className={`text-lg font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+            <Icons.UserPlus className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+            {tr.createAccount}
           </h3>
 
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Username</label>
+              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.usernameLabel}</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="user1"
                 required
-                className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
+                className={`w-full border rounded-xl px-4 py-2.5 text-xs outline-none focus:border-indigo-500 transition-all ${
+                  isDark ? 'bg-slate-950 border-slate-800/80 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
+                }`}
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Password</label>
+              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.passwordLabel}</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
-                className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
+                className={`w-full border rounded-xl px-4 py-2.5 text-xs outline-none focus:border-indigo-500 transition-all ${
+                  isDark ? 'bg-slate-950 border-slate-800/80 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
+                }`}
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Role</label>
+              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.roleLabel}</label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as any)}
-                className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
+                className={`w-full border rounded-xl px-4 py-2.5 text-xs outline-none focus:border-indigo-500 transition-all ${
+                  isDark ? 'bg-slate-950 border-slate-800/80 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
+                }`}
               >
-                <option value="user">User</option>
-                <option value="superadmin">SuperAdmin</option>
+                <option value="user">{tr.user}</option>
+                <option value="superadmin">{tr.superAdmin}</option>
               </select>
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Permitted Modules</label>
+                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.permittedModules}</label>
                 <button
                   type="button"
                   onClick={toggleSelectAllModules}
-                  className="text-[10px] text-indigo-400 hover:text-indigo-300 transition"
+                  className={`text-[10px] transition ${isDark ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-500'}`}
                 >
-                  {selectedModules.length === ALL_MODULES.length ? 'Deselect All' : 'Select All'}
+                  {selectedModules.length === ALL_MODULES.length ? tr.deselectAll : tr.selectAll}
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5 p-3.5 bg-slate-950/40 border border-slate-800/60 rounded-xl min-h-[90px]">
+              <div className={`flex flex-wrap gap-1.5 p-3.5 border rounded-xl min-h-[85px] ${isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50 border-slate-100'}`}>
                 {ALL_MODULES.map((m) => {
                   const isSelected = selectedModules.includes(m.id);
                   return (
@@ -238,7 +313,7 @@ export default function UsersDashboard() {
                       className={`px-2.5 py-1 text-[11px] font-bold rounded-xl border transition-all duration-200 cursor-pointer ${
                         isSelected
                           ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/10'
-                          : 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-300'
+                          : isDark ? 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-300' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
                       }`}
                     >
                       {m.label}
@@ -249,15 +324,17 @@ export default function UsersDashboard() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 uppercase tracking-widest">Isolated Directories</label>
+              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.isolatedDirs}</label>
               <input
                 type="text"
                 value={folderInput}
                 onChange={(e) => setFolderInput(e.target.value)}
                 placeholder="/home/"
-                className="w-full bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all"
+                className={`w-full border rounded-xl px-4 py-2.5 text-xs outline-none focus:border-indigo-500 transition-all ${
+                  isDark ? 'bg-slate-950 border-slate-800/80 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
+                }`}
               />
-              <span className="text-[10px] text-slate-500 block leading-tight">Accessible folder path. Set to '/' for full system access.</span>
+              <span className={`text-[10px] block leading-tight ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.dirTip}</span>
             </div>
           </div>
 
@@ -266,58 +343,55 @@ export default function UsersDashboard() {
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-xs text-white shadow-lg hover:shadow-indigo-500/20 transition-all duration-200"
           >
             <Icons.UserPlus className="w-3.5 h-3.5" />
-            Add User Profile
+            {tr.addBtn}
           </button>
         </form>
 
-        {/* Existing Users Table Grid View */}
-        <div className="lg:col-span-2 bg-slate-900/50 border border-slate-800/80 p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 h-fit">
-          <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <Icons.Users className="w-5 h-5 text-indigo-400" />
-            Registered Accounts ({users.length})
+        <div className={`lg:col-span-2 border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 h-fit ${isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm'}`}>
+          <h3 className={`text-lg font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+            <Icons.Users className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+            {tr.registeredTitle} ({users.length})
           </h3>
 
           {loading ? (
-            <div className="flex flex-col items-center justify-center p-12 bg-slate-950/40 border border-slate-800/50 rounded-xl">
+            <div className={`flex flex-col items-center justify-center p-12 border rounded-xl ${isDark ? 'bg-slate-950/40 border-slate-800/50' : 'bg-slate-50 border-slate-100'}`}>
               <Icons.Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
-              <span className="text-xs text-slate-400 mt-2">Loading user accounts...</span>
+              <span className="text-xs text-slate-400 mt-2">{tr.loadingUsers}</span>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-800/60">
-              <table className="w-full text-left border-collapse">
+            <div className={`overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
+              <table className="w-full text-left border-collapse select-none">
                 <thead>
-                  <tr className="bg-slate-950/60 border-b border-slate-800/60 text-xs font-bold text-slate-300 uppercase tracking-widest select-none">
-                    <th className="p-4">Username</th>
-                    <th className="p-4">Role</th>
-                    <th className="p-4">Permissions</th>
-                    <th className="p-4">Action</th>
+                  <tr className={`border-b text-xs font-bold uppercase tracking-widest ${isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
+                    <th className="p-4">{tr.colUsername}</th>
+                    <th className="p-4">{tr.colRole}</th>
+                    <th className="p-4">{tr.colPermissions}</th>
+                    <th className="p-4">{tr.colAction}</th>
                   </tr>
                 </thead>
-                <tbody className="text-xs text-slate-200 divide-y divide-slate-800/40">
+                <tbody className={`text-xs divide-y ${isDark ? 'divide-slate-800/40 text-slate-200' : 'divide-slate-100 text-slate-700'}`}>
                   {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-800/30 transition-all">
-                      <td className="p-4 font-mono font-bold text-indigo-300">
-                        {u.username}
-                      </td>
+                    <tr key={u.id} className={`transition duration-150 ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}`}>
+                      <td className={`p-4 font-mono font-bold ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{u.username}</td>
                       <td className="p-4">
                         <span className={`px-2 py-0.5 rounded border ${
                           u.role === 'superadmin'
                             ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            : isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'
                         }`}>
-                          {u.role}
+                          {u.role === 'superadmin' ? tr.superAdmin : tr.user}
                         </span>
                       </td>
-                      <td className="p-4 space-y-1.5 min-w-[200px]">
+                      <td className="p-4 space-y-1.5 min-w-[180px]">
                         <div>
-                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Modules:</span>
-                          <span className="text-[11px] font-mono text-slate-300 bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-800">
+                          <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}:</span>
+                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
                             {parseJsonList(u.permitted_modules).join(', ') || 'None'}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Restricted Home:</span>
-                          <span className="text-[11px] font-mono text-slate-300 bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-800">
+                          <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.restrictedHome}:</span>
+                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
                             {parseJsonList(u.permitted_folders).join(', ') || '/'}
                           </span>
                         </div>
@@ -326,10 +400,12 @@ export default function UsersDashboard() {
                         <button
                           onClick={() => handleDeleteUser(u.id)}
                           disabled={u.username === 'admin'}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 disabled:opacity-50 border border-red-900/40 rounded-xl transition-all"
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold border rounded-xl transition-all ${
+                            isDark ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 border-red-900/40 disabled:opacity-50' : 'text-red-600 hover:bg-red-100 bg-red-50 border-red-200 disabled:opacity-40'
+                          }`}
                         >
                           <Icons.Trash2 className="w-3.5 h-3.5" />
-                          Delete
+                          {tr.deleteBtn}
                         </button>
                       </td>
                     </tr>
