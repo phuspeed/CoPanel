@@ -32,6 +32,18 @@ class DeleteRuleRequest(BaseModel):
     action: str
 
 
+def find_ufw_path() -> str:
+    import shutil
+    import os
+    for p in ["/usr/sbin/ufw", "/sbin/ufw", "/usr/bin/ufw", "/bin/ufw"]:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    w = shutil.which("ufw")
+    if w:
+        return w
+    return "ufw"
+
+
 def run_cmd(cmd: List[str]) -> str:
     """Run system command using subprocess safely."""
     try:
@@ -54,7 +66,8 @@ async def get_firewall_status() -> Dict[str, Any]:
 
     import shutil
     from pathlib import Path
-    has_ufw = shutil.which("ufw") or Path("/usr/sbin/ufw").exists() or Path("/sbin/ufw").exists()
+    ufw_path = find_ufw_path()
+    has_ufw = shutil.which("ufw") or Path(ufw_path).exists()
     if not IS_WINDOWS and not has_ufw:
         return {
             "status": "success",
@@ -64,30 +77,37 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
     try:
-        # Check ufw status without requiring sudo if we are root
-        if shutil.which("sudo"):
-            out = run_cmd(["sudo", "ufw", "status"])
-        else:
-            out = run_cmd(["ufw", "status"])
-        
-        if not out or "Status:" not in out:
-            out = run_cmd(["/usr/sbin/ufw", "status"]) or run_cmd(["/sbin/ufw", "status"])
-            
+        # Run ufw status numbered to get ports and numbers correctly
+        res = subprocess.run([ufw_path, "status"], shell=False, capture_output=True, text=True, check=False)
+        out = res.stdout if res.returncode == 0 else res.stderr
+
         is_active = "Status: active" in out
 
         # Extract rules
-        # Format of rule lines: "22/tcp                     ALLOW       Anywhere"
+        # Format of rule lines:
+        # 22/tcp                     ALLOW       Anywhere
+        # 80                         ALLOW       Anywhere
         rules = []
         lines = out.splitlines()
         for line in lines:
-            if "ALLOW" in line or "DENY" in line:
-                parts = re.split(r'\s{2,}', line.strip())
-                if len(parts) >= 2:
-                    rules.append({
-                        "port": parts[0],
-                        "action": parts[1].replace(" IN", ""),
-                        "comment": parts[2] if len(parts) > 2 else ""
-                    })
+            line_strip = line.strip()
+            if not line_strip or "Status:" in line_strip or "To " in line_strip or "Action " in line_strip or "---" in line_strip:
+                continue
+            
+            match = re.search(r'^(.*?)\s+(ALLOW(?:\s+IN)?|DENY(?:\s+IN)?)\s+(.*?)$', line_strip, re.IGNORECASE)
+            if match:
+                port = match.group(1).strip()
+                action = match.group(2).replace(" IN", "").replace(" in", "").strip().upper()
+                comment = match.group(3).strip()
+
+                if "(v6)" in port:
+                    continue
+
+                rules.append({
+                    "port": port,
+                    "action": action,
+                    "comment": comment
+                })
 
         return {
             "status": "success",
@@ -95,7 +115,6 @@ async def get_firewall_status() -> Dict[str, Any]:
             "rules": rules
         }
     except Exception as e:
-        # Prevent crash if command fails
         return {
             "status": "success",
             "active": False,
@@ -104,51 +123,28 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
 
-
-
 def run_ufw_cmd(action: str, port: str) -> bool:
-    """Helper to run UFW commands natively or with sudo."""
-    import shutil
-    from pathlib import Path
-    ufw_path = shutil.which("ufw") or ("/usr/sbin/ufw" if Path("/usr/sbin/ufw").exists() else "/sbin/ufw")
+    """Helper to run UFW commands natively."""
+    ufw_path = find_ufw_path()
     try:
+        # Allow/Deny rule
         res = subprocess.run([ufw_path, action, port], shell=False, capture_output=True, text=True)
         if res.returncode == 0:
             return True
     except Exception:
         pass
-
-    if shutil.which("sudo"):
-        try:
-            res = subprocess.run(["sudo", ufw_path, action, port], shell=False, capture_output=True, text=True)
-            if res.returncode == 0:
-                return True
-        except Exception:
-            pass
-
     return False
 
 
 def run_ufw_delete_cmd(action: str, port: str) -> bool:
-    """Helper to run UFW delete commands natively or with sudo."""
-    import shutil
-    from pathlib import Path
-    ufw_path = shutil.which("ufw") or ("/usr/sbin/ufw" if Path("/usr/sbin/ufw").exists() else "/sbin/ufw")
+    """Helper to run UFW delete commands."""
+    ufw_path = find_ufw_path()
     try:
-        res = subprocess.run([ufw_path, "delete", action, port], shell=False, capture_output=True, text=True)
+        res = subprocess.run([ufw_path, "delete", action, port], input="y\n", shell=False, capture_output=True, text=True)
         if res.returncode == 0:
             return True
     except Exception:
         pass
-
-    if shutil.which("sudo"):
-        try:
-            res = subprocess.run(["sudo", ufw_path, "delete", action, port], shell=False, capture_output=True, text=True)
-            if res.returncode == 0:
-                return True
-        except Exception:
-            pass
-
     return False
 
 
