@@ -24,6 +24,7 @@ export default function DockerManagerDashboard() {
   const [composeFiles, setComposeFiles] = useState<ComposeFile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [composeLoading, setComposeLoading] = useState<boolean>(false);
+  const [customPath, setCustomPath] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   // Status metrics
@@ -58,10 +59,11 @@ export default function DockerManagerDashboard() {
     }
   };
 
-  const fetchComposeFiles = async () => {
+  const fetchComposeFiles = async (p?: string) => {
     setComposeLoading(true);
     try {
-      const r = await fetch('/api/docker_manager/scan-compose');
+      const url = p ? `/api/docker_manager/scan-compose?custom_path=${encodeURIComponent(p)}` : '/api/docker_manager/scan-compose';
+      const r = await fetch(url);
       if (r.ok) {
         const d = await r.json();
         setComposeFiles(d.compose_files || []);
@@ -218,16 +220,35 @@ export default function DockerManagerDashboard() {
       </div>
 
       {/* Auto-Scan Compose Suggestions */}
-      {composeFiles.length > 0 && (
-        <div className="bg-gradient-to-r from-indigo-950/40 via-slate-900/50 to-slate-950/40 border border-indigo-900/40 p-6 rounded-2xl backdrop-blur-md space-y-4">
-          <div className="flex items-center justify-between">
+      <div className="bg-gradient-to-r from-indigo-950/40 via-slate-900/50 to-slate-950/40 border border-indigo-900/40 p-6 rounded-2xl backdrop-blur-md space-y-5">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1">
             <h3 className="text-sm font-bold text-indigo-200 flex items-center gap-2">
               <Icons.Zap className="w-4 h-4 text-indigo-400 animate-pulse" />
-              Suggested Docker Compose Files ({composeFiles.length})
+              Discover Compose Files ({composeFiles.length})
             </h3>
-            <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Scanned on Host OS</span>
+            <p className="text-[11px] text-slate-400 leading-tight">Find local folders with compose stacks ready to be deployed.</p>
           </div>
+          <div className="flex items-center gap-2 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800/80 w-full md:w-auto">
+            <input
+              type="text"
+              value={customPath}
+              onChange={(e) => setCustomPath(e.target.value)}
+              placeholder="e.g. /home/Docker"
+              className="bg-transparent text-xs text-slate-200 focus:outline-none px-2 w-full md:w-56 font-mono"
+            />
+            <button
+              onClick={() => fetchComposeFiles(customPath)}
+              disabled={composeLoading}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[11px] px-3.5 py-1.5 rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center gap-1 shrink-0"
+            >
+              <Icons.Search className="w-3.5 h-3.5" />
+              Scan
+            </button>
+          </div>
+        </div>
 
+        {composeFiles.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {composeFiles.map((file, idx) => (
               <div key={idx} className="bg-slate-950/60 border border-slate-800/80 hover:border-indigo-500/30 p-4 rounded-xl flex flex-col justify-between gap-3 group transition-all">
@@ -235,11 +256,11 @@ export default function DockerManagerDashboard() {
                   <div className="p-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl group-hover:bg-indigo-600/20 text-indigo-400 transition-all">
                     <Icons.FileCode className="w-5 h-5" />
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-200 group-hover:text-white truncate max-w-xs transition-all">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-xs font-bold text-slate-200 group-hover:text-white truncate transition-all">
                       {file.filename}
                     </h4>
-                    <span className="text-[11px] font-mono text-slate-400 break-all">{file.path}</span>
+                    <span className="text-[11px] font-mono text-slate-400 break-all block leading-normal">{file.path}</span>
                   </div>
                 </div>
 
@@ -255,15 +276,19 @@ export default function DockerManagerDashboard() {
               </div>
             ))}
           </div>
+        ) : (
+          <div className="text-slate-500 text-xs border border-slate-800/40 p-4 rounded-xl">
+            No ready compose file folders discovered yet. Enter a custom path above and click Scan!
+          </div>
+        )}
 
-          {actionOutput && (
-            <div className="p-3.5 bg-slate-950 border border-indigo-900/30 rounded-xl text-indigo-300 font-mono text-xs max-h-40 overflow-auto whitespace-pre-wrap mt-2 flex items-center justify-between">
-              <span>{actionOutput}</span>
-              <button onClick={() => setActionOutput(null)} className="text-slate-500 hover:text-slate-300 font-bold px-1 select-none">✕</button>
-            </div>
-          )}
-        </div>
-      )}
+        {actionOutput && (
+          <div className="p-3.5 bg-slate-950 border border-indigo-900/30 rounded-xl text-indigo-300 font-mono text-xs max-h-40 overflow-auto whitespace-pre-wrap mt-2 flex items-center justify-between">
+            <span>{actionOutput}</span>
+            <button onClick={() => setActionOutput(null)} className="text-slate-500 hover:text-slate-300 font-bold px-1 select-none">✕</button>
+          </div>
+        )}
+      </div>
 
       {/* Status Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 select-none">

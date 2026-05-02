@@ -269,27 +269,37 @@ async def get_container_logs(container_id: str) -> Dict[str, Any]:
 
 
 @router.get("/scan-compose")
-async def scan_compose_files() -> Dict[str, Any]:
+async def scan_compose_files(custom_path: Optional[str] = None) -> Dict[str, Any]:
     """Scan directories for any docker-compose.yml files to suggest deployment."""
+    import os
+    from pathlib import Path
+
     IS_WINDOWS = os.name == 'nt'
     scan_paths = []
-    if IS_WINDOWS:
+
+    if custom_path:
+        scan_paths = [Path(custom_path)]
+    elif IS_WINDOWS:
         scan_paths = [Path("./test_docker"), Path("./test_nginx"), Path("./")]
     else:
-        scan_paths = [Path("/home"), Path("/var/www"), Path("/opt/copanel")]
+        scan_paths = [Path("/home"), Path("/var/www"), Path("/opt/copanel"), Path("/root")]
 
     compose_files = []
-    # Search up to 3 directory levels deep to avoid scanning the entire filesystem
+    # Search up to 5 directory levels deep
     for base_path in scan_paths:
-        from pathlib import Path
         if base_path.exists() and base_path.is_dir():
             try:
                 for root, dirs, files in os.walk(str(base_path)):
                     # Limit depth
                     depth = root.replace(str(base_path), "").count(os.sep)
-                    if depth > 3:
+                    if depth > 5:
                         dirs[:] = []  # Do not go deeper
                         continue
+
+                    # Skip massive folders
+                    for x in [".git", "node_modules", "venv", ".npm", ".cache"]:
+                        if x in dirs:
+                            dirs.remove(x)
 
                     for file in files:
                         if file in ["docker-compose.yml", "docker-compose.yaml", "docker-composer.yml"]:
