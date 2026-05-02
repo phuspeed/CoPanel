@@ -173,9 +173,14 @@ setup_user_and_dirs() {
     
     # Stop service if it's currently running to prevent text file busy errors
     if systemctl is-active --quiet copanel; then
-        log_info "Stopping active CoPanel service for installation..."
-        systemctl stop copanel || true
+        if [[ -n "$COPANEL_ENV" ]] || systemctl status copanel 2>/dev/null | grep -E -q "($$|$PPID)"; then
+            log_warning "Installation running inside the CoPanel service tree. Skipping immediate service stop to avoid killing the script."
+        else
+            log_info "Stopping active CoPanel service for installation..."
+            systemctl stop copanel || true
+        fi
     fi
+
 
     # Sync files from REPO_DIR to CoPanel_HOME if different
     if [[ "$REPO_DIR" != "$CoPanel_HOME" ]]; then
@@ -378,7 +383,7 @@ EOF
 start_services() {
     log_info "Starting services..."
     
-    systemctl start copanel.service
+    systemctl restart copanel.service
     
     if systemctl is-active --quiet copanel; then
         log_success "CoPanel service started"
