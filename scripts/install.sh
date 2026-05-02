@@ -89,7 +89,7 @@ install_dependencies() {
             curl wget git \
             build-essential \
             nodejs npm \
-            ufw \
+            ufw inotify-tools \
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
     elif command_exists yum; then
@@ -99,7 +99,7 @@ install_dependencies() {
             curl wget git \
             gcc gcc-c++ make \
             nodejs npm \
-            ufw \
+            ufw inotify-tools \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
     else
         log_error "Unsupported package manager"
