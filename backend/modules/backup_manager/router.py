@@ -72,3 +72,26 @@ def run_backup_now() -> Dict[str, Any]:
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/backups")
+def get_backups() -> Dict[str, Any]:
+    """Fetch all local backup files."""
+    try:
+        backups = BackupManager.list_backups()
+        return {"status": "success", "data": backups}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/backups/delete")
+def delete_backup_file(req: dict) -> Dict[str, Any]:
+    """Remove a backup file from disk."""
+    try:
+        filename = req.get("filename")
+        if not filename:
+            raise HTTPException(status_code=400, detail="Filename is required.")
+        ok = BackupManager.delete_backup(filename)
+        if not ok:
+            raise HTTPException(status_code=400, detail="Failed to delete backup file.")
+        return {"status": "success", "message": "Backup file removed successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

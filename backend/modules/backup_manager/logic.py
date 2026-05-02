@@ -192,10 +192,62 @@ WantedBy=multi-user.target
             res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
             if res.returncode == 0:
                 lines = res.stdout.strip().split("\n")
-                return [line for line in lines if "backup_and_sync" in line]
+                results = []
+                for line in lines:
+                    if "backup_and_sync" in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            expression = " ".join(parts[:5])
+                            results.append({
+                                "expression": expression,
+                                "command": line,
+                                "raw": line
+                            })
+                        else:
+                            results.append({
+                                "expression": "N/A",
+                                "command": line,
+                                "raw": line
+                            })
+                return results
         except Exception:
             pass
         return []
+
+    @staticmethod
+    def list_backups() -> list:
+        """Scan /opt/copanel/backups and returns local backup files."""
+        backup_dir = Path("/opt/copanel/backups")
+        if not backup_dir.exists():
+            return []
+        
+        backups = []
+        try:
+            for item in backup_dir.iterdir():
+                if item.is_file() and item.suffix == ".zip":
+                    stat = item.stat()
+                    backups.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime
+                    })
+            backups.sort(key=lambda x: x["modified"], reverse=True)
+        except Exception:
+            pass
+        return backups
+
+    @staticmethod
+    def delete_backup(filename: str) -> bool:
+        """Deletes a backup file by name from /opt/copanel/backups."""
+        try:
+            p = Path("/opt/copanel/backups") / filename
+            if p.exists() and p.is_file():
+                p.unlink()
+                return True
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def setup_cron(cron_expr: str) -> bool:

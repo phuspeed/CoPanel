@@ -23,6 +23,8 @@ export default function BackupAndSyncDashboard() {
     sync_rules: []
   });
   const [msg, setMsg] = useState<string | null>(null);
+  const [crons, setCrons] = useState<any[]>([]);
+  const [backups, setBackups] = useState<any[]>([]);
 
   // For dynamic real-time rclone watcher rules
   const [localPath, setLocalPath] = useState<string>('');
@@ -39,6 +41,22 @@ export default function BackupAndSyncDashboard() {
       if (cr.ok) {
         const d = await cr.json();
         if (d.data) setConfig(d.data);
+      }
+
+      const cronsRes = await fetch('/api/backup_manager/cronjobs', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (cronsRes.ok) {
+        const d = await cronsRes.json();
+        if (d.data) setCrons(d.data);
+      }
+
+      const backupsRes = await fetch('/api/backup_manager/backups', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (backupsRes.ok) {
+        const d = await backupsRes.json();
+        if (d.data) setBackups(d.data);
       }
     } catch (err) {
       console.error(err);
@@ -136,11 +154,35 @@ export default function BackupAndSyncDashboard() {
       const data = await res.json();
       if (res.ok) {
         setMsg(`Success: ${data.message}`);
+        fetchConfigAndCrons();
       } else {
         setMsg(`Error: ${data.detail || 'Backup failed.'}`);
       }
     } catch {
       setMsg('Error invoking backup.');
+    }
+  };
+
+  const handleDeleteBackup = async (filename: string) => {
+    if (!window.confirm(`Delete backup file ${filename}?`)) return;
+    setMsg(null);
+    try {
+      const res = await fetch('/api/backup_manager/backups/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: JSON.stringify({ filename })
+      });
+      if (res.ok) {
+        setMsg(`Deleted backup file: ${filename}`);
+        fetchConfigAndCrons();
+      } else {
+        setMsg('Failed to delete backup file.');
+      }
+    } catch {
+      setMsg('Error communicating with backend.');
     }
   };
 
@@ -367,6 +409,85 @@ export default function BackupAndSyncDashboard() {
               <Icons.Trash2 className="w-3.5 h-3.5" /> Clear Backup Cron
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Active Crons & Existing Backup Files Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Active Backup Cron Jobs */}
+        <div className="bg-slate-900/50 border border-slate-800/80 p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 flex flex-col">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <Icons.Clock className="w-5 h-5 text-indigo-400" />
+            Active Backup Cron Jobs
+          </h3>
+          <p className="text-xs text-slate-400">These are the crontab timers currently running the backup task.</p>
+          {crons && crons.length > 0 ? (
+            <div className="space-y-2 overflow-y-auto max-h-[250px]">
+              {crons.map((cron, idx) => (
+                <div key={idx} className="p-3 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs flex flex-col gap-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-indigo-300 font-bold bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-lg">
+                      {cron.expression}
+                    </span>
+                    <button
+                      onClick={handleDeleteCrons}
+                      className="text-[10px] bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 text-red-400 px-2.5 py-1 rounded-lg font-bold transition duration-150"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="text-slate-500 font-mono text-[10px] break-all leading-tight mt-1">
+                    {cron.command}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-500 border border-slate-800/40 p-4 rounded-xl">
+              No active backup crons found.
+            </div>
+          )}
+        </div>
+
+        {/* Existing Backup Files on Disk */}
+        <div className="bg-slate-900/50 border border-slate-800/80 p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 flex flex-col">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <Icons.FileText className="w-5 h-5 text-indigo-400" />
+            Existing Backup Files on Disk
+          </h3>
+          <p className="text-xs text-slate-400">Local `.zip` files stored in your `/opt/copanel/backups` directory.</p>
+          {backups && backups.length > 0 ? (
+            <div className="space-y-2 overflow-y-auto max-h-[250px]">
+              {backups.map((backup, idx) => (
+                <div key={idx} className="p-3 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs flex items-center justify-between gap-3 animate-fade-in">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 font-mono font-bold text-indigo-300 break-all leading-snug">
+                      <Icons.Archive className="w-4 h-4 shrink-0 text-indigo-400" /> {backup.name}
+                    </div>
+                    <div className="flex items-center gap-4 mt-1 text-[10px] text-slate-500 font-semibold select-none">
+                      <span className="flex items-center gap-1">
+                        <Icons.HardDrive className="w-3 h-3" /> {(backup.size / 1024 / 1024).toFixed(2)} MB
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Icons.Calendar className="w-3 h-3" /> {new Date(backup.modified * 1000).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteBackup(backup.name)}
+                    className="p-2 bg-slate-900 hover:bg-red-950/60 text-red-400 border border-slate-800/80 rounded-xl transition-all shrink-0 hover:border-red-900/60"
+                    title="Delete Backup File"
+                  >
+                    <Icons.Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-500 border border-slate-800/40 p-4 rounded-xl">
+              No local backup files found on disk.
+            </div>
+          )}
         </div>
       </div>
     </div>

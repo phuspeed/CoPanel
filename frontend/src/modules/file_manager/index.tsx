@@ -44,6 +44,7 @@ export default function FileManagerDashboard() {
   const [fileContent, setFileContent] = useState<string>('');
   const [createType, setCreateType] = useState<'file' | 'dir' | null>(null);
   const [newItemName, setNewItemName] = useState<string>('');
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [renamingItem, setRenamingItem] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState<string>('');
 
@@ -292,22 +293,43 @@ export default function FileManagerDashboard() {
     const formData = new FormData();
     formData.append('file', file);
 
-    try {
-      const res = await fetch(`/api/file_manager/upload?path=${encodeURIComponent(currentPath)}`, {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: formData,
-      });
+    setUploadProgress(0);
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || 'Upload failed');
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/file_manager/upload?path=${encodeURIComponent(currentPath)}`, true);
+
+    const headers = getAuthHeader();
+    Object.keys(headers).forEach((key) => {
+      xhr.setRequestHeader(key, headers[key]);
+    });
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        setUploadProgress(percent);
       }
+    };
 
-      fetchPath(currentPath);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error uploading file');
-    }
+    xhr.onload = () => {
+      setUploadProgress(null);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        fetchPath(currentPath);
+      } else {
+        let errMessage = 'Upload failed';
+        try {
+          const data = JSON.parse(xhr.responseText);
+          errMessage = data.detail || errMessage;
+        } catch {}
+        alert(errMessage);
+      }
+    };
+
+    xhr.onerror = () => {
+      setUploadProgress(null);
+      alert('Network error occurred while uploading file');
+    };
+
+    xhr.send(formData);
   };
 
   // ➕ Create Item
@@ -625,6 +647,20 @@ export default function FileManagerDashboard() {
             {tr.go}
           </button>
         </div>
+
+        {uploadProgress !== null && (
+          <div className={`p-4 rounded-xl flex flex-col gap-2 backdrop-blur-sm shadow-xl select-none border animate-pulse ${
+            isDark ? 'bg-blue-950/30 border-blue-800/60' : 'bg-blue-50 border-blue-200 text-blue-900'
+          }`}>
+            <div className="flex justify-between text-xs font-semibold">
+              <span className={isDark ? 'text-blue-300' : 'text-blue-800'}>Uploading file...</span>
+              <span className={isDark ? 'text-blue-300' : 'text-blue-800'}>{uploadProgress}%</span>
+            </div>
+            <div className={`w-full h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+              <div className="bg-blue-600 h-full transition-all duration-150" style={{ width: `${uploadProgress}%` }}></div>
+            </div>
+          </div>
+        )}
 
         {clipboard && (
           <div className={`p-4 rounded-xl flex items-center justify-between gap-4 backdrop-blur-sm animate-fade-in shadow-xl select-none border ${
