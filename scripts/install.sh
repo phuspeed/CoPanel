@@ -15,12 +15,15 @@
 
 set -e  # Exit on error
 
-# Colors for output
-RED=$(echo -e '\033[0;31m')
-GREEN=$(echo -e '\033[0;32m')
+# Premium Aesthetic Color Palette
+BOLD=$(echo -e '\033[1m')
+CYAN=$(echo -e '\033[0;36m')
+GREEN=$(echo -e '\033[1;32m')
 YELLOW=$(echo -e '\033[1;33m')
-BLUE=$(echo -e '\033[0;34m')
-NC=$(echo -e '\033[0m') # No Color
+RED=$(echo -e '\033[1;31m')
+BLUE=$(echo -e '\033[1;34m')
+PURPLE=$(echo -e '\033[1;35m')
+NC=$(echo -e '\033[0m')
 
 # Configuration
 CoPanel_USER="copanel"
@@ -37,19 +40,24 @@ NGINX_ENABLED="/etc/nginx/sites-enabled/copanel"
 ###############################################################################
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e " ${BLUE}➜${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[ OK ]${NC} $1"
+    echo -e " ${GREEN}✔${NC} ${BOLD}$1${NC}"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e " ${YELLOW}⚠${NC} $1"
 }
 
 log_error() {
-    echo -e "${RED}[FAIL]${NC} $1"
+    echo -e " ${RED}✖${NC} ${BOLD}$1${NC}"
+}
+
+log_step() {
+    echo -e "\n ${PURPLE}●${NC} ${BOLD}$1${NC}"
+    echo -e "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 check_root() {
@@ -460,30 +468,46 @@ EOF
 main() {
     clear
     
+    echo -e "${PURPLE}${BOLD}"
     cat << 'EOF'
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║   CoPanel - Linux VPS Management System Installer          ║
-    ║   v1.0.0 - Pluggable Architecture                            ║
-    ╚═══════════════════════════════════════════════════════════════╝
+   ______      ____                        __
+  / ____/___  / __ \____ _____  ___  / /
+ / /   / __ \/ /_/ / __ `/ __ \/ _ \/ / 
+/ /___/ /_/ / ____/ /_/ / / / /  __/ /  
+\____/\____/_/    \__,_/_/ /_/\___/_/   
 EOF
-    
+    echo -e "${NC}"
+    echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "   ${CYAN}${BOLD}CoPanel - Advanced Linux VPS Management System${NC}"
+    echo -e "   ${BOLD}v1.0.0 - Premium Pluggable Architecture${NC}"
+    echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
     check_root
     check_os
     
-    log_info "Starting installation..."
-    echo ""
-    
+    log_step "Step 1: Check & Install Dependencies"
     install_dependencies
+    
+    log_step "Step 2: Setup System Users & Workspaces"
     setup_user_and_dirs
+    
+    log_step "Step 3: Build & Provision Backend"
     setup_backend
+    
+    log_step "Step 4: Build & Provision Frontend"
     setup_frontend
+    
+    log_step "Step 5: Configure Nginx & Firewall"
     setup_nginx
+    
+    log_step "Step 6: Register Systemd Daemon"
     setup_systemd_service
+    
+    log_step "Step 7: Launch Panel Engine"
     start_services
     
-    echo ""
+    log_step "Step 8: System Readiness Checklist"
     verify_installation
     
     echo ""
