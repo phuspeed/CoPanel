@@ -27,8 +27,17 @@ export default function WebManagerDashboard() {
   const [proxyPort, setProxyPort] = useState<number | ''>('');
   const [siteType, setSiteType] = useState<'static' | 'proxy'>('static');
 
-  // Site Viewer state
+  // Site Viewer/Editor state
   const [viewingSite, setViewingSite] = useState<SiteItem | null>(null);
+  const [editedContent, setEditedContent] = useState<string>('');
+  const [saveStatus, setSaveStatus] = useState<{ msg: string; isError: boolean } | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  const openViewModal = (item: SiteItem) => {
+    setViewingSite(item);
+    setEditedContent(item.content || '');
+    setSaveStatus(null);
+  };
 
   const fetchSites = async () => {
     setLoading(true);
@@ -121,6 +130,31 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const handleSaveConfig = async () => {
+    if (!viewingSite) return;
+    setIsSaving(true);
+    setSaveStatus(null);
+    try {
+      const response = await fetch('/api/web_manager/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: viewingSite.filename, content: editedContent }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to update configuration');
+      }
+      setSaveStatus({ msg: '✓ Configuration successfully updated and reloaded.', isError: false });
+      // Update local cached viewing site content
+      setViewingSite({ ...viewingSite, content: editedContent });
+      fetchSites();
+    } catch (err) {
+      setSaveStatus({ msg: err instanceof Error ? err.message : 'Error saving config', isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="p-8">
       {/* Top Header */}
@@ -203,11 +237,11 @@ export default function WebManagerDashboard() {
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <button
-                            onClick={() => setViewingSite(item)}
+                            onClick={() => openViewModal(item)}
                             className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-blue-400 transition"
-                            title="View Configuration"
+                            title="Edit Configuration"
                           >
-                            <Icons.Eye className="w-4 h-4" />
+                            <Icons.Edit className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteSite(item)}
@@ -349,14 +383,14 @@ export default function WebManagerDashboard() {
         </div>
       )}
 
-      {/* VIEW NGINX CONFIG MODAL */}
+      {/* EDIT NGINX/APACHE CONFIG MODAL */}
       {viewingSite && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-2xl h-[70vh] flex flex-col shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-2xl h-[75vh] flex flex-col shadow-2xl">
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <h3 className="text-lg font-bold flex items-center gap-2 text-slate-100 truncate max-w-md">
-                <Icons.Eye className="w-5 h-5 text-blue-400 flex-shrink-0" />
-                <span>Nginx Config: {viewingSite.filename}</span>
+                <Icons.Edit className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                <span>Edit Config: {viewingSite.filename}</span>
               </h3>
               <button
                 onClick={() => setViewingSite(null)}
@@ -365,16 +399,51 @@ export default function WebManagerDashboard() {
                 &times;
               </button>
             </div>
-            <pre className="flex-1 bg-slate-950 border border-slate-800 p-4 rounded-lg text-slate-200 font-mono text-sm overflow-auto">
-              {viewingSite.content}
-            </pre>
-            <div className="flex items-center justify-end gap-3 mt-4 flex-shrink-0">
-              <button
-                onClick={() => setViewingSite(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition"
-              >
-                Close
-              </button>
+
+            {saveStatus && (
+              <div className={`p-3.5 mb-3 rounded-xl border text-xs leading-relaxed font-mono whitespace-pre-wrap ${
+                saveStatus.isError
+                  ? 'bg-red-950/40 border-red-900/40 text-red-400'
+                  : 'bg-green-950/40 border-green-900/40 text-green-400'
+              }`}>
+                {saveStatus.msg}
+              </div>
+            )}
+
+            <textarea
+              className="flex-1 bg-slate-950 border border-slate-800 p-4 rounded-lg text-slate-200 font-mono text-sm focus:outline-none focus:border-blue-500 overflow-auto resize-none"
+              value={editedContent}
+              onChange={(e) => setEditedContent(e.target.value)}
+              spellCheck="false"
+            />
+
+            <div className="flex items-center justify-between gap-3 mt-4 flex-shrink-0">
+              <p className="text-xs text-slate-400 max-w-xs">
+                When saving, the config will be auto-tested and reloaded.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setViewingSite(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveConfig}
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isSaving ? (
+                    <>
+                      <Icons.Loader className="w-4 h-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Icons.Save className="w-4 h-4" /> Save Configuration
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

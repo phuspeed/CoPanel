@@ -54,6 +54,11 @@ class ToggleSiteRequest(BaseModel):
 class DeleteSiteRequest(BaseModel):
     filename: str
 
+class UpdateSiteRequest(BaseModel):
+    filename: str
+    content: str
+
+
 
 @router.get("/list")
 async def list_sites() -> Dict[str, Any]:
@@ -238,3 +243,62 @@ async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/update")
+async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
+    """Update Nginx or Apache site configuration, test syntax, and reload."""
+    import shutil
+    try:
+        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', req.filename)
+        available_path = os.path.join(SITES_AVAILABLE, safe_filename)
+
+        if not os.path.exists(available_path):
+            raise HTTPException(status_code=404, detail="Site configuration not found.")
+
+        # Read original backup
+        with open(available_path, "r", encoding="utf-8", errors="ignore") as f:
+            backup_content = f.read()
+
+        # Write new content
+        with open(available_path, "w", encoding="utf-8") as f:
+            f.write(req.content)
+
+        # Test configuration syntax and reload on Linux
+        if not IS_WINDOWS:
+            # Check Nginx
+            if os.path.exists("/etc/nginx") or shutil.which("nginx"):
+                try:
+                    subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
+                    subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as e:
+                    # Restore backup
+                    with open(available_path, "w", encoding="utf-8") as f:
+                        f.write(backup_content)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Nginx configuration syntax error:\n{e.stderr or e.stdout}"
+                    )
+            # Fallback to Apache if applicable
+            elif os.path.exists("/etc/apache2") or shutil.which("apache2ctl"):
+                try:
+                    subprocess.run(["apache2ctl", "configtest"], check=True, capture_output=True, text=True)
+                    subprocess.run(["systemctl", "reload", "apache2"], check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as e:
+                    # Restore backup
+                    with open(available_path, "w", encoding="utf-8") as f:
+                        f.write(backup_content)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Apache configuration syntax error:\n{e.stderr or e.stdout}"
+                    )
+
+        return {
+            "status": "success",
+            "message": "Configuration saved and reloaded successfully."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

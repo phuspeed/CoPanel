@@ -71,7 +71,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       update: 'Update',
       cancel: 'Cancel',
       language: 'English',
-      themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark'
+      themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark',
+      modulesNames: {
+        'appstore_manager': 'App Store',
+        'app_store': 'App Store',
+        'backup_manager': 'Backup',
+        'docker_manager': 'Docker',
+        'file_manager': 'Files',
+        'firewall': 'Firewall',
+        'package_manager': 'Packages',
+        'ssl_manager': 'SSL',
+        'system_monitor': 'Monitor',
+        'terminal': 'Terminal',
+        'users': 'Users',
+        'web_manager': 'Web'
+      }
     },
     vi: {
       dashboard: 'Tổng quan',
@@ -86,7 +100,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       update: 'Cập nhật',
       cancel: 'Hủy',
       language: 'Tiếng Việt',
-      themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối'
+      themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối',
+      modulesNames: {
+        'appstore_manager': 'Kho ứng dụng',
+        'app_store': 'Kho ứng dụng',
+        'backup_manager': 'Sao lưu',
+        'docker_manager': 'Docker',
+        'file_manager': 'Quản lý file',
+        'firewall': 'Tường lửa',
+        'package_manager': 'Cài đặt gói',
+        'ssl_manager': 'Quản lý SSL',
+        'system_monitor': 'Theo dõi hệ thống',
+        'terminal': 'Dòng lệnh',
+        'users': 'Người dùng',
+        'web_manager': 'Quản lý Web'
+      }
     }
   };
 
@@ -151,6 +179,11 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const getIcon = (iconName: string) => {
     const IconComponent = iconMap[iconName] || Icons.Grid;
     return <IconComponent className="w-5 h-5" />;
+  };
+
+  const getModuleName = (mod: any) => {
+    const key = mod.name.toLowerCase().replace(/\s+/g, '_');
+    return (tr as any).modulesNames?.[key] || mod.name;
   };
 
   const isActive = (path: string) => location.pathname === path;
@@ -232,7 +265,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                     title={module.description}
                   >
                     {getIcon(module.icon)}
-                    <span className="truncate">{module.name}</span>
+                    <span className="truncate">{getModuleName(module)}</span>
                   </Link>
                 ))}
               </>
@@ -416,11 +449,77 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         )}
 
         {/* Content */}
-        <main className={`flex-1 overflow-auto transition-colors duration-200 ${
+        <main className={`flex-1 overflow-auto pb-20 lg:pb-0 transition-colors duration-200 ${
           isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
         }`}>
           <Outlet context={{ theme, setTheme, language, setLanguage }} />
         </main>
+
+        {/* Mobile Bottom Footer Menu */}
+        <div className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden flex justify-around items-center h-16 border-t backdrop-blur-md px-2 ${
+          isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200 shadow-lg'
+        }`}>
+          <Link
+            to="/"
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs font-bold gap-1 transition duration-150',
+              isActive('/')
+                ? 'text-blue-500'
+                : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+            )}
+          >
+            <Icons.Home className="w-5 h-5" />
+            <span className="text-[10px] truncate">{tr.dashboard}</span>
+          </Link>
+          <Link
+            to="/web-manager"
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs font-bold gap-1 transition duration-150',
+              isActive('/web-manager')
+                ? 'text-blue-500'
+                : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+            )}
+          >
+            <Icons.Globe className="w-5 h-5" />
+            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['web_manager']}</span>
+          </Link>
+          <Link
+            to="/file-manager"
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs font-bold gap-1 transition duration-150',
+              isActive('/file-manager')
+                ? 'text-blue-500'
+                : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+            )}
+          >
+            <Icons.Folder className="w-5 h-5" />
+            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['file_manager']}</span>
+          </Link>
+          <Link
+            to="/terminal"
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs font-bold gap-1 transition duration-150',
+              isActive('/terminal')
+                ? 'text-blue-500'
+                : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+            )}
+          >
+            <Icons.Terminal className="w-5 h-5" />
+            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['terminal']}</span>
+          </Link>
+          <Link
+            to="/system-monitor"
+            className={cn(
+              'flex flex-col items-center justify-center w-full h-full text-xs font-bold gap-1 transition duration-150',
+              isActive('/system-monitor')
+                ? 'text-blue-500'
+                : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+            )}
+          >
+            <Icons.Activity className="w-5 h-5" />
+            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['system_monitor']}</span>
+          </Link>
+        </div>
       </div>
     </div>
   );
