@@ -89,7 +89,7 @@ install_dependencies() {
             curl wget git \
             build-essential \
             nodejs npm \
-            docker.io docker-compose ufw \
+            ufw \
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
     elif command_exists yum; then
@@ -99,11 +99,27 @@ install_dependencies() {
             curl wget git \
             gcc gcc-c++ make \
             nodejs npm \
-            docker docker-compose ufw \
+            ufw \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
     else
         log_error "Unsupported package manager"
         exit 1
+    fi
+
+    # Install Docker using official Docker convenience script if not installed
+    if ! command_exists docker; then
+        log_info "Installing Docker via official installation script..."
+        curl -fsSL https://get.docker.com -o install-docker.sh || true
+        if [[ -f install-docker.sh ]]; then
+            sh install-docker.sh || true
+            rm -f install-docker.sh
+        fi
+    fi
+
+    # Ensure Docker daemon is started & enabled
+    if command_exists systemctl; then
+        systemctl start docker || true
+        systemctl enable docker || true
     fi
     
     log_success "Dependencies installed"
