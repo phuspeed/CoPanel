@@ -1,7 +1,18 @@
+import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 
 export default function BackupAndSyncDashboard() {
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const context = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  
+  const [localTheme] = useState<'dark' | 'light'>(
+    (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'light'
+  );
+  const [localLanguage] = useState<'en' | 'vi'>(
+    (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en'
+  );
+
+  const theme = context?.theme || localTheme;
+  const language = context?.language || localLanguage;
   const isDark = theme === 'dark';
 
   const t = {
