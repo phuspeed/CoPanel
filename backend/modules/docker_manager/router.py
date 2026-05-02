@@ -258,16 +258,38 @@ async def build_compose_stack(req: ComposeActionRequest) -> Dict[str, Any]:
     """Build and start the compose stack in the directory."""
     import subprocess
     import os
+    import shutil
 
     if not os.path.isdir(req.path):
         raise HTTPException(status_code=400, detail=f"The path '{req.path}' does not exist.")
 
     try:
-        # Check command availability
+        # Check command availability and expand PATH
+        env = os.environ.copy()
+        extra_paths = ["/usr/bin", "/usr/local/bin", "/snap/bin"]
+        path_str = env.get("PATH", "")
+        for p in extra_paths:
+            if p not in path_str:
+                path_str = f"{p}:{path_str}" if path_str else p
+        env["PATH"] = path_str
+
         cmd = "docker compose"
-        import shutil
-        if shutil.which("docker-compose"):
-            cmd = "docker-compose"
+        # Check absolute paths explicitly
+        for possible_docker in ["/usr/bin/docker", "/usr/local/bin/docker", "/snap/bin/docker"]:
+            if os.path.exists(possible_docker) and os.access(possible_docker, os.X_OK):
+                cmd = f"{possible_docker} compose"
+                break
+        else:
+            if shutil.which("docker", path=path_str):
+                cmd = "docker compose"
+
+        # Check for docker-compose standalone
+        for possible_dc in ["/usr/bin/docker-compose", "/usr/local/bin/docker-compose", "/snap/bin/docker-compose"]:
+            if os.path.exists(possible_dc) and os.access(possible_dc, os.X_OK):
+                cmd = possible_dc
+                break
+            elif shutil.which("docker-compose", path=path_str):
+                cmd = "docker-compose"
 
         # Execute docker-compose up -d
         res = subprocess.run(
@@ -275,7 +297,8 @@ async def build_compose_stack(req: ComposeActionRequest) -> Dict[str, Any]:
             shell=True,
             cwd=req.path,
             capture_output=True,
-            text=True
+            text=True,
+            env=env
         )
 
         if res.returncode != 0:
