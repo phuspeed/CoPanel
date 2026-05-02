@@ -148,6 +148,43 @@ def run_ufw_delete_cmd(action: str, port: str) -> bool:
     return False
 
 
+@router.post("/enable")
+async def enable_firewall() -> Dict[str, Any]:
+    """Enable UFW firewall."""
+    global MOCK_STATUS
+    if IS_WINDOWS:
+        MOCK_STATUS = "active"
+        return {"status": "success", "message": "Firewall enabled successfully (Mock Mode)."}
+    ufw_path = find_ufw_path()
+    try:
+        # Before enabling, we must ensure SSH port 22 is open so users don't get locked out!
+        subprocess.run([ufw_path, "allow", "22"], shell=False, check=False)
+        # Enable
+        res = subprocess.run([ufw_path, "enable"], input="y\n", shell=False, capture_output=True, text=True)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Firewall enabled successfully."}
+        raise HTTPException(status_code=500, detail=res.stderr or "Failed to enable firewall.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/disable")
+async def disable_firewall() -> Dict[str, Any]:
+    """Disable UFW firewall."""
+    global MOCK_STATUS
+    if IS_WINDOWS:
+        MOCK_STATUS = "inactive"
+        return {"status": "success", "message": "Firewall disabled successfully (Mock Mode)."}
+    ufw_path = find_ufw_path()
+    try:
+        res = subprocess.run([ufw_path, "disable"], shell=False, capture_output=True, text=True)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Firewall disabled successfully."}
+        raise HTTPException(status_code=500, detail=res.stderr or "Failed to disable firewall.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/add")
 async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
     """Add a rule to the firewall."""

@@ -100,6 +100,25 @@ export default function FirewallDashboard() {
     }
   };
 
+  const handleToggleFirewall = async () => {
+    const action = active ? 'disable' : 'enable';
+    if (!confirm(`Are you sure you want to ${action} the firewall?`)) return;
+    try {
+      const token = localStorage.getItem('copanel_token');
+      const response = await fetch(`/api/firewall/${action}`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || `Failed to ${action} firewall`);
+      }
+      fetchFirewall();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : `Error toggling firewall`);
+    }
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 select-none">
       {/* Top Header */}
@@ -114,8 +133,19 @@ export default function FirewallDashboard() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleToggleFirewall}
+            className={`flex items-center gap-2 text-xs font-bold px-3.5 py-2.5 rounded-xl border transition-all ${
+              active
+                ? 'bg-red-600/10 hover:bg-red-600/20 border-red-500/20 text-red-300'
+                : 'bg-green-600/10 hover:bg-green-600/20 border-green-500/20 text-green-300'
+            }`}
+          >
+            <Icons.Power className="w-3.5 h-3.5" />
+            {active ? 'Disable Firewall' : 'Enable Firewall'}
+          </button>
           <span
-            className={`flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl border transition-all ${
+            className={`flex items-center gap-2 text-xs font-bold px-3 py-2.5 rounded-xl border transition-all ${
               active
                 ? 'bg-green-600/10 border-green-500/20 text-green-300 shadow-lg shadow-green-500/5'
                 : 'bg-slate-800/60 border-slate-700 text-slate-400'
