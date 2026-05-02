@@ -183,6 +183,8 @@ export default function DockerManagerDashboard() {
       if (data.status === 'success') {
         setActionOutput(data.message || 'Stack deployed successfully.');
         fetchContainers();
+        setTimeout(() => fetchContainers(), 1500);
+        setTimeout(() => fetchContainers(), 3500);
       } else {
         setActionOutput(data.message || 'Failed to bring up compose stack.');
       }
