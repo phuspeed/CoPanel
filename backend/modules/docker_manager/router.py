@@ -5,6 +5,9 @@ Handles listing, starting, stopping, restarting, removing containers, and fetchi
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import subprocess
+import shutil
+import os
 
 # Try to import docker module
 try:
@@ -61,59 +64,106 @@ class ContainerActionRequest(BaseModel):
 async def list_containers() -> Dict[str, Any]:
     """List containers with their ID, Name, Image, Status, Ports."""
     global MOCK_CONTAINERS
+    containers = []
+
+    # 1. Try using Python Docker SDK first
     client = get_docker_client()
-    
-    if client is None:
-        # Return interactive mock data for Dev Compatibility
-        return {
-            "status": "success",
-            "containers": MOCK_CONTAINERS,
-            "mock": True
-        }
+    if client is not None:
+        try:
+            for c in client.containers.list(all=True):
+                ports = []
+                for p, mapping in c.ports.items():
+                    if mapping:
+                        ports.append(f"{p} -> {mapping[0]['HostPort']}")
+                    else:
+                        ports.append(p)
 
+                containers.append({
+                    "id": c.short_id,
+                    "name": c.name,
+                    "image": c.image.tags[0] if c.image.tags else c.image.short_id,
+                    "status": c.status,
+                    "ports": ", ".join(ports) if ports else "—"
+                })
+            
+            if containers:
+                return {
+                    "status": "success",
+                    "containers": containers,
+                    "mock": False
+                }
+        except Exception:
+            pass
+
+    # 2. Fallback to direct shell command for 100% reliability!
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        containers = []
-        for c in client.containers.list(all=True):
-            # Parse ports info
-            ports = []
-            for p, mapping in c.ports.items():
-                if mapping:
-                    ports.append(f"{p} -> {mapping[0]['HostPort']}")
-                else:
-                    ports.append(p)
+        res = subprocess.run([docker_path, "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"], capture_output=True, text=True, check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            lines = res.stdout.strip().split("\n")
+            for line in lines:
+                parts = line.split("\t")
+                if len(parts) >= 4:
+                    cid = parts[0]
+                    name = parts[1]
+                    image = parts[2]
+                    status = parts[3].lower()
 
-            containers.append({
-                "id": c.short_id,
-                "name": c.name,
-                "image": c.image.tags[0] if c.image.tags else c.image.short_id,
-                "status": c.status,
-                "ports": ", ".join(ports) if ports else "—"
-            })
+                    # simple status parsing
+                    simple_status = "running"
+                    if "exited" in status or "exit" in status:
+                        simple_status = "exited"
+                    elif "pause" in status:
+                        simple_status = "paused"
+                    elif "created" in status:
+                        simple_status = "created"
 
-        return {
-            "status": "success",
-            "containers": containers,
-            "mock": False
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                    ports_mapping = parts[4] if len(parts) > 4 and parts[4] else "—"
+
+                    containers.append({
+                        "id": cid,
+                        "name": name,
+                        "image": image,
+                        "status": simple_status,
+                        "ports": ports_mapping
+                    })
+            if containers:
+                return {
+                    "status": "success",
+                    "containers": containers,
+                    "mock": False
+                }
+    except Exception:
+        pass
+
+    # Last resort: Return interactive mock data for Dev Compatibility
+    return {
+        "status": "success",
+        "containers": MOCK_CONTAINERS,
+        "mock": True
+    }
 
 
 @router.post("/start")
 async def start_container(req: ContainerActionRequest) -> Dict[str, Any]:
     """Start a container."""
     client = get_docker_client()
-    if client is None:
-        for c in MOCK_CONTAINERS:
-            if c["id"] == req.container_id:
-                c["status"] = "running"
-                return {"status": "success", "message": "Container started successfully (Mock Mode)."}
-        raise HTTPException(status_code=404, detail="Container not found in Mock Mode.")
+    if client is not None:
+        try:
+            container = client.containers.get(req.container_id)
+            container.start()
+            return {"status": "success", "message": "Container started successfully."}
+        except Exception:
+            pass
 
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        container = client.containers.get(req.container_id)
-        container.start()
-        return {"status": "success", "message": "Container started successfully."}
+        res = subprocess.run([docker_path, "start", req.container_id], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Container started successfully."}
+        raise HTTPException(status_code=400, detail=res.stderr or "Failed to start container.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -122,17 +172,22 @@ async def start_container(req: ContainerActionRequest) -> Dict[str, Any]:
 async def stop_container(req: ContainerActionRequest) -> Dict[str, Any]:
     """Stop a container."""
     client = get_docker_client()
-    if client is None:
-        for c in MOCK_CONTAINERS:
-            if c["id"] == req.container_id:
-                c["status"] = "exited"
-                return {"status": "success", "message": "Container stopped successfully (Mock Mode)."}
-        raise HTTPException(status_code=404, detail="Container not found in Mock Mode.")
+    if client is not None:
+        try:
+            container = client.containers.get(req.container_id)
+            container.stop()
+            return {"status": "success", "message": "Container stopped successfully."}
+        except Exception:
+            pass
 
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        container = client.containers.get(req.container_id)
-        container.stop()
-        return {"status": "success", "message": "Container stopped successfully."}
+        res = subprocess.run([docker_path, "stop", req.container_id], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Container stopped successfully."}
+        raise HTTPException(status_code=400, detail=res.stderr or "Failed to stop container.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -141,17 +196,22 @@ async def stop_container(req: ContainerActionRequest) -> Dict[str, Any]:
 async def restart_container(req: ContainerActionRequest) -> Dict[str, Any]:
     """Restart a container."""
     client = get_docker_client()
-    if client is None:
-        for c in MOCK_CONTAINERS:
-            if c["id"] == req.container_id:
-                c["status"] = "running"
-                return {"status": "success", "message": "Container restarted successfully (Mock Mode)."}
-        raise HTTPException(status_code=404, detail="Container not found in Mock Mode.")
+    if client is not None:
+        try:
+            container = client.containers.get(req.container_id)
+            container.restart()
+            return {"status": "success", "message": "Container restarted successfully."}
+        except Exception:
+            pass
 
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        container = client.containers.get(req.container_id)
-        container.restart()
-        return {"status": "success", "message": "Container restarted successfully."}
+        res = subprocess.run([docker_path, "restart", req.container_id], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Container restarted successfully."}
+        raise HTTPException(status_code=400, detail=res.stderr or "Failed to restart container.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -159,19 +219,23 @@ async def restart_container(req: ContainerActionRequest) -> Dict[str, Any]:
 @router.post("/remove")
 async def remove_container(req: ContainerActionRequest) -> Dict[str, Any]:
     """Remove a container."""
-    global MOCK_CONTAINERS
     client = get_docker_client()
-    if client is None:
-        original_count = len(MOCK_CONTAINERS)
-        MOCK_CONTAINERS = [c for c in MOCK_CONTAINERS if c["id"] != req.container_id]
-        if len(MOCK_CONTAINERS) == original_count:
-            raise HTTPException(status_code=404, detail="Container not found in Mock Mode.")
-        return {"status": "success", "message": "Container removed successfully (Mock Mode)."}
+    if client is not None:
+        try:
+            container = client.containers.get(req.container_id)
+            container.remove(force=True)
+            return {"status": "success", "message": "Container removed successfully."}
+        except Exception:
+            pass
 
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        container = client.containers.get(req.container_id)
-        container.remove(force=True)
-        return {"status": "success", "message": "Container removed successfully."}
+        res = subprocess.run([docker_path, "rm", "-f", req.container_id], capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Container removed successfully."}
+        raise HTTPException(status_code=400, detail=res.stderr or "Failed to remove container.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -180,21 +244,25 @@ async def remove_container(req: ContainerActionRequest) -> Dict[str, Any]:
 async def get_container_logs(container_id: str) -> Dict[str, Any]:
     """Fetch recent container logs (tail 100)."""
     client = get_docker_client()
-    if client is None:
-        for c in MOCK_CONTAINERS:
-            if c["id"] == container_id:
-                return {
-                    "status": "success",
-                    "logs": c.get("logs", "No logs recorded in Mock Mode.\n")
-                }
-        raise HTTPException(status_code=404, detail="Container not found in Mock Mode.")
+    if client is not None:
+        try:
+            container = client.containers.get(container_id)
+            logs = container.logs(tail=100).decode("utf-8", errors="ignore")
+            return {
+                "status": "success",
+                "logs": logs
+            }
+        except Exception:
+            pass
 
+    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        container = client.containers.get(container_id)
-        logs = container.logs(tail=100).decode("utf-8", errors="ignore")
+        res = subprocess.run([docker_path, "logs", "--tail", "100", container_id], capture_output=True, text=True, check=False)
+        # Some containers have stderr logs only, which is fine!
+        logs_out = res.stdout or res.stderr
         return {
             "status": "success",
-            "logs": logs
+            "logs": logs_out or "No logs recorded.\n"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -203,9 +271,6 @@ async def get_container_logs(container_id: str) -> Dict[str, Any]:
 @router.get("/scan-compose")
 async def scan_compose_files() -> Dict[str, Any]:
     """Scan directories for any docker-compose.yml files to suggest deployment."""
-    import os
-    from pathlib import Path
-
     IS_WINDOWS = os.name == 'nt'
     scan_paths = []
     if IS_WINDOWS:
@@ -216,6 +281,7 @@ async def scan_compose_files() -> Dict[str, Any]:
     compose_files = []
     # Search up to 3 directory levels deep to avoid scanning the entire filesystem
     for base_path in scan_paths:
+        from pathlib import Path
         if base_path.exists() and base_path.is_dir():
             try:
                 for root, dirs, files in os.walk(str(base_path)):
@@ -235,14 +301,6 @@ async def scan_compose_files() -> Dict[str, Any]:
             except Exception:
                 continue
 
-    # Add mock compose file if empty on development for testability
-    if not compose_files:
-        compose_files.append({
-            "path": "/home/user1/wordpress-app",
-            "filename": "docker-compose.yml",
-            "full_path": "/home/user1/wordpress-app/docker-compose.yml"
-        })
-
     return {
         "status": "success",
         "compose_files": compose_files
@@ -256,10 +314,6 @@ class ComposeActionRequest(BaseModel):
 @router.post("/up-compose")
 async def build_compose_stack(req: ComposeActionRequest) -> Dict[str, Any]:
     """Build and start the compose stack in the directory."""
-    import subprocess
-    import os
-    import shutil
-
     if not os.path.isdir(req.path):
         raise HTTPException(status_code=400, detail=f"The path '{req.path}' does not exist.")
 
