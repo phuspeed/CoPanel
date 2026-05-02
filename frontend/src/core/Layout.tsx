@@ -36,7 +36,7 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
 };
 
 export default function Layout({ user, onLogout }: { user?: any; onLogout?: () => void }) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const location = useLocation();
   const modules = moduleRegistry.getAll();
   const [installedPackages, setInstalledPackages] = useState<any[]>([]);
@@ -129,6 +129,12 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       document.documentElement.classList.remove('dark');
     }
   }, [theme, language]);
+
+  useEffect(() => {
+    if (window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  }, [location.pathname]);
 
   const handlePasswordChange = async () => {
     if (!oldPwdInput || !newPwdInput) {
