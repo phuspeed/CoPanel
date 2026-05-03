@@ -1,291 +1,338 @@
 /**
- * PHP Manager Dashboard Component
- * Manage and install PHP versions, edit php.ini configuration files, and view modules.
- * Fully supports mobile responsive view and stunning dark/light theme.
+ * PHP Manager Dashboard - Upgraded
+ * Features: multi-version selector, enable/disable modules, php.ini editor, tabs
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
-export default function PHPManagerDashboard() {
-  const [versions, setVersions] = useState<string[]>([]);
-  const [modules, setModules] = useState<string[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState<string>('');
-  const [phpIniContent, setPhpIniContent] = useState<string>('');
-  const [editingIni, setEditingIni] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [saving, setSaving] = useState<boolean>(false);
-  const [installing, setInstalling] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
+const INSTALLABLE_VERSIONS = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'];
 
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+const ALL_PHP_MODULES = [
+  'bcmath','calendar','curl','dom','exif','fileinfo','filter','ftp',
+  'gd','gettext','gmp','hash','iconv','imap','intl','json',
+  'ldap','mbstring','mysqli','mysqlnd','opcache','openssl','pcntl',
+  'pcre','pdo','pdo_mysql','pdo_pgsql','pdo_sqlite','pgsql','posix',
+  'readline','redis','session','shmop','simplexml','soap','sockets',
+  'sodium','sqlite3','sysvmsg','sysvsem','sysvshm','tokenizer',
+  'xml','xmlreader','xmlrpc','xmlwriter','xsl','zip','zlib',
+  'imagick','xdebug','memcached','mongodb','apcu',
+];
+
+type Tab = 'versions' | 'modules' | 'ini';
+type ModuleState = Record<string, boolean>;
+
+interface InstalledVersion {
+  version: string;
+  status: 'active' | 'installed' | 'available';
+}
+
+export default function PHPManagerDashboard() {
+  const { theme, language } = useOutletContext<{ theme: 'dark'|'light'; language: 'en'|'vi' }>();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
 
-  const t = {
+  const [tab, setTab] = useState<Tab>('versions');
+  const [versions, setVersions] = useState<InstalledVersion[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string>('8.2');
+  const [moduleStates, setModuleStates] = useState<ModuleState>({});
+  const [moduleSearch, setModuleSearch] = useState('');
+  const [moduleFilter, setModuleFilter] = useState<'all'|'enabled'|'disabled'>('all');
+  const [phpIniContent, setPhpIniContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [installing, setInstalling] = useState<string|null>(null);
+  const [togglingMod, setTogglingMod] = useState<string|null>(null);
+  const [msg, setMsg] = useState<{text:string;isError:boolean}|null>(null);
+
+  const tr = {
     en: {
-      title: 'PHP Version Manager',
-      desc: 'Deploy, control, and update PHP versions for your application environment. Direct access to configuration and modules included.',
-      status: 'PHP Service Status',
-      ready: 'Service Ready',
-      loading: 'Fetching versions and modules...',
-      versionsTitle: 'Available PHP Versions',
-      modulesTitle: 'Available standard PHP Modules',
-      colVersion: 'Version',
-      colStatus: 'Status',
-      colAction: 'Actions',
-      noVersions: 'No PHP versions available.',
-      noModules: 'No standard modules found.',
-      install: 'Install',
-      editIni: 'Edit php.ini',
-      iniModalTitle: 'Configure php.ini',
-      savingIni: 'Saving...',
-      saveBtn: 'Save & Apply',
-      cancel: 'Cancel',
-      successInstall: 'PHP version successfully installed.',
-      successSave: 'php.ini configuration updated successfully.'
+      title:'PHP Manager', desc:'Install PHP versions, manage extensions, edit php.ini.',
+      tabVersions:'Versions', tabModules:'Extensions', tabIni:'php.ini',
+      install:'Install', uninstall:'Remove', setActive:'Set Active',
+      active:'Active', installed:'Installed', available:'Available',
+      saveIni:'Save & Reload', cancel:'Cancel', saving:'Saving...',
+      modSearch:'Search extensions...', enabled:'Enabled', disabled:'Disabled',
+      allMods:'All', enabledMods:'Enabled', disabledMods:'Disabled',
+      loading:'Loading...', noVersions:'No versions found.',
     },
     vi: {
-      title: 'Quản lý Phiên bản PHP',
-      desc: 'Triển khai, kiểm soát và cập nhật các phiên bản PHP cho môi trường ứng dụng của bạn. Chỉnh sửa tệp cấu hình và theo dõi module có sẵn.',
-      status: 'Trạng thái PHP',
-      ready: 'Sẵn sàng',
-      loading: 'Đang tải thông tin...',
-      versionsTitle: 'Danh sách Phiên bản PHP',
-      modulesTitle: 'Danh sách Module PHP Tiêu chuẩn',
-      colVersion: 'Phiên bản',
-      colStatus: 'Trạng thái',
-      colAction: 'Thao tác',
-      noVersions: 'Không tìm thấy phiên bản PHP nào.',
-      noModules: 'Không tìm thấy module tiêu chuẩn nào.',
-      install: 'Cài đặt',
-      editIni: 'Cấu hình php.ini',
-      iniModalTitle: 'Chỉnh sửa tệp php.ini',
-      savingIni: 'Đang lưu...',
-      saveBtn: 'Lưu & Khởi động lại',
-      cancel: 'Hủy',
-      successInstall: 'Cài đặt phiên bản PHP thành công.',
-      successSave: 'Cấu hình tệp php.ini thành công.'
+      title:'Quản lý PHP', desc:'Cài đặt phiên bản PHP, bật/tắt extension, chỉnh php.ini.',
+      tabVersions:'Phiên bản', tabModules:'Extensions', tabIni:'php.ini',
+      install:'Cài đặt', uninstall:'Gỡ', setActive:'Đặt mặc định',
+      active:'Đang dùng', installed:'Đã cài', available:'Có thể cài',
+      saveIni:'Lưu & Reload', cancel:'Hủy', saving:'Đang lưu...',
+      modSearch:'Tìm extension...', enabled:'Bật', disabled:'Tắt',
+      allMods:'Tất cả', enabledMods:'Đang bật', disabledMods:'Đang tắt',
+      loading:'Đang tải...', noVersions:'Chưa có phiên bản nào.',
     }
+  }[language || 'en'];
+
+  const authHeaders = useMemo(() => ({
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  }), [token]);
+
+  const showMsg = (text: string, isError = false) => {
+    setMsg({ text, isError });
+    setTimeout(() => setMsg(null), 4000);
   };
 
-  const tr = t[language || 'en'];
-
-  const fetchVersionsAndModules = async () => {
+  // Fetch versions list
+  const fetchVersions = async () => {
     setLoading(true);
     try {
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      const [resVersions, resModules] = await Promise.all([
-        fetch('/api/php_manager/versions', { headers }),
-        fetch('/api/php_manager/modules', { headers })
-      ]);
-      
-      if (resVersions.ok) {
-        const dataVersions = await resVersions.json();
-        if (dataVersions.versions) {
-          setVersions(dataVersions.versions);
-        }
-      }
-
-      if (resModules.ok) {
-        const dataModules = await resModules.json();
-        if (dataModules.modules) {
-          setModules(dataModules.modules);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching PHP details:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchVersionsAndModules();
-  }, []);
-
-  const handleInstall = async (version: string) => {
-    setInstalling(version);
-    setMsg(null);
-    try {
-      const res = await fetch('/api/php_manager/install', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ version })
-      });
-      const data = await res.json();
+      const res = await fetch('/api/php_manager/versions', { headers: authHeaders });
       if (res.ok) {
-        setMsg({ text: data.message || tr.successInstall, isError: false });
-        fetchVersionsAndModules();
-      } else {
-        setMsg({ text: data.detail || 'Could not install PHP version.', isError: true });
+        const data = await res.json();
+        const installed: string[] = data.versions || [];
+        const active: string = data.active || installed[0] || '';
+        setVersions(INSTALLABLE_VERSIONS.map(v => ({
+          version: v,
+          status: v === active ? 'active' : installed.includes(v) ? 'installed' : 'available'
+        })));
+        if (!selectedVersion) setSelectedVersion(active || '8.2');
       }
-    } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
-    } finally {
-      setInstalling(null);
-    }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
   };
 
-  const handleEditIni = async (version: string) => {
-    setMsg(null);
-    setSelectedVersion(version);
+  // Fetch modules for selected version
+  const fetchModules = async (ver: string) => {
     setLoading(true);
     try {
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/php_manager/modules/${ver}`, { headers: authHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        const enabled: string[] = data.enabled || data.modules || [];
+        const init: ModuleState = {};
+        ALL_PHP_MODULES.forEach(m => { init[m] = enabled.includes(m); });
+        setModuleStates(init);
       }
-      const res = await fetch(`/api/php_manager/php_ini/${version}`, { headers });
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  };
+
+  // Fetch php.ini
+  const fetchIni = async (ver: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/php_manager/php_ini/${ver}`, { headers: authHeaders });
       if (res.ok) {
         const data = await res.json();
         setPhpIniContent(data.content || '');
-        setEditingIni(true);
-      } else {
-        const data = await res.json();
-        setMsg({ text: data.detail || 'Could not load php.ini content.', isError: true });
       }
-    } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
   };
 
-  const handleSaveIni = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setMsg(null);
+  useEffect(() => { fetchVersions(); }, []);
+  useEffect(() => {
+    if (tab === 'modules') fetchModules(selectedVersion);
+    if (tab === 'ini') fetchIni(selectedVersion);
+  }, [tab, selectedVersion]);
+
+  const handleInstall = async (ver: string) => {
+    setInstalling(ver);
     try {
-      const res = await fetch(`/api/php_manager/php_ini/${selectedVersion}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ content: phpIniContent })
+      const res = await fetch('/api/php_manager/install', {
+        method: 'POST', headers: authHeaders, body: JSON.stringify({ version: ver })
       });
-      const data = await res.json();
-      if (res.ok) {
-        setMsg({ text: data.message || tr.successSave, isError: false });
-        setEditingIni(false);
-      } else {
-        setMsg({ text: data.detail || 'Could not save php.ini file.', isError: true });
+      const d = await res.json();
+      showMsg(d.message || 'Done.', !res.ok);
+      if (res.ok) fetchVersions();
+    } catch { showMsg('Connection error.', true); }
+    finally { setInstalling(null); }
+  };
+
+  const handleUninstall = async (ver: string) => {
+    if (!confirm(`Remove PHP ${ver}?`)) return;
+    try {
+      const res = await fetch(`/api/php_manager/uninstall/${ver}`, {
+        method: 'DELETE', headers: authHeaders
+      });
+      const d = await res.json();
+      showMsg(d.message || 'Done.', !res.ok);
+      if (res.ok) fetchVersions();
+    } catch { showMsg('Connection error.', true); }
+  };
+
+  const handleSetActive = async (ver: string) => {
+    try {
+      const res = await fetch('/api/php_manager/set_active', {
+        method: 'POST', headers: authHeaders, body: JSON.stringify({ version: ver })
+      });
+      const d = await res.json();
+      showMsg(d.message || 'Done.', !res.ok);
+      if (res.ok) fetchVersions();
+    } catch { showMsg('Connection error.', true); }
+  };
+
+  const handleToggleModule = async (mod: string, enable: boolean) => {
+    setTogglingMod(mod);
+    const prev = moduleStates[mod];
+    setModuleStates(s => ({ ...s, [mod]: enable }));
+    try {
+      const res = await fetch('/api/php_manager/module_toggle', {
+        method: 'POST', headers: authHeaders,
+        body: JSON.stringify({ version: selectedVersion, module: mod, enable })
+      });
+      if (!res.ok) {
+        setModuleStates(s => ({ ...s, [mod]: prev }));
+        const d = await res.json();
+        showMsg(d.detail || 'Failed.', true);
       }
     } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
-    } finally {
-      setSaving(false);
+      setModuleStates(s => ({ ...s, [mod]: prev }));
+      showMsg('Connection error.', true);
     }
+    finally { setTogglingMod(null); }
+  };
+
+  const handleSaveIni = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/php_manager/php_ini/${selectedVersion}`, {
+        method: 'POST', headers: authHeaders,
+        body: JSON.stringify({ content: phpIniContent })
+      });
+      const d = await res.json();
+      showMsg(d.message || 'Saved.', !res.ok);
+    } catch { showMsg('Connection error.', true); }
+    finally { setSaving(false); }
+  };
+
+  const filteredModules = useMemo(() =>
+    ALL_PHP_MODULES.filter(m => {
+      const matchSearch = m.toLowerCase().includes(moduleSearch.toLowerCase());
+      const matchFilter = moduleFilter === 'all' || (moduleFilter === 'enabled' ? moduleStates[m] : !moduleStates[m]);
+      return matchSearch && matchFilter;
+    }), [moduleSearch, moduleFilter, moduleStates]);
+
+  // ─── Styles helpers ───
+  const card = `rounded-2xl border p-5 md:p-6 ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'} shadow-sm`;
+  const btn = (color: string) => `px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 border ${color}`;
+  const tabCls = (t: Tab) => `px-4 py-2 text-xs font-semibold rounded-lg transition ${tab===t
+    ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white')
+    : (isDark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100')}`;
+  const statusBadge = (s: InstalledVersion['status']) => {
+    if (s==='active') return isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-50 text-green-600 border-green-200';
+    if (s==='installed') return isDark ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 'bg-blue-50 text-blue-600 border-blue-200';
+    return isDark ? 'bg-slate-700/40 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-500 border-slate-200';
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
-      {/* Premium Ambient Banner */}
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
-        isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-      }`}>
-        <div className="space-y-2 max-w-2xl text-center md:text-left">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center justify-center md:justify-start gap-2 ${
-            isDark ? 'bg-gradient-to-r from-blue-400 via-sky-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-sky-600 to-slate-800 bg-clip-text text-transparent'
-          }`}>
-            <Icons.Cpu className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-5 select-none">
+      {/* Header */}
+      <div className={`${card} flex flex-col md:flex-row md:items-center justify-between gap-4`}>
+        <div>
+          <h2 className={`text-xl font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-800'}`}>
+            <Icons.Cpu className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
           </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
-          </p>
+          <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.desc}</p>
         </div>
-        <div className="flex flex-col items-center md:items-end gap-3 self-stretch md:self-auto">
-          <div className={`flex flex-col items-center md:items-end gap-1 text-center md:text-right px-4 py-3 rounded-xl border backdrop-blur-sm self-stretch md:self-auto min-w-[180px] ${
-            isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white/80 border-slate-200 shadow-sm'
-          }`}>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{tr.status}</span>
-            <span className={`text-lg md:text-xl font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.ready}</span>
-          </div>
+        {/* Version selector */}
+        <div className="flex items-center gap-2">
+          <Icons.Code2 className={`w-4 h-4 shrink-0 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+          <select
+            value={selectedVersion}
+            onChange={e => setSelectedVersion(e.target.value)}
+            className={`text-xs font-mono font-semibold px-3 py-2 rounded-lg border transition focus:outline-none focus:border-blue-500 ${
+              isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+            }`}
+          >
+            {INSTALLABLE_VERSIONS.map(v => (
+              <option key={v} value={v}>PHP {v}</option>
+            ))}
+          </select>
         </div>
       </div>
 
+      {/* Message */}
       {msg && (
-        <div className={`p-3.5 border rounded-xl text-xs flex items-center gap-2 animate-fade-in ${
+        <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${
           msg.isError
             ? (isDark ? 'bg-red-950/20 border-red-600/30 text-red-400' : 'bg-red-50 border-red-200 text-red-600')
-            : (isDark ? 'bg-blue-950/20 border-blue-600/30 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-600')
+            : (isDark ? 'bg-green-950/20 border-green-600/30 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
         }`}>
-          {msg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.Info className="w-4 h-4 shrink-0" />}
-          <span>{msg.text}</span>
+          {msg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />}
+          {msg.text}
         </div>
       )}
 
-      {/* Main Feature Layout Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
-        {/* PHP Versions Listing */}
-        <div className={`col-span-1 lg:col-span-2 border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-            <Icons.Layers className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.versionsTitle}
-          </h3>
+      {/* Tabs */}
+      <div className="flex gap-2 flex-wrap">
+        <button className={tabCls('versions')} onClick={() => setTab('versions')}>
+          <span className="flex items-center gap-1.5"><Icons.Layers className="w-3.5 h-3.5" />{tr.tabVersions}</span>
+        </button>
+        <button className={tabCls('modules')} onClick={() => setTab('modules')}>
+          <span className="flex items-center gap-1.5"><Icons.Box className="w-3.5 h-3.5" />{tr.tabModules}</span>
+        </button>
+        <button className={tabCls('ini')} onClick={() => setTab('ini')}>
+          <span className="flex items-center gap-1.5"><Icons.FileText className="w-3.5 h-3.5" />{tr.tabIni}</span>
+        </button>
+      </div>
 
-          {loading && versions.length === 0 ? (
-            <div className="flex items-center gap-2 text-slate-400 text-xs py-4">
-              <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" />
-              <p>{tr.loading}</p>
+      {/* ── VERSIONS TAB ── */}
+      {tab === 'versions' && (
+        <div className={card}>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-slate-400 py-6">
+              <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" /> {tr.loading}
             </div>
-          ) : versions.length > 0 ? (
-            <div className={`overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-              <table className="w-full text-left border-collapse select-none">
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
-                    isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
-                  }`}>
-                    <th className="p-4">{tr.colVersion}</th>
-                    <th className="p-4">{tr.colStatus}</th>
-                    <th className="p-4 text-center">{tr.colAction}</th>
+                  <tr className={`text-xs font-bold uppercase tracking-wider border-b ${isDark ? 'text-slate-400 border-slate-800' : 'text-slate-500 border-slate-100'}`}>
+                    <th className="py-3 px-4">Version</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className={`text-xs divide-y font-mono ${
-                  isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'
-                }`}>
-                  {versions.map((version, idx) => (
-                    <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
-                      <td className={`p-4 font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-                        PHP {version}
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-all ${
-                          isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-50 text-green-600 border-green-200'
-                        }`}>
-                          Available
+                <tbody className={`text-xs divide-y ${isDark ? 'divide-slate-800/50' : 'divide-slate-100'}`}>
+                  {versions.map(({ version, status }) => (
+                    <tr key={version} className={`transition ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
+                      <td className={`py-3 px-4 font-mono font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>PHP {version}</td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold ${statusBadge(status)}`}>
+                          {status === 'active' ? tr.active : status === 'installed' ? tr.installed : tr.available}
                         </span>
                       </td>
-                      <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleInstall(version)}
-                            disabled={installing === version}
-                            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 ${
-                              isDark ? 'bg-blue-950/40 border-blue-900/40 hover:bg-blue-900/40 text-blue-400' : 'bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-600'
-                            }`}
-                          >
-                            {installing === version ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Zap className="w-3.5 h-3.5" />}
-                            {installing === version ? 'Installing' : tr.install}
-                          </button>
-                          <button
-                            onClick={() => handleEditIni(version)}
-                            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 ${
-                              isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-                            }`}
-                          >
-                            <Icons.Sliders className="w-3.5 h-3.5" />
-                            {tr.editIni}
-                          </button>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2 justify-end flex-wrap">
+                          {status === 'available' && (
+                            <button
+                              onClick={() => handleInstall(version)}
+                              disabled={installing === version}
+                              className={btn(isDark ? 'bg-blue-600/20 border-blue-600/40 text-blue-400 hover:bg-blue-600/30' : 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100')}
+                            >
+                              {installing === version ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                              {installing === version ? '...' : tr.install}
+                            </button>
+                          )}
+                          {status === 'installed' && (
+                            <>
+                              <button
+                                onClick={() => handleSetActive(version)}
+                                className={btn(isDark ? 'bg-green-600/20 border-green-600/40 text-green-400 hover:bg-green-600/30' : 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100')}
+                              >
+                                <Icons.Star className="w-3.5 h-3.5" /> {tr.setActive}
+                              </button>
+                              <button
+                                onClick={() => handleUninstall(version)}
+                                className={btn(isDark ? 'bg-red-600/20 border-red-600/40 text-red-400 hover:bg-red-600/30' : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100')}
+                              >
+                                <Icons.Trash2 className="w-3.5 h-3.5" /> {tr.uninstall}
+                              </button>
+                            </>
+                          )}
+                          {status === 'active' && (
+                            <span className={`text-[10px] font-semibold flex items-center gap-1 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                              <Icons.CheckCircle2 className="w-3.5 h-3.5" /> Active
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -293,95 +340,139 @@ export default function PHPManagerDashboard() {
                 </tbody>
               </table>
             </div>
-          ) : (
-            <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
-              isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
-            }`}>
-              {tr.noVersions}
-            </div>
           )}
         </div>
+      )}
 
-        {/* Standard Modules Section */}
-        <div className={`col-span-1 border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-            <Icons.Box className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.modulesTitle}
-          </h3>
-
-          {modules.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
-              {modules.map((mod, idx) => (
-                <div key={idx} className={`p-3 rounded-xl border flex items-center gap-2 justify-between transition duration-200 font-mono text-xs ${
-                  isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-700'
-                }`}>
-                  <span className="font-bold truncate select-all">{mod}</span>
-                  <Icons.CheckCircle2 className={`w-4 h-4 shrink-0 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
-              isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
-            }`}>
-              {tr.noModules}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* php.ini Content Editing Modal */}
-      {editingIni && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <form onSubmit={handleSaveIni} className={`p-6 rounded-2xl w-full max-w-2xl shadow-2xl border space-y-4 flex flex-col justify-between max-h-[90vh] ${
-            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          }`}>
-            <div className="flex items-center justify-between">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.Sliders className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-                {tr.iniModalTitle} (PHP {selectedVersion})
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingIni(false)}
-                className="text-slate-500 hover:text-red-400 transition"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-auto py-2">
-              <textarea
-                value={phpIniContent}
-                onChange={(e) => setPhpIniContent(e.target.value)}
-                rows={14}
-                className={`w-full border rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-all font-mono text-xs select-all resize-none ${
-                  isDark ? 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                }`}
+      {/* ── MODULES TAB ── */}
+      {tab === 'modules' && (
+        <div className={`${card} space-y-4`}>
+          {/* Toolbar */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border flex-1 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+              <Icons.Search className={`w-4 h-4 shrink-0 ${isDark ? 'text-slate-400' : 'text-slate-400'}`} />
+              <input
+                type="text"
+                placeholder={tr.modSearch}
+                value={moduleSearch}
+                onChange={e => setModuleSearch(e.target.value)}
+                className={`bg-transparent text-xs flex-1 focus:outline-none ${isDark ? 'text-slate-200 placeholder-slate-600' : 'text-slate-700 placeholder-slate-400'}`}
               />
             </div>
-
-            <div className="flex items-center justify-end gap-3 mt-4 border-t pt-3 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setEditingIni(false)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                }`}
-              >
-                {tr.cancel}
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1.5"
-              >
-                {saving ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Save className="w-3.5 h-3.5" />}
-                {saving ? tr.savingIni : tr.saveBtn}
-              </button>
+            <div className={`flex rounded-lg border overflow-hidden text-xs font-semibold ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+              {(['all','enabled','disabled'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setModuleFilter(f)}
+                  className={`px-3 py-2 transition ${moduleFilter === f
+                    ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white')
+                    : (isDark ? 'bg-slate-800 text-slate-400 hover:text-slate-200' : 'bg-white text-slate-500 hover:text-slate-700')}`}
+                >
+                  {f === 'all' ? tr.allMods : f === 'enabled' ? tr.enabledMods : tr.disabledMods}
+                </button>
+              ))}
             </div>
-          </form>
+          </div>
+
+          {/* Stats */}
+          <div className={`flex gap-4 text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            <span className={`${isDark ? 'text-green-400' : 'text-green-600'} font-semibold`}>
+              ● {Object.values(moduleStates).filter(Boolean).length} enabled
+            </span>
+            <span className={`${isDark ? 'text-slate-500' : 'text-slate-400'} font-semibold`}>
+              ○ {Object.values(moduleStates).filter(v => !v).length} disabled
+            </span>
+            <span className="ml-auto">PHP {selectedVersion}</span>
+          </div>
+
+          {/* Module grid */}
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-slate-400 py-6">
+              <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" /> {tr.loading}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {filteredModules.map(mod => {
+                const enabled = moduleStates[mod] ?? false;
+                const toggling = togglingMod === mod;
+                return (
+                  <div
+                    key={mod}
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-xl border transition ${
+                      enabled
+                        ? (isDark ? 'bg-blue-600/10 border-blue-600/30' : 'bg-blue-50 border-blue-200')
+                        : (isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200')
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Icons.Package className={`w-3.5 h-3.5 shrink-0 ${enabled ? (isDark ? 'text-blue-400' : 'text-blue-500') : (isDark ? 'text-slate-600' : 'text-slate-300')}`} />
+                      <span className={`font-mono text-xs font-semibold truncate ${enabled ? (isDark ? 'text-slate-200' : 'text-slate-700') : (isDark ? 'text-slate-500' : 'text-slate-400')}`}>
+                        {mod}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleToggleModule(mod, !enabled)}
+                      disabled={toggling}
+                      title={enabled ? 'Disable' : 'Enable'}
+                      className={`relative w-9 h-5 rounded-full border transition-all shrink-0 ml-2 ${
+                        toggling ? 'opacity-50' : ''
+                      } ${enabled
+                        ? (isDark ? 'bg-blue-600 border-blue-600' : 'bg-blue-600 border-blue-600')
+                        : (isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-200 border-slate-300')
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${enabled ? 'left-[18px]' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PHP.INI TAB ── */}
+      {tab === 'ini' && (
+        <div className={`${card} space-y-4`}>
+          <div className="flex items-center justify-between">
+            <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+              <Icons.FileText className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              php.ini — PHP {selectedVersion}
+            </h3>
+          </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-slate-400 py-6">
+              <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" /> {tr.loading}
+            </div>
+          ) : (
+            <>
+              <textarea
+                value={phpIniContent}
+                onChange={e => setPhpIniContent(e.target.value)}
+                rows={22}
+                spellCheck={false}
+                className={`w-full border rounded-xl px-4 py-3 font-mono text-xs focus:outline-none focus:border-blue-500 transition resize-none ${
+                  isDark ? 'bg-slate-950/80 border-slate-800 text-slate-200 hover:border-slate-700' : 'bg-slate-50 border-slate-200 text-slate-800'
+                }`}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => fetchIni(selectedVersion)}
+                  className={btn(isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200')}
+                >
+                  <Icons.RefreshCw className="w-3.5 h-3.5" /> Reset
+                </button>
+                <button
+                  onClick={handleSaveIni}
+                  disabled={saving}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow"
+                >
+                  {saving ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Save className="w-3.5 h-3.5" />}
+                  {saving ? tr.saving : tr.saveIni}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

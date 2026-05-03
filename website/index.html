@@ -3,319 +3,489 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CoPanel - Trình quản lý VPS Linux thế hệ mới cực kỳ mạnh mẽ & mã nguồn mở</title>
-    
-    <!-- SEO Meta Tags -->
-    <meta name="description" content="CoPanel là hệ thống quản lý VPS Linux thế hệ mới với kiến trúc Pluggable mạnh mẽ, giao diện tuyệt đẹp và mã nguồn mở hoàn toàn. Hỗ trợ đầy đủ các module Docker, System Monitor, File Manager, Backup, và SSL tự động.">
-    <meta name="keywords" content="CoPanel, quản lý VPS, VPS Linux, hosting control panel, open source control panel, trình quản lý VPS, quản lý server, VPS panel, docker manager, file manager, backup gdrive rclone">
+    <title>CoPanel – Quản lý VPS Linux mã nguồn mở</title>
+
+    <!-- SEO -->
+    <meta name="description" content="CoPanel – Bảng điều khiển VPS Linux mã nguồn mở. Kiến trúc Pluggable, hỗ trợ Docker, Backup, SSL, File Manager và System Monitor.">
+    <meta name="keywords" content="CoPanel, quản lý VPS, VPS Linux, control panel, open source, docker, backup, SSL">
     <meta name="robots" content="index, follow">
     <meta name="author" content="CoPanel Open Source Project">
-    
-    <!-- Open Graph / Facebook -->
+
+    <!-- OG -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://github.com/phuspeed/CoPanel">
-    <meta property="og:title" content="CoPanel - Trình quản lý VPS Linux thế hệ mới cực kỳ mạnh mẽ">
-    <meta property="og:description" content="Trải nghiệm trình quản lý VPS tối ưu hàng đầu cho Linux với kiến trúc cắm (Pluggable) thông minh, giao diện trực quan và tính năng tự động hóa vượt trội.">
+    <meta property="og:title" content="CoPanel – Quản lý VPS Linux mã nguồn mở">
+    <meta property="og:description" content="Bảng điều khiển VPS Linux mã nguồn mở với kiến trúc Pluggable, hỗ trợ Docker, Backup, SSL tự động và nhiều module mở rộng.">
     <meta property="og:image" content="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1200&q=80">
 
     <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="https://github.com/phuspeed/CoPanel">
-    <meta property="twitter:title" content="CoPanel - Trình quản lý VPS Linux thế hệ mới">
-    <meta property="twitter:description" content="Quản lý VPS Linux một cách dễ dàng và thông minh với mã nguồn mở CoPanel.">
-    <meta property="twitter:image" content="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1200&q=80">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CoPanel – Quản lý VPS Linux mã nguồn mở">
+    <meta name="twitter:description" content="Bảng điều khiển VPS Linux mã nguồn mở với kiến trúc Pluggable.">
 
-    <!-- Google Fonts -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <style>
         :root {
-            --bg-color: #030712;
-            --surface-color: rgba(31, 41, 55, 0.4);
-            --border-color: rgba(75, 85, 99, 0.3);
-            --accent-blue: #3b82f6;
-            --accent-purple: #8b5cf6;
-            --accent-indigo: #6366f1;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --gradient-text: linear-gradient(135deg, #60a5fa, #c084fc, #e879f9);
+            --bg: #060d1a;
+            --surface: rgba(255,255,255,0.04);
+            --border: rgba(255,255,255,0.08);
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+            --text: #f1f5f9;
+            --muted: #64748b;
+            --muted2: #94a3b8;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Outfit', sans-serif;
-        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            overflow-x: hidden;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            min-height: 100vh;
+            overflow-x: hidden;
         }
 
-        /* Ambient glow effects */
-        .bg-glow {
-            position: absolute;
-            width: 600px;
-            height: 600px;
+        /* ─── Glow bg ─── */
+        .glow {
+            position: fixed;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, rgba(0, 0, 0, 0) 70%);
-            top: -150px;
-            right: -150px;
-            z-index: 0;
             pointer-events: none;
+            z-index: 0;
+        }
+        .glow-1 {
+            width: 700px; height: 700px;
+            background: radial-gradient(circle, rgba(59,130,246,.12) 0%, transparent 70%);
+            top: -200px; right: -200px;
+        }
+        .glow-2 {
+            width: 600px; height: 600px;
+            background: radial-gradient(circle, rgba(139,92,246,.09) 0%, transparent 70%);
+            bottom: -200px; left: -200px;
         }
 
-        .bg-glow-bottom {
-            position: absolute;
-            width: 800px;
-            height: 800px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, rgba(0, 0, 0, 0) 70%);
-            bottom: -300px;
-            left: -300px;
-            z-index: 0;
-            pointer-events: none;
-        }
-
-        /* Navigation */
+        /* ─── Nav ─── */
         nav {
-            width: 100%;
-            height: 80px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 8%;
-            z-index: 1000;
+            padding: 0 5%;
+            height: 64px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(6,13,26,.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
         }
 
         .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: #ffffff;
-            cursor: pointer;
-            text-decoration: none;
-        }
-
-        .logo i {
-            color: var(--accent-blue);
-            font-size: 1.6rem;
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .logo span {
-            background: var(--gradient-text);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .cta-btn {
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-            color: #ffffff;
-            padding: 12px 24px;
-            border-radius: 12px;
-            font-weight: 600;
-            font-size: 0.95rem;
-            text-decoration: none;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .cta-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 30px rgba(59, 130, 246, 0.4);
-            filter: brightness(1.1);
-        }
-
-        /* Hero */
-        .hero {
-            position: relative;
-            padding: 40px 8%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            flex: 1;
-            justify-content: center;
-            z-index: 10;
-        }
-
-        .badge {
-            background: rgba(59, 130, 246, 0.1);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            color: #60a5fa;
-            padding: 6px 16px;
-            border-radius: 30px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            margin-bottom: 24px;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .hero-title {
-            font-size: 3.5rem;
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 700;
-            line-height: 1.15;
-            letter-spacing: -2px;
-            margin-bottom: 20px;
-            background: linear-gradient(to right, #ffffff 30%, #a5b4fc 60%, #cbd5e1 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            max-width: 850px;
-        }
-
-        .hero-desc {
-            font-size: 1.25rem;
-            color: var(--text-muted);
-            max-width: 650px;
-            margin-bottom: 36px;
-        }
-
-        /* Code box */
-        .code-box {
-            background: rgba(15, 23, 42, 0.7);
-            border: 1px solid rgba(71, 85, 105, 0.5);
-            padding: 14px 24px;
-            border-radius: 12px;
-            font-family: monospace;
-            font-size: 0.95rem;
-            color: #38bdf8;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            margin-bottom: 36px;
-            max-width: 680px;
-            width: 100%;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-        }
-
-        .code-box button {
-            background: none;
-            border: none;
-            color: #94a3b8;
-            cursor: pointer;
-            font-size: 1.1rem;
-            transition: color 0.2s;
-        }
-
-        .code-box button:hover {
-            color: #ffffff;
-        }
-
-        /* Footer */
-        footer {
-            padding: 40px 8%;
-            border-top: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(3, 7, 18, 0.8);
-            z-index: 10;
-        }
-
-        .footer-logo {
             display: flex;
             align-items: center;
             gap: 10px;
             font-size: 1.2rem;
             font-weight: 700;
             text-decoration: none;
-            color: #ffffff;
+            color: var(--text);
         }
-
-        .footer-logo span {
-            background: var(--gradient-text);
+        .logo i { color: var(--blue); }
+        .logo b {
+            background: linear-gradient(135deg, #60a5fa, #c084fc);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
-        .copyright {
-            color: #4b5563;
-            font-size: 0.85rem;
+        .nav-actions { display: flex; gap: 10px; align-items: center; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+            cursor: pointer;
+        }
+        .btn-ghost {
+            color: var(--muted2);
+            border-color: var(--border);
+            background: var(--surface);
+        }
+        .btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,.18); }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--blue), var(--purple));
+            color: #fff;
+            box-shadow: 0 4px 18px rgba(59,130,246,.25);
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(59,130,246,.4);
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .hero-title {
-                font-size: 2.25rem;
-            }
-            .hero-desc {
-                font-size: 1.05rem;
-            }
+        /* ─── Hero ─── */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 64px 5% 48px;
+            text-align: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 14px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: .5px;
+            text-transform: uppercase;
+            color: #60a5fa;
+            background: rgba(59,130,246,.1);
+            border: 1px solid rgba(59,130,246,.25);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            font-size: clamp(2rem, 5vw, 3.25rem);
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -1px;
+            margin-bottom: 16px;
+            background: linear-gradient(to right, #fff 40%, #a5b4fc 75%, #c4b5fd 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            max-width: 780px;
+        }
+
+        .subtitle {
+            font-size: clamp(0.95rem, 2vw, 1.1rem);
+            color: var(--muted2);
+            max-width: 540px;
+            line-height: 1.65;
+            margin-bottom: 36px;
+        }
+
+        /* ─── Install box ─── */
+        .install-box {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            background: rgba(15,23,42,.75);
+            border: 1px solid rgba(71,85,105,.5);
+            border-radius: 10px;
+            padding: 12px 16px 12px 20px;
+            max-width: 640px;
+            width: 100%;
+            margin-bottom: 36px;
+            backdrop-filter: blur(8px);
+        }
+        .install-box code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.82rem;
+            color: #38bdf8;
+            text-align: left;
+            word-break: break-all;
+            flex: 1;
+        }
+        .copy-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--muted2);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .copy-btn:hover { color: var(--text); border-color: rgba(255,255,255,.2); }
+        .copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+
+        .hero-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 56px;
+        }
+
+        /* ─── Features ─── */
+        .features {
+            width: 100%;
+            max-width: 860px;
+        }
+        .features-label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+        }
+        .feature-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 16px 18px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            text-align: left;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .feature-card:hover {
+            border-color: rgba(99,102,241,.35);
+            background: rgba(99,102,241,.06);
+        }
+        .feature-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .ic-blue  { background: rgba(59,130,246,.15);  color: #60a5fa; }
+        .ic-green { background: rgba(34,197,94,.15);   color: #4ade80; }
+        .ic-purple{ background: rgba(139,92,246,.15);  color: #a78bfa; }
+        .ic-orange{ background: rgba(249,115,22,.15);  color: #fb923c; }
+        .ic-cyan  { background: rgba(6,182,212,.15);   color: #22d3ee; }
+        .ic-rose  { background: rgba(244,63,94,.15);   color: #fb7185; }
+
+        .feature-info h3 {
+            font-size: 0.92rem;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+        .feature-info p {
+            font-size: 0.8rem;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        /* ─── Footer ─── */
+        footer {
+            position: relative;
+            z-index: 1;
+            border-top: 1px solid var(--border);
+            padding: 22px 5%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: rgba(6,13,26,.8);
+        }
+        .footer-logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: var(--text);
+        }
+        .footer-logo i { color: var(--blue); font-size: 0.95rem; }
+        .footer-logo b {
+            background: linear-gradient(135deg, #60a5fa, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .copyright {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+        .footer-links {
+            display: flex;
+            gap: 14px;
+        }
+        .footer-links a {
+            font-size: 0.8rem;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .footer-links a:hover { color: var(--muted2); }
+
+        /* ─── Responsive ─── */
+        @media (max-width: 600px) {
+            nav { padding: 0 4%; }
+            main { padding: 48px 4% 40px; }
+            .install-box { padding: 10px 12px 10px 14px; }
+            .install-box code { font-size: 0.75rem; }
             footer {
                 flex-direction: column;
-                gap: 16px;
-                text-align: center;
+                align-items: flex-start;
+                gap: 10px;
+                padding: 18px 4%;
             }
+            .feature-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <div class="bg-glow"></div>
-    <div class="bg-glow-bottom"></div>
+    <div class="glow glow-1"></div>
+    <div class="glow glow-2"></div>
 
-    <!-- Navigation -->
+    <!-- Nav -->
     <header>
         <nav>
             <a href="#" class="logo">
                 <i class="fa-solid fa-server"></i>
-                <span>CoPanel</span>
+                <b>CoPanel</b>
             </a>
-            <a href="https://github.com/phuspeed/CoPanel" class="cta-btn" target="_blank">
-                <i class="fa-brands fa-github"></i> GitHub
-            </a>
+            <div class="nav-actions">
+                <a href="https://github.com/phuspeed/CoPanel/wiki" class="btn btn-ghost" target="_blank">
+                    <i class="fa-solid fa-book"></i> Docs
+                </a>
+                <a href="https://github.com/phuspeed/CoPanel" class="btn btn-primary" target="_blank">
+                    <i class="fa-brands fa-github"></i> GitHub
+                </a>
+            </div>
         </nav>
     </header>
 
-    <!-- Hero Section -->
-    <main class="hero">
+    <!-- Hero -->
+    <main>
         <span class="badge">
-            <i class="fa-solid fa-shield-halved"></i> v1.0.0 Open Source
+            <i class="fa-solid fa-circle" style="font-size:.45rem;"></i>
+            v1.0.0 &nbsp;·&nbsp; Open Source
         </span>
-        <h1 class="hero-title">Trình quản lý VPS Linux thế hệ mới cực kỳ mạnh mẽ</h1>
-        <p class="hero-desc">Hệ thống quản lý VPS Pluggable mã nguồn mở đỉnh cao với giao diện tuyệt đẹp, hỗ trợ cài đặt các Module tùy chỉnh dễ dàng và mượt mà.</p>
-        
-        <div class="code-box">
-            <code style="word-break: break-all; text-align: left; font-family: monospace;">curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash</code>
-            <button onclick="navigator.clipboard.writeText('curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash'); alert('Đã sao chép lệnh cài đặt!');" title="Sao chép">
-                <i class="fa-regular fa-copy"></i>
+
+        <h1>Quản lý VPS Linux<br>đơn giản, mạnh mẽ</h1>
+
+        <p class="subtitle">
+            Bảng điều khiển mã nguồn mở với kiến trúc Pluggable —<br>
+            cài đặt, mở rộng và quản lý server chỉ bằng vài cú click.
+        </p>
+
+        <!-- Install command -->
+        <div class="install-box">
+            <code id="install-cmd">curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash</code>
+            <button class="copy-btn" id="copy-btn" onclick="copyInstall()" title="Sao chép lệnh">
+                <i class="fa-regular fa-copy"></i> Copy
             </button>
+        </div>
+
+        <!-- CTA -->
+        <div class="hero-actions">
+            <a href="https://github.com/phuspeed/CoPanel" class="btn btn-primary" target="_blank">
+                <i class="fa-brands fa-github"></i> Xem trên GitHub
+            </a>
+            <a href="https://github.com/phuspeed/CoPanel/wiki" class="btn btn-ghost" target="_blank">
+                <i class="fa-solid fa-book-open"></i> Hướng dẫn cài đặt
+            </a>
+        </div>
+
+        <!-- Features -->
+        <div class="features">
+            <p class="features-label">Tính năng chính</p>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon ic-blue"><i class="fa-brands fa-docker"></i></div>
+                    <div class="feature-info">
+                        <h3>Docker Manager</h3>
+                        <p>Quản lý container, image và compose trực tiếp trên giao diện web.</p>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon ic-green"><i class="fa-solid fa-lock"></i></div>
+                    <div class="feature-info">
+                        <h3>SSL tự động</h3>
+                        <p>Cấp và gia hạn chứng chỉ Let's Encrypt tự động cho các domain.</p>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon ic-purple"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                    <div class="feature-info">
+                        <h3>Backup & Restore</h3>
+                        <p>Sao lưu lên Google Drive / rclone, khôi phục nhanh khi cần.</p>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon ic-orange"><i class="fa-solid fa-folder-open"></i></div>
+                    <div class="feature-info">
+                        <h3>File Manager</h3>
+                        <p>Duyệt, tải lên, chỉnh sửa file trực tiếp trong trình duyệt.</p>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon ic-cyan"><i class="fa-solid fa-chart-line"></i></div>
+                    <div class="feature-info">
+                        <h3>System Monitor</h3>
+                        <p>Theo dõi CPU, RAM, Disk và Network theo thời gian thực.</p>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon ic-rose"><i class="fa-solid fa-puzzle-piece"></i></div>
+                    <div class="feature-info">
+                        <h3>Pluggable Modules</h3>
+                        <p>Cài thêm module mở rộng không cần sửa core, dễ tích hợp.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 
     <!-- Footer -->
     <footer>
         <a href="#" class="footer-logo">
-            <i class="fa-solid fa-server" style="color: var(--accent-blue);"></i>
-            <span>CoPanel</span>
+            <i class="fa-solid fa-server"></i>
+            <b>CoPanel</b>
         </a>
-        <p class="copyright">&copy; 2026 CoPanel Open Source Project. All rights reserved.</p>
+        <p class="copyright">© 2026 CoPanel Open Source Project</p>
+        <div class="footer-links">
+            <a href="https://github.com/phuspeed/CoPanel" target="_blank">GitHub</a>
+            <a href="https://github.com/phuspeed/CoPanel/issues" target="_blank">Issues</a>
+            <a href="https://github.com/phuspeed/CoPanel/wiki" target="_blank">Docs</a>
+        </div>
     </footer>
+
+    <script>
+        function copyInstall() {
+            const cmd = document.getElementById('install-cmd').textContent;
+            const btn = document.getElementById('copy-btn');
+            navigator.clipboard.writeText(cmd).then(() => {
+                btn.classList.add('copied');
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy';
+                }, 2000);
+            });
+        }
+    </script>
 </body>
 </html>
