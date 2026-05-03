@@ -115,9 +115,16 @@ install_dependencies() {
             nodejs npm \
             ufw inotify-tools certbot \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
-    else
-        log_error "Unsupported package manager"
-        exit 1
+    # Install Node.js 20 LTS if not installed or older than 18
+    if ! command_exists node || [[ $(node -v | cut -d. -f1 | tr -d 'v') -lt 18 ]]; then
+        log_info "Node.js is missing or version is too old. Installing Node.js 20 LTS via NodeSource..."
+        if command_exists apt-get; then
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
+            apt-get install -y nodejs || true
+        elif command_exists yum; then
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - || true
+            yum install -y nodejs || true
+        fi
     fi
 
     # Install Docker using official Docker convenience script if not installed
@@ -307,7 +314,7 @@ setup_frontend() {
         
         # Install dependencies
         log_info "Installing npm packages..."
-        npm install
+        npm install --force --legacy-peer-deps || npm install
         
         # Build frontend
         log_info "Building frontend..."
