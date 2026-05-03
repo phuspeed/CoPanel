@@ -28,6 +28,34 @@ class SSLManager:
         return "N/A"
 
     @staticmethod
+    def extract_domains_from_nginx(file_path: Path) -> List[str]:
+        """Read Nginx configuration and return list of domain names found in server_name."""
+        if not file_path.exists():
+            return []
+        extracted = []
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            # Extract server_names
+            import re
+            server_names = re.findall(r'server_name\s+([^;]+);', content)
+            for names in server_names:
+                for name in names.split():
+                    name = name.strip().lower()
+                    if name and name not in ["default", "localhost", "copanel"] and not name.startswith("_"):
+                        extracted.append(name)
+        except Exception:
+            pass
+
+        # Fallback: file name without .conf extension
+        fname = file_path.name
+        if fname.endswith(".conf"):
+            fname = fname[:-5]
+        if fname not in extracted and fname not in ["default", "copanel"]:
+            extracted.append(fname)
+
+        return extracted
+
+    @staticmethod
     def get_certificates() -> List[Dict[str, Any]]:
         """List all domains and their active SSL certificates."""
         domains = set()
@@ -37,14 +65,15 @@ class SSLManager:
         if sites_dir.exists():
             for file in sites_dir.iterdir():
                 if file.is_file() and file.name not in ["default", "copanel"]:
-                    domains.add(file.name)
+                    for d in SSLManager.extract_domains_from_nginx(file):
+                        domains.add(d)
 
         # Find all domains from /etc/letsencrypt/live
         le_dir = Path("/etc/letsencrypt/live") if not IS_WINDOWS else Path("./test_nginx/letsencrypt/live")
         if le_dir.exists():
             for d_dir in le_dir.iterdir():
                 if d_dir.is_dir() and d_dir.name not in ["README", ".git"]:
-                    domains.add(d_dir.name)
+                    domains.add(d_dir.name.strip().lower())
 
         results = []
         for domain in domains:
