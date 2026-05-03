@@ -32,6 +32,10 @@ export default function SSLManagerDashboard() {
   const [customPrivateKey, setCustomPrivateKey] = useState('');
   const [customCertificate, setCustomCertificate] = useState('');
 
+  // Inline action modal state
+  const [inlineDomain, setInlineDomain] = useState<string | null>(null);
+  const [inlineEmail, setInlineEmail] = useState('');
+
   const token = localStorage.getItem('copanel_token');
 
   const t = {
@@ -48,6 +52,7 @@ export default function SSLManagerDashboard() {
       colStatus: 'Status',
       colType: 'Type',
       colExpiry: 'Expiry',
+      colAction: 'Actions',
       noDomains: 'No active website domains found to evaluate.',
       secured: 'Secured',
       noSsl: 'No SSL',
@@ -61,6 +66,10 @@ export default function SSLManagerDashboard() {
       keyLabel: 'Private Key Content (privkey.pem)',
       issueBtn: 'Issue Certificate',
       saveBtn: 'Save Custom SSL',
+      issueDirect: 'Issue SSL',
+      renewDirect: 'Renew SSL',
+      confirmIssue: 'Confirm Issue SSL',
+      cancel: 'Cancel',
     },
     vi: {
       title: 'Quản lý Chứng chỉ SSL',
@@ -75,6 +84,7 @@ export default function SSLManagerDashboard() {
       colStatus: 'Trạng thái',
       colType: 'Loại',
       colExpiry: 'Ngày hết hạn',
+      colAction: 'Thao tác',
       noDomains: 'Không tìm thấy tên miền hoạt động nào.',
       secured: 'Đã bảo mật',
       noSsl: 'Chưa có SSL',
@@ -88,6 +98,10 @@ export default function SSLManagerDashboard() {
       keyLabel: 'Nội dung khóa riêng (privkey.pem)',
       issueBtn: 'Cấp chứng chỉ',
       saveBtn: 'Lưu SSL Tùy chỉnh',
+      issueDirect: 'Cấp SSL',
+      renewDirect: 'Gia hạn',
+      confirmIssue: 'Xác nhận Cấp SSL',
+      cancel: 'Hủy',
     }
   };
 
@@ -162,6 +176,32 @@ export default function SSLManagerDashboard() {
     }
   };
 
+  const handleInlineIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inlineDomain || !inlineEmail) return;
+    setMsg({ text: `Processing Let's Encrypt certificate for ${inlineDomain}...`, isError: false });
+    try {
+      const res = await fetch('/api/ssl_manager/issue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ domain: inlineDomain, email: inlineEmail })
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setMsg({ text: `✓ Success: ${d.message}`, isError: false });
+        fetchCerts();
+        setInlineDomain(null);
+      } else {
+        setMsg({ text: `Error: ${d.detail || 'Could not issue SSL'}`, isError: true });
+      }
+    } catch {
+      setMsg({ text: 'Error communicating with backend.', isError: true });
+    }
+  };
+
   const handleCustomSSL = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg({ text: 'Saving custom SSL files...', isError: false });
@@ -191,6 +231,11 @@ export default function SSLManagerDashboard() {
     } catch {
       setMsg({ text: 'Error communicating with backend.', isError: true });
     }
+  };
+
+  const openInlineModal = (domain: string) => {
+    setInlineDomain(domain);
+    setInlineEmail(certbotEmail || `admin@${domain}`);
   };
 
   return (
@@ -254,25 +299,71 @@ export default function SSLManagerDashboard() {
             <p>{tr.loading}</p>
           </div>
         ) : certs.length > 0 ? (
-          <div className={`overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-            <table className="w-full text-left border-collapse select-none">
-              <thead>
-                <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
-                  isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
+          <div className="space-y-4">
+            {/* Desktop View */}
+            <div className={`hidden md:block overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
+              <table className="w-full text-left border-collapse select-none">
+                <thead>
+                  <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
+                    isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
+                  }`}>
+                    <th className="p-4">{tr.colDomain}</th>
+                    <th className="p-4">{tr.colStatus}</th>
+                    <th className="p-4">{tr.colType}</th>
+                    <th className="p-4">{tr.colExpiry}</th>
+                    <th className="p-4 text-center">{tr.colAction}</th>
+                  </tr>
+                </thead>
+                <tbody className={`text-xs divide-y font-mono ${
+                  isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'
                 }`}>
-                  <th className="p-4">{tr.colDomain}</th>
-                  <th className="p-4">{tr.colStatus}</th>
-                  <th className="p-4">{tr.colType}</th>
-                  <th className="p-4">{tr.colExpiry}</th>
-                </tr>
-              </thead>
-              <tbody className={`text-xs divide-y font-mono ${
-                isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'
-              }`}>
-                {certs.map((cert, idx) => (
-                  <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
-                    <td className={`p-4 font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{cert.domain}</td>
-                    <td className="p-4">
+                  {certs.map((cert, idx) => (
+                    <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
+                      <td className={`p-4 font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{cert.domain}</td>
+                      <td className="p-4">
+                        <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-all ${
+                          cert.active
+                            ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                            : 'bg-red-500/10 text-red-500 border-red-500/20'
+                        }`}>
+                          {cert.active ? tr.secured : tr.noSsl}
+                        </span>
+                      </td>
+                      <td className="p-4">{cert.type}</td>
+                      <td className="p-4 text-slate-400">{cert.expiry}</td>
+                      <td className="p-4 text-center">
+                        <button
+                          onClick={() => openInlineModal(cert.domain)}
+                          className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 mx-auto ${
+                            cert.active
+                              ? isDark ? 'bg-emerald-950/40 border-emerald-900/40 hover:bg-emerald-900/40 text-emerald-400' : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-600'
+                              : isDark ? 'bg-teal-950/40 border-teal-900/40 hover:bg-teal-900/40 text-teal-400' : 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-600'
+                          }`}
+                        >
+                          <Icons.Zap className="w-3.5 h-3.5" />
+                          {cert.active ? tr.renewDirect : tr.issueDirect}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile View - Cards */}
+            <div className="grid grid-cols-1 gap-4 md:hidden">
+              {certs.map((cert, idx) => (
+                <div
+                  key={idx}
+                  className={`p-4 rounded-xl border flex flex-col justify-between gap-4 transition duration-200 ${
+                    isDark ? 'bg-slate-900 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-mono font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                        {cert.domain}
+                      </span>
                       <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-all ${
                         cert.active
                           ? 'bg-green-500/10 text-green-500 border-green-500/20'
@@ -280,13 +371,32 @@ export default function SSLManagerDashboard() {
                       }`}>
                         {cert.active ? tr.secured : tr.noSsl}
                       </span>
-                    </td>
-                    <td className="p-4">{cert.type}</td>
-                    <td className="p-4 text-slate-400">{cert.expiry}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                    <div className="flex flex-col gap-1 text-xs">
+                      <span className={`font-mono truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                        <strong>{tr.colType}:</strong> {cert.type}
+                      </span>
+                      <span className={`font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        <strong>{tr.colExpiry}:</strong> {cert.expiry}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end border-t pt-3 dark:border-slate-800">
+                    <button
+                      onClick={() => openInlineModal(cert.domain)}
+                      className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 ${
+                        cert.active
+                          ? isDark ? 'bg-emerald-950/40 border-emerald-900/40 hover:bg-emerald-900/40 text-emerald-400' : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-600'
+                          : isDark ? 'bg-teal-950/40 border-teal-900/40 hover:bg-teal-900/40 text-teal-400' : 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-600'
+                      }`}
+                    >
+                      <Icons.Zap className="w-3.5 h-3.5" />
+                      {cert.active ? tr.renewDirect : tr.issueDirect}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
@@ -419,6 +529,75 @@ export default function SSLManagerDashboard() {
           </div>
         </form>
       </div>
+
+      {/* Inline Fast Issue/Renew Modal */}
+      {inlineDomain && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
+          <form onSubmit={handleInlineIssue} className={`p-6 rounded-2xl w-full max-w-sm shadow-2xl border space-y-4 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+            <div className="flex items-center justify-between">
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                <Icons.Shield className={`w-4 h-4 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
+                {tr.confirmIssue}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setInlineDomain(null)}
+                className="text-slate-500 hover:text-red-400 transition"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className={`text-[10px] font-bold block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {tr.domainLabel}
+                </label>
+                <div className={`p-3 font-mono text-xs rounded-xl border mt-1 font-bold ${
+                  isDark ? 'bg-slate-950 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-700'
+                }`}>
+                  {inlineDomain}
+                </div>
+              </div>
+
+              <div>
+                <label className={`text-[10px] font-bold block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {tr.emailLabel}
+                </label>
+                <input
+                  type="email"
+                  value={inlineEmail}
+                  onChange={(e) => setInlineEmail(e.target.value)}
+                  placeholder="admin@example.com"
+                  required
+                  className={`w-full border px-3 py-2 rounded-xl outline-none focus:border-teal-500 font-mono text-xs transition-all mt-1 ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
+                  }`}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 mt-4 border-t pt-3 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setInlineDomain(null)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                {tr.cancel}
+              </button>
+              <button
+                type="submit"
+                className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1.5"
+              >
+                <Icons.Zap className="w-3.5 h-3.5" />
+                {tr.issueBtn}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
