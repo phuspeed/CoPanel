@@ -101,10 +101,18 @@ install_dependencies() {
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
     elif command_exists yum; then
+        if [ -f /etc/redhat-release ] && grep -q "release 7" /etc/redhat-release; then
+            log_info "CentOS 7 EOL detected. Switching to CentOS Vault repositories..."
+            sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
+            sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
+            sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
+            yum clean all || true
+            yum makecache || true
+        fi
         yum install -y \
             python3 python3-pip \
             nginx \
-            curl wget git \
+            curl wget git unzip zip \
             gcc gcc-c++ make \
             nodejs npm \
             ufw inotify-tools certbot \
