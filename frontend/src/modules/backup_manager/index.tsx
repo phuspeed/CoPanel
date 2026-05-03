@@ -422,6 +422,22 @@ export default function BackupAndSyncDashboard() {
                 }`}>
                   {redirectUri}
                 </code>
+
+                <div className={`border-t pt-2 mt-2 space-y-1 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider block ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                    💡 {language === 'vi' ? 'Hoặc Sử dụng Google Desktop App (Khuyên dùng khi dùng IP không có SSL)' : 'OR Use Google Desktop App (Recommended for IP addresses without SSL)'}:
+                  </span>
+                  <p className={`text-[10px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                    {language === 'vi'
+                      ? 'Tại Google Cloud Console, chọn loại ứng dụng: Desktop App (Ứng dụng dành cho máy tính). Sau đó chạy lệnh bên dưới trên Terminal máy tính cá nhân của bạn để lấy token:'
+                      : 'In Google Cloud Console, select Application Type: Desktop App. Then run the command below in your local terminal CLI to get your token:'}
+                  </p>
+                  <code className={`p-1.5 font-mono text-[10px] select-all block rounded border break-all ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-green-400' : 'bg-white border-slate-200 text-green-600'
+                  }`}>
+                    rclone authorize "drive" "{config.google_drive_client_id || 'YOUR_CLIENT_ID'}" "{config.google_drive_client_secret || 'YOUR_CLIENT_SECRET'}"
+                  </code>
+                </div>
               </div>
 
               <div className="space-y-1">
