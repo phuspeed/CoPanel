@@ -24,7 +24,7 @@ export default function WebManagerDashboard() {
 
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [domain, setDomain] = useState<string>('');
-  const [root, setRoot] = useState<string>('/var/www/html');
+  const [root, setRoot] = useState<string>('/var/www/');
   const [port, setPort] = useState<number>(80);
   const [proxyPort, setProxyPort] = useState<number | ''>('');
   const [siteType, setSiteType] = useState<'static' | 'proxy' | 'php'>('static');
@@ -214,7 +214,7 @@ export default function WebManagerDashboard() {
         throw new Error(data.detail || 'Failed to create site');
       }
       setDomain('');
-      setRoot('/var/www/html');
+      setRoot('/var/www/');
       setPort(80);
       setProxyPort('');
       setPhpModules([]);
@@ -491,7 +491,16 @@ export default function WebManagerDashboard() {
                 <input
                   type="text"
                   value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setDomain(val);
+                    if (val.trim()) {
+                      const cleanDomain = val.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, '');
+                      setRoot(`/var/www/${cleanDomain}`);
+                    } else {
+                      setRoot('/var/www/');
+                    }
+                  }}
                   className={`w-full border px-4 py-2 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
                     isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
                   }`}

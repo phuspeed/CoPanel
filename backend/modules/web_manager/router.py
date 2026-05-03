@@ -185,6 +185,13 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 """
 
 
+        # Ensure that document root directory exists
+        if req.root and req.root.strip() != "":
+            try:
+                os.makedirs(req.root.strip(), exist_ok=True)
+            except Exception:
+                pass
+
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(template)
 
