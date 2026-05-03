@@ -119,7 +119,11 @@ export default function BackupAndSyncDashboard() {
 
   const tr = t[language || 'en'];
 
-  const redirectUri = `${window.location.origin}/backup-manager`;
+  const isIp = /^[0-9.]+$/.test(window.location.hostname);
+  const redirectUri = isIp
+    ? `http://${window.location.hostname}.nip.io:${window.location.port || '8686'}/backup-manager`
+    : `${window.location.origin}/backup-manager`;
+
 
   const fetchConfigAndCrons = async () => {
     try {
