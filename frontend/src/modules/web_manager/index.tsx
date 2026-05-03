@@ -303,7 +303,8 @@ export default function WebManagerDashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          <div className={`border rounded-2xl overflow-hidden backdrop-blur-md shadow-sm transition-all ${
+          {/* Desktop view */}
+          <div className={`hidden md:block border rounded-2xl overflow-hidden backdrop-blur-md shadow-sm transition-all ${
             isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
             <div className="overflow-x-auto">
@@ -373,6 +374,67 @@ export default function WebManagerDashboard() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Mobile view - Cards */}
+          <div className="grid grid-cols-1 gap-4 md:hidden">
+            {sites.length === 0 && (
+              <div className="p-12 text-center text-xs select-none text-slate-400">
+                {tr.noSites}
+              </div>
+            )}
+            {sites.map((item, idx) => (
+              <div
+                key={idx}
+                className={`p-4 rounded-xl border flex flex-col justify-between gap-4 transition duration-200 ${
+                  isDark ? 'bg-slate-900 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-bold font-mono ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                      {item.filename}
+                    </span>
+                    <button
+                      onClick={() => handleToggleStatus(item)}
+                      className={`px-3 py-1 text-xs font-bold rounded-full transition-all border select-none ${
+                        item.active
+                          ? 'bg-green-600/10 border-green-500/20 text-green-500'
+                          : isDark ? 'bg-slate-800/60 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {item.active ? tr.active : tr.inactive}
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-1 text-xs">
+                    <span className={`font-mono truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                      <strong>Domain:</strong> {item.domain}
+                    </span>
+                    <span className={`font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <strong>Root:</strong> {item.root || '—'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t pt-3 dark:border-slate-800">
+                  <button
+                    onClick={() => openViewModal(item)}
+                    className={`p-2 flex items-center gap-1.5 rounded-xl border transition-all text-xs font-bold ${
+                      isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600'
+                    }`}
+                  >
+                    <Icons.Edit className="w-4 h-4" /> {tr.editConfig}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSite(item)}
+                    className={`p-2 flex items-center gap-1.5 rounded-xl border transition-all text-xs font-bold ${
+                      isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600'
+                    }`}
+                  >
+                    <Icons.Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

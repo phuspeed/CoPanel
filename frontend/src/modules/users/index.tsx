@@ -359,60 +359,116 @@ export default function UsersDashboard() {
               <span className="text-xs text-slate-400 mt-2">{tr.loadingUsers}</span>
             </div>
           ) : (
-            <div className={`overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-              <table className="w-full text-left border-collapse select-none">
-                <thead>
-                  <tr className={`border-b text-xs font-bold uppercase tracking-widest ${isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
-                    <th className="p-4">{tr.colUsername}</th>
-                    <th className="p-4">{tr.colRole}</th>
-                    <th className="p-4">{tr.colPermissions}</th>
-                    <th className="p-4">{tr.colAction}</th>
-                  </tr>
-                </thead>
-                <tbody className={`text-xs divide-y ${isDark ? 'divide-slate-800/40 text-slate-200' : 'divide-slate-100 text-slate-700'}`}>
-                  {users.map((u) => (
-                    <tr key={u.id} className={`transition duration-150 ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}`}>
-                      <td className={`p-4 font-mono font-bold ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{u.username}</td>
-                      <td className="p-4">
-                        <span className={`px-2 py-0.5 rounded border ${
+            <>
+              {/* Desktop view */}
+              <div className={`hidden md:block overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
+                <table className="w-full text-left border-collapse select-none">
+                  <thead>
+                    <tr className={`border-b text-xs font-bold uppercase tracking-widest ${isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
+                      <th className="p-4">{tr.colUsername}</th>
+                      <th className="p-4">{tr.colRole}</th>
+                      <th className="p-4">{tr.colPermissions}</th>
+                      <th className="p-4">{tr.colAction}</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`text-xs divide-y ${isDark ? 'divide-slate-800/40 text-slate-200' : 'divide-slate-100 text-slate-700'}`}>
+                    {users.map((u) => (
+                      <tr key={u.id} className={`transition duration-150 ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}`}>
+                        <td className={`p-4 font-mono font-bold ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{u.username}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-0.5 rounded border ${
+                            u.role === 'superadmin'
+                              ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                              : isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}>
+                            {u.role === 'superadmin' ? tr.superAdmin : tr.user}
+                          </span>
+                        </td>
+                        <td className="p-4 space-y-1.5 min-w-[180px]">
+                          <div>
+                            <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}:</span>
+                            <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                              {parseJsonList(u.permitted_modules).join(', ') || 'None'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.restrictedHome}:</span>
+                            <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                              {parseJsonList(u.permitted_folders).join(', ') || '/'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <button
+                            onClick={() => handleDeleteUser(u.id)}
+                            disabled={u.username === 'admin'}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold border rounded-xl transition-all ${
+                              isDark ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 border-red-900/40 disabled:opacity-50' : 'text-red-600 hover:bg-red-100 bg-red-50 border-red-200 disabled:opacity-40'
+                            }`}
+                          >
+                            <Icons.Trash2 className="w-3.5 h-3.5" />
+                            {tr.deleteBtn}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile view - Cards */}
+              <div className="grid grid-cols-1 gap-4 md:hidden">
+                {users.map((u) => (
+                  <div
+                    key={u.id}
+                    className={`p-4 rounded-xl border flex flex-col justify-between gap-4 transition duration-200 ${
+                      isDark ? 'bg-slate-900 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs font-mono font-bold ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                          {u.username}
+                        </span>
+                        <span className={`px-2 py-0.5 text-[10px] rounded border ${
                           u.role === 'superadmin'
                             ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
                             : isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'
                         }`}>
                           {u.role === 'superadmin' ? tr.superAdmin : tr.user}
                         </span>
-                      </td>
-                      <td className="p-4 space-y-1.5 min-w-[180px]">
+                      </div>
+                      <div className="space-y-2 text-xs">
                         <div>
-                          <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}:</span>
-                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                          <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}</span>
+                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border block mt-0.5 ${isDark ? 'text-slate-300 bg-slate-950/40 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
                             {parseJsonList(u.permitted_modules).join(', ') || 'None'}
                           </span>
                         </div>
                         <div>
-                          <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.restrictedHome}:</span>
-                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                          <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.restrictedHome}</span>
+                          <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border block mt-0.5 ${isDark ? 'text-slate-300 bg-slate-950/40 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
                             {parseJsonList(u.permitted_folders).join(', ') || '/'}
                           </span>
                         </div>
-                      </td>
-                      <td className="p-4">
-                        <button
-                          onClick={() => handleDeleteUser(u.id)}
-                          disabled={u.username === 'admin'}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold border rounded-xl transition-all ${
-                            isDark ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 border-red-900/40 disabled:opacity-50' : 'text-red-600 hover:bg-red-100 bg-red-50 border-red-200 disabled:opacity-40'
-                          }`}
-                        >
-                          <Icons.Trash2 className="w-3.5 h-3.5" />
-                          {tr.deleteBtn}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end border-t pt-3 dark:border-slate-800">
+                      <button
+                        onClick={() => handleDeleteUser(u.id)}
+                        disabled={u.username === 'admin'}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold border rounded-xl transition-all ${
+                          isDark ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 border-red-900/40 disabled:opacity-50' : 'text-red-600 hover:bg-red-100 bg-red-50 border-red-200 disabled:opacity-40'
+                        }`}
+                      >
+                        <Icons.Trash2 className="w-3.5 h-3.5" />
+                        {tr.deleteBtn}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>

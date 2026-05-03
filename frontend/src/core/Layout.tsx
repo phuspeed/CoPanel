@@ -214,6 +214,14 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     <div className={`flex h-screen transition-colors duration-200 ${
       isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
     }`}>
+      {/* Mobile Overlay */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm animate-fade-in"
+        />
+      )}
+
       {/* Sidebar */}
       <aside
         className={cn(
