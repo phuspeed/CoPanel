@@ -171,6 +171,9 @@ setup_user_and_dirs() {
             cd "$CoPanel_HOME"
             git fetch --all || true
             git reset --hard origin/main || true
+            git clean -fd || true
+            git pull origin main --force || true
+            git reset --hard origin/main || true
             REPO_DIR="$CoPanel_HOME"
         else
             log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
