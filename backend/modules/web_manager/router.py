@@ -391,3 +391,68 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/web_services")
+async def list_web_services() -> Dict[str, Any]:
+    """Retrieve status of main web server services."""
+    services = [
+        {"id": "nginx", "name": "Nginx", "installed": False, "status": "not_installed"},
+        {"id": "apache2", "name": "Apache2", "installed": False, "status": "not_installed"},
+        {"id": "litespeed", "name": "OpenLiteSpeed", "installed": False, "status": "not_installed"},
+    ]
+
+    import shutil
+    if IS_WINDOWS:
+        # Mock mode on Windows
+        services[0]["installed"] = True
+        services[0]["status"] = "running"
+        services[1]["installed"] = False
+        services[1]["status"] = "not_installed"
+        services[2]["installed"] = False
+        services[2]["status"] = "not_installed"
+        return {"status": "success", "services": services}
+
+    # Query systemctl on Linux
+    for s in services:
+        service_id = s["id"]
+        # Use shutil.which or systemctl to see if installed
+        bin_exists = shutil.which(service_id) or shutil.which("openlitespeed" if service_id == "litespeed" else service_id)
+        if bin_exists or os.path.exists(f"/etc/{service_id}"):
+            s["installed"] = True
+            try:
+                res = subprocess.run(["systemctl", "is-active", service_id], capture_output=True, text=True)
+                if res.stdout.strip() == "active":
+                    s["status"] = "running"
+                else:
+                    s["status"] = "stopped"
+            except Exception:
+                s["status"] = "stopped"
+
+    return {"status": "success", "services": services}
+
+@router.post("/web_services/{service_id}/{action}")
+async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
+    """Control starting, stopping, restarting, or removing web server services."""
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Service {service_id} action '{action}' performed successfully (Mock mode)."}
+
+    import shutil
+    if action == "install":
+        # Run package installation using apt/yum
+        pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
+        if pkg_manager == "apt-get":
+            subprocess.run(["sudo", "apt-get", "update", "-y"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "apt-get", "install", "-y", service_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif pkg_manager == "yum":
+            subprocess.run(["sudo", "yum", "install", "-y", service_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"status": "success", "message": f"{service_id} installed successfully."}
+
+    if action in ["start", "stop", "restart"]:
+        try:
+            subprocess.run(["sudo", "systemctl", action, service_id], check=True, capture_output=True, text=True)
+            return {"status": "success", "message": f"Service {service_id} {action}ed successfully."}
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=400, detail=f"Service control failed: {e.stderr or e.stdout}")
+
+    return {"status": "error", "message": "Unknown action"}
+
+
