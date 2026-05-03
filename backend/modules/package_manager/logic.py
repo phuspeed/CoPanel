@@ -55,6 +55,30 @@ DEFAULT_PACKAGES = [
         "category": "Database & Caching"
     },
     {
+        "id": "mysql",
+        "name": "MySQL Database",
+        "description": "Leading open source relational database management system.",
+        "icon": "Database",
+        "status": "not_installed",
+        "category": "Database & Caching"
+    },
+    {
+        "id": "mariadb",
+        "name": "MariaDB Database",
+        "description": "Community-developed, commercially supported fork of MySQL.",
+        "icon": "Database",
+        "status": "not_installed",
+        "category": "Database & Caching"
+    },
+    {
+        "id": "phpmyadmin",
+        "name": "phpMyAdmin",
+        "description": "Web-based SQL visual administration tool.",
+        "icon": "Layout",
+        "status": "not_installed",
+        "category": "Database & Caching"
+    },
+    {
         "id": "firewall_service",
         "name": "Advanced Linux Firewall",
         "description": "Standard host-based firewall rules management.",
@@ -93,6 +117,9 @@ def load_packages() -> List[Dict[str, Any]]:
         "redis": "redis-server",
         "memcached": "memcached",
         "firewall_service": "ufw",
+        "letsencrypt": "certbot",
+        "mysql": "mysql",
+        "mariadb": "mariadb",
     }
 
     try:
@@ -112,6 +139,11 @@ def load_packages() -> List[Dict[str, Any]]:
             # Check if package binary is already installed on the host OS
             if status == "not_installed" and pkg_id in detect_binaries:
                 if shutil.which(detect_binaries[pkg_id]):
+                    status = "running"
+            
+            # Special manual paths check
+            if status == "not_installed":
+                if pkg_id == "phpmyadmin" and (os.path.exists("/usr/share/phpmyadmin") or os.path.exists("/var/www/html/phpmyadmin")):
                     status = "running"
 
             merged.append({**default_pkg, "status": status})
