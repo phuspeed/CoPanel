@@ -1,6 +1,6 @@
 /**
  * Web Manager - Multi-Tab High-End Management Dashboard
- * Dynamic tabs: Website, Web Services, SQL Databases, PHP Manager.
+ * Dynamic tabs: Website, Web Services, SQL Databases & Users, PHP Manager.
  */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -47,11 +47,18 @@ export default function WebManagerDashboard() {
   const [webServices, setWebServices] = useState<any[]>([]);
   const [loadingServices, setLoadingServices] = useState<boolean>(false);
 
-  // Tab 3: Databases States
+  // Tab 3: Databases & Users States
   const [databases, setDatabases] = useState<any[]>([]);
   const [loadingDbs, setLoadingDbs] = useState<boolean>(false);
   const [newDbName, setNewDbName] = useState<string>('');
   const [dbError, setDbError] = useState<string | null>(null);
+
+  const [dbUsers, setDbUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState<boolean>(false);
+  const [newDbUser, setNewDbUser] = useState<string>('');
+  const [newDbPass, setNewDbPass] = useState<string>('');
+  const [targetDbForUser, setTargetDbForUser] = useState<string>('');
+  const [dbUserError, setDbUserError] = useState<string | null>(null);
 
   // Tab 4: PHP Manager States
   const [phpManagerVersion, setPhpManagerVersion] = useState<string>('8.2');
@@ -98,15 +105,24 @@ export default function WebManagerDashboard() {
       cancel: 'Cancel',
 
       // Databases
-      dbTitle: 'MySQL / MariaDB Management',
-      dbDesc: 'Instantly create or drop your databases. Integrate with phpMyAdmin for database viewing.',
+      dbTitle: 'MySQL / MariaDB & User Management',
+      dbDesc: 'Instantly create or drop your databases and database users. Integrate with quick links for viewing.',
       createDbBtn: 'Create Database',
       dbNameLabel: 'New Database Name',
       dbNamePlaceholder: 'e.g. blog_database',
       colDb: 'Database Name',
       colDbSize: 'Size',
       noDbs: 'No databases found on your server.',
-      pmaTip: 'For phpMyAdmin management, go to the Packages Manager or use an available SQL client tool.',
+      pmaTip: 'Fast shortcut to phpMyAdmin on this server:',
+      openPmaBtn: 'Access phpMyAdmin',
+
+      // DB Users
+      usersTitle: 'Database Users',
+      createUsersBtn: 'Create New DB User',
+      colUsername: 'Username',
+      colHost: 'Allowed Host',
+      colAccessDb: 'Assigned Database',
+      noUsers: 'No specific DB users found.',
 
       // Web Services
       wsTitle: 'Web Services & Reverse Proxies',
@@ -128,7 +144,7 @@ export default function WebManagerDashboard() {
       desc: 'Quản lý toàn diện trang web, cấu hình nginx, dịch vụ web, phiên bản PHP/php.ini và các cơ sở dữ liệu SQL.',
       tabSites: 'Quản lý Website',
       tabServices: 'Dịch vụ Web',
-      tabDbs: 'Dịch vụ Database',
+      tabDbs: 'Dịch vụ Database & User',
       tabPhp: 'Dịch vụ PHP & php.ini',
       createBtn: 'Tạo website mới',
       loadingSites: 'Đang tải danh sách website...',
@@ -160,15 +176,24 @@ export default function WebManagerDashboard() {
       cancel: 'Hủy',
 
       // Databases
-      dbTitle: 'Quản lý MySQL / MariaDB',
-      dbDesc: 'Khởi tạo và xóa dữ liệu SQL database dễ dàng. Kết nối với phpMyAdmin để trực quan hóa.',
+      dbTitle: 'Quản lý MySQL / MariaDB & Users',
+      dbDesc: 'Khởi tạo, xóa cơ sở dữ liệu SQL và tài khoản truy cập dễ dàng. Kết nối phpMyAdmin trực tiếp.',
       createDbBtn: 'Tạo mới Database',
       dbNameLabel: 'Tên Database',
       dbNamePlaceholder: 'VD: dulieu_blog',
       colDb: 'Tên Database',
       colDbSize: 'Kích thước',
       noDbs: 'Chưa có database nào được tìm thấy.',
-      pmaTip: 'Để quản lý cơ sở dữ liệu qua phpMyAdmin, hãy chuyển tới App Store / Package Manager.',
+      pmaTip: 'Đường dẫn truy cập nhanh phpMyAdmin trên máy chủ của bạn:',
+      openPmaBtn: 'Truy cập phpMyAdmin',
+
+      // DB Users
+      usersTitle: 'Tài khoản Database',
+      createUsersBtn: 'Tạo tài khoản DB mới',
+      colUsername: 'Tài khoản',
+      colHost: 'Host cho phép',
+      colAccessDb: 'Cơ sở dữ liệu',
+      noUsers: 'Chưa có tài khoản database nào được tìm thấy.',
 
       // Web Services
       wsTitle: 'Dịch vụ Web & Reverse Proxies',
@@ -238,6 +263,21 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const fetchDbUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const response = await fetch('/api/database_manager/users');
+      if (response.ok) {
+        const d = await response.json();
+        if (d.users) setDbUsers(d.users);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
   const fetchPhpIni = async (version: string) => {
     try {
       const response = await fetch(`/api/php_manager/php_ini/${version}`);
@@ -253,7 +293,10 @@ export default function WebManagerDashboard() {
   useEffect(() => {
     if (activeTab === 'sites') fetchSites();
     if (activeTab === 'services') fetchWebServices();
-    if (activeTab === 'databases') fetchDatabases();
+    if (activeTab === 'databases') {
+      fetchDatabases();
+      fetchDbUsers();
+    }
     if (activeTab === 'php') fetchPhpIni(phpManagerVersion);
   }, [activeTab, phpManagerVersion]);
 
@@ -416,6 +459,50 @@ export default function WebManagerDashboard() {
       });
       if (response.ok) {
         fetchDatabases();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCreateDbUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDbUser.trim() || !newDbPass.trim()) return;
+    setDbUserError(null);
+    try {
+      const response = await fetch('/api/database_manager/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: newDbUser,
+          host: 'localhost',
+          password: newDbPass,
+          db: targetDbForUser || 'all_databases'
+        })
+      });
+      const d = await response.json();
+      if (!response.ok) {
+        throw new Error(d.detail || 'Failed to create user');
+      }
+      setNewDbUser('');
+      setNewDbPass('');
+      setTargetDbForUser('');
+      fetchDbUsers();
+    } catch (err) {
+      setDbUserError(err instanceof Error ? err.message : 'Error creating database user');
+    }
+  };
+
+  const handleDeleteDbUser = async (username: string, host: string) => {
+    if (!confirm(language === 'vi' ? `Bạn có chắc muốn xóa tài khoản ${username}?` : `Delete database user ${username}?`)) return;
+    try {
+      const response = await fetch('/api/database_manager/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: username, host })
+      });
+      if (response.ok) {
+        fetchDbUsers();
       }
     } catch (err) {
       console.error(err);
@@ -796,100 +883,227 @@ export default function WebManagerDashboard() {
       )}
 
       {activeTab === 'databases' && (
-        <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <div className="space-y-2">
-            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-              <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.dbTitle}
-            </h3>
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
-          </div>
-
-          <form onSubmit={handleCreateDatabase} className={`border p-5 rounded-xl space-y-4 max-w-xl transition duration-200 ${
-            isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          {/* Databases Panel */}
+          <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
+            isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <h4 className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.createDbBtn}</h4>
-            {dbError && (
-              <div className={`p-3 text-xs border rounded-xl flex items-center gap-2 ${isDark ? 'bg-red-950/10 border-red-800/40 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
-                <Icons.AlertTriangle className="w-4 h-4" /> {dbError}
+            <div className="space-y-2">
+              <h3 className={`text-sm font-bold flex items-center justify-between ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                <span className="flex items-center gap-2">
+                  <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.dbTitle}
+                </span>
+                <button
+                  onClick={() => window.open(`http://${window.location.hostname}/phpmyadmin`, '_blank')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-xl border text-white transition-all shadow-sm ${
+                    isDark ? 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500' : 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500'
+                  }`}
+                >
+                  <Icons.ExternalLink className="w-3.5 h-3.5" /> {tr.openPmaBtn}
+                </button>
+              </h3>
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
+            </div>
+
+            <form onSubmit={handleCreateDatabase} className={`border p-5 rounded-xl space-y-4 max-w-xl transition duration-200 ${
+              isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
+            }`}>
+              <h4 className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.createDbBtn}</h4>
+              {dbError && (
+                <div className={`p-3 text-xs border rounded-xl flex items-center gap-2 ${isDark ? 'bg-red-950/10 border-red-800/40 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
+                  <Icons.AlertTriangle className="w-4 h-4" /> {dbError}
+                </div>
+              )}
+              <div className="flex flex-col md:flex-row items-center gap-3">
+                <input
+                  type="text"
+                  value={newDbName}
+                  onChange={(e) => setNewDbName(e.target.value)}
+                  placeholder={tr.dbNamePlaceholder}
+                  className={`flex-1 w-full border px-4 py-2.5 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                  }`}
+                  required
+                />
+                <button
+                  type="submit"
+                  className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                >
+                  <Icons.Database className="w-4 h-4" />
+                  {tr.create}
+                </button>
+              </div>
+            </form>
+
+            {loadingDbs ? (
+              <div className="flex items-center gap-2 text-slate-400 text-xs py-4">
+                <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" />
+                <p>{tr.loadingSites}</p>
+              </div>
+            ) : databases.length > 0 ? (
+              <div className="space-y-4 animate-fade-in max-h-[300px] overflow-auto border rounded-xl dark:border-slate-800/60 p-2">
+                <div className={`overflow-x-auto rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
+                  <table className="w-full text-left border-collapse select-none">
+                    <thead>
+                      <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
+                        isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
+                      }`}>
+                        <th className="p-4">{tr.colDb}</th>
+                        <th className="p-4">{tr.colDbSize}</th>
+                        <th className="p-4 text-center">{tr.colActions}</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`text-xs divide-y font-mono ${isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'}`}>
+                      {databases.map((db, idx) => (
+                        <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
+                          <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[150px]" title={db.name}>
+                            {db.name}
+                          </td>
+                          <td className="p-4">{db.size}</td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => handleDeleteDatabase(db.name)}
+                              className={`p-2 rounded-xl border transition mx-auto flex items-center justify-center gap-1 ${
+                                isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-800' : 'bg-slate-50 hover:bg-red-50 border-slate-200 hover:border-red-200'
+                              }`}
+                            >
+                              <Icons.Trash2 className="w-3.5 h-3.5 text-red-500" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
+                isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
+              }`}>
+                {tr.noDbs}
               </div>
             )}
-            <div className="flex flex-col md:flex-row items-center gap-3">
-              <input
-                type="text"
-                value={newDbName}
-                onChange={(e) => setNewDbName(e.target.value)}
-                placeholder={tr.dbNamePlaceholder}
-                className={`flex-1 w-full border px-4 py-2.5 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
-                  isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                }`}
-                required
-              />
-              <button
-                type="submit"
-                className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm"
-              >
-                <Icons.Database className="w-4 h-4" />
-                {tr.create}
-              </button>
-            </div>
-          </form>
+          </div>
 
-          {loadingDbs ? (
-            <div className="flex items-center gap-2 text-slate-400 text-xs py-4">
-              <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" />
-              <p>{tr.loadingSites}</p>
-            </div>
-          ) : databases.length > 0 ? (
-            <div className="space-y-4 animate-fade-in">
-              <div className={`overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-                <table className="w-full text-left border-collapse select-none">
-                  <thead>
-                    <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
-                      isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
-                    }`}>
-                      <th className="p-4">{tr.colDb}</th>
-                      <th className="p-4">{tr.colDbSize}</th>
-                      <th className="p-4 text-center">{tr.colActions}</th>
-                    </tr>
-                  </thead>
-                  <tbody className={`text-xs divide-y font-mono ${isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'}`}>
-                    {databases.map((db, idx) => (
-                      <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
-                        <td className="p-4 font-bold text-blue-500 dark:text-blue-400">{db.name}</td>
-                        <td className="p-4">{db.size}</td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => handleDeleteDatabase(db.name)}
-                            className={`p-2 rounded-xl border transition mx-auto flex items-center justify-center gap-1 ${
-                              isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-800' : 'bg-slate-50 hover:bg-red-50 border-slate-200 hover:border-red-200'
-                            }`}
-                          >
-                            <Icons.Trash2 className="w-3.5 h-3.5 text-red-500" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
-              isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
-            }`}>
-              {tr.noDbs}
-            </div>
-          )}
-
-          <div className={`p-4 border rounded-xl text-xs flex flex-wrap items-center justify-between gap-3 select-none ${
-            isDark ? 'bg-indigo-950/10 border-indigo-900/40 text-indigo-300' : 'bg-indigo-50/40 border-indigo-100 text-indigo-700'
+          {/* Database Users Panel */}
+          <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
+            isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <div className="flex items-center gap-2">
-              <Icons.Database className="w-4 h-4 shrink-0" />
-              <span>{tr.pmaTip}</span>
+            <div className="space-y-2">
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                <Icons.User className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.usersTitle}
+              </h3>
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Create user credentials and link them directly to a specific SQL Database.
+              </p>
             </div>
+
+            <form onSubmit={handleCreateDbUser} className={`border p-5 rounded-xl space-y-4 max-w-xl transition duration-200 ${
+              isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
+            }`}>
+              <h4 className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                {tr.createUsersBtn}
+              </h4>
+              {dbUserError && (
+                <div className={`p-3 text-xs border rounded-xl flex items-center gap-2 ${isDark ? 'bg-red-950/10 border-red-800/40 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
+                  <Icons.AlertTriangle className="w-4 h-4" /> {dbUserError}
+                </div>
+              )}
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    value={newDbUser}
+                    onChange={(e) => setNewDbUser(e.target.value)}
+                    placeholder={tr.colUsername}
+                    className={`border px-4 py-2 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                    required
+                  />
+                  <input
+                    type="password"
+                    value={newDbPass}
+                    onChange={(e) => setNewDbPass(e.target.value)}
+                    placeholder="Password"
+                    className={`border px-4 py-2 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                    required
+                  />
+                </div>
+                <div className="flex flex-col md:flex-row items-center gap-3">
+                  <select
+                    value={targetDbForUser}
+                    onChange={(e) => setTargetDbForUser(e.target.value)}
+                    className={`flex-1 w-full border px-3 py-2 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    <option value="">{language === 'vi' ? '— Gán tất cả DBs —' : '— Assign all DBs —'}</option>
+                    {databases.map((db, idx) => (
+                      <option key={idx} value={db.name}>{db.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="submit"
+                    className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {tr.create}
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            {loadingUsers ? (
+              <div className="flex items-center gap-2 text-slate-400 text-xs py-4">
+                <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" />
+                <p>{tr.loadingSites}</p>
+              </div>
+            ) : dbUsers.length > 0 ? (
+              <div className="space-y-4 animate-fade-in max-h-[300px] overflow-auto border rounded-xl dark:border-slate-800/60 p-2">
+                <div className={`overflow-x-auto rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
+                  <table className="w-full text-left border-collapse select-none">
+                    <thead>
+                      <tr className={`border-b text-xs font-bold uppercase tracking-widest ${
+                        isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
+                      }`}>
+                        <th className="p-4">{tr.colUsername}</th>
+                        <th className="p-4">{tr.colAccessDb}</th>
+                        <th className="p-4 text-center">{tr.colActions}</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`text-xs divide-y font-mono ${isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'}`}>
+                      {dbUsers.map((user, idx) => (
+                        <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
+                          <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[150px]" title={user.user}>
+                            {user.user}
+                          </td>
+                          <td className="p-4 truncate max-w-[150px]" title={user.db}>{user.db || 'Selected'}</td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => handleDeleteDbUser(user.user, user.host || 'localhost')}
+                              className={`p-2 rounded-xl border transition mx-auto flex items-center justify-center gap-1 ${
+                                isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-800' : 'bg-slate-50 hover:bg-red-50 border-slate-200 hover:border-red-200'
+                              }`}
+                            >
+                              <Icons.Trash2 className="w-3.5 h-3.5 text-red-500" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
+                isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
+              }`}>
+                {tr.noUsers}
+              </div>
+            )}
           </div>
         </div>
       )}
