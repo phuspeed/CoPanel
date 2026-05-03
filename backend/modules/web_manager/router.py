@@ -456,3 +456,28 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
     return {"status": "error", "message": "Unknown action"}
 
 
+@router.get("/phpmyadmin")
+async def get_phpmyadmin_credentials() -> Dict[str, Any]:
+    """Return phpMyAdmin login credentials saved by install.sh."""
+    import shutil
+    creds_file = "/opt/copanel/config/mysql_credentials.txt"
+    pma_installed = bool(
+        shutil.which("mysql") or os.path.exists("/usr/share/phpmyadmin")
+    )
+
+    if not os.path.exists(creds_file):
+        return {"installed": pma_installed, "user": "", "password": ""}
+
+    user, password = "", ""
+    try:
+        with open(creds_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("MYSQL_USER="):
+                    user = line.split("=", 1)[1]
+                elif line.startswith("MYSQL_PASS="):
+                    password = line.split("=", 1)[1]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"installed": pma_installed, "user": user, "password": password}

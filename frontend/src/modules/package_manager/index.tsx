@@ -35,7 +35,7 @@ export default function PackageManagerDashboard() {
       engine: 'System Engine',
       activeServices: 'Services Active',
       loadingPkg: 'Loading system packages...',
-      categories: ['All', 'Web Server', 'Database & Caching', 'Security & System'],
+      categories: ['All', 'Web Server', 'Database', 'Database Tools', 'Security & System', 'Utilities'],
       focusedPackage: 'Showing focused package details',
       showAll: 'Show All Packages',
       active: 'Active',
@@ -54,7 +54,7 @@ export default function PackageManagerDashboard() {
       engine: 'Động cơ hệ thống',
       activeServices: 'Dịch vụ hoạt động',
       loadingPkg: 'Đang tải danh sách dịch vụ...',
-      categories: ['Tất cả', 'Web Server', 'Database & Caching', 'Security & System'],
+      categories: ['Tất cả', 'Web Server', 'Database', 'Database Tools', 'Security & System', 'Utilities'],
       focusedPackage: 'Đang xem thông tin chi tiết gói',
       showAll: 'Hiện tất cả gói',
       active: 'Đang chạy',
@@ -125,6 +125,8 @@ export default function PackageManagerDashboard() {
       Box: Icons.Box,
       Package: Icons.Package,
       Server: Icons.Server,
+      Layout: Icons.Layout,
+      Cloud: Icons.Cloud,
     };
     const IconComponent = iconMap[iconName] || Icons.Box;
     return <IconComponent className="w-5 h-5 md:w-6 md:h-6" />;

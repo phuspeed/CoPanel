@@ -60,6 +60,11 @@ export default function WebManagerDashboard() {
   const [targetDbForUser, setTargetDbForUser] = useState<string>('');
   const [dbUserError, setDbUserError] = useState<string | null>(null);
 
+  // phpMyAdmin credentials
+  const [pmaCredentials, setPmaCredentials] = useState<{ user: string; password: string; installed: boolean } | null>(null);
+  const [pmaPassVisible, setPmaPassVisible] = useState<boolean>(false);
+  const [pmaCopied, setPmaCopied] = useState<'user'|'pass'|null>(null);
+
   // Tab 4: PHP Manager States
   const [phpManagerVersion, setPhpManagerVersion] = useState<string>('8.2');
   const [phpIniContent, setPhpIniContent] = useState<string>('');
@@ -278,6 +283,24 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const fetchPmaCredentials = async () => {
+    try {
+      const res = await fetch('/api/web_manager/phpmyadmin');
+      if (res.ok) {
+        const d = await res.json();
+        setPmaCredentials(d);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const copyPma = (type: 'user'|'pass', val: string) => {
+    navigator.clipboard.writeText(val);
+    setPmaCopied(type);
+    setTimeout(() => setPmaCopied(null), 2000);
+  };
+
   const fetchPhpIni = async (version: string) => {
     try {
       const response = await fetch(`/api/php_manager/php_ini/${version}`);
@@ -296,6 +319,7 @@ export default function WebManagerDashboard() {
     if (activeTab === 'databases') {
       fetchDatabases();
       fetchDbUsers();
+      fetchPmaCredentials();
     }
     if (activeTab === 'php') fetchPhpIni(phpManagerVersion);
   }, [activeTab, phpManagerVersion]);
@@ -884,6 +908,111 @@ export default function WebManagerDashboard() {
 
       {activeTab === 'databases' && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+
+          {/* phpMyAdmin Credentials Panel - full width */}
+          <div className={`md:col-span-2 border rounded-2xl p-5 space-y-4 transition-all ${
+            isDark ? 'bg-indigo-950/20 border-indigo-800/30' : 'bg-indigo-50/50 border-indigo-200'
+          }`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                  <Icons.Database className="w-4 h-4" /> phpMyAdmin
+                  {pmaCredentials?.installed
+                    ? <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200'}`}>Installed</span>
+                    : <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${isDark ? 'bg-red-500/15 text-red-400 border-red-500/30' : 'bg-red-100 text-red-600 border-red-200'}`}>Not installed</span>
+                  }
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {language === 'vi' ? 'Thông tin đăng nhập phpMyAdmin được tạo khi cài CoPanel' : 'Login credentials created during CoPanel installation'}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}/phpmyadmin`, '_blank')}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm"
+                >
+                  <Icons.ExternalLink className="w-3.5 h-3.5" />
+                  {language === 'vi' ? 'Mở phpMyAdmin' : 'Open phpMyAdmin'}
+                </button>
+                <button
+                  onClick={() => window.open(`${window.location.protocol}//${window.location.host}/phpmyadmin`, '_blank')}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <Icons.ExternalLink className="w-3.5 h-3.5" />
+                  Port {window.location.port || '80'}
+                </button>
+              </div>
+            </div>
+
+            {pmaCredentials?.installed && (
+              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3`}>
+                {/* Username */}
+                <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
+                }`}>
+                  <Icons.User className={`w-4 h-4 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Username</div>
+                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{pmaCredentials.user}</div>
+                  </div>
+                  <button
+                    onClick={() => copyPma('user', pmaCredentials.user)}
+                    className={`p-1.5 rounded-lg border transition shrink-0 ${
+                      pmaCopied === 'user'
+                        ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                        : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
+                    }`}
+                  >
+                    {pmaCopied === 'user' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
+                {/* Password */}
+                <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${
+                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
+                }`}>
+                  <Icons.KeyRound className={`w-4 h-4 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Password</div>
+                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                      {pmaPassVisible ? pmaCredentials.password : '••••••••••••'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPmaPassVisible(v => !v)}
+                    className={`p-1.5 rounded-lg border transition shrink-0 ${
+                      isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {pmaPassVisible ? <Icons.EyeOff className="w-3.5 h-3.5" /> : <Icons.Eye className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => copyPma('pass', pmaCredentials.password)}
+                    className={`p-1.5 rounded-lg border transition shrink-0 ${
+                      pmaCopied === 'pass'
+                        ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                        : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
+                    }`}
+                  >
+                    {pmaCopied === 'pass' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!pmaCredentials?.installed && (
+              <div className={`text-xs p-3 rounded-xl border ${
+                isDark ? 'bg-slate-900/40 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-500'
+              }`}>
+                ⚠ {language === 'vi'
+                  ? 'phpMyAdmin chưa được cài đặt. Chạy lại install.sh để cài MariaDB + phpMyAdmin tự động.'
+                  : 'phpMyAdmin is not installed. Re-run install.sh to install MariaDB + phpMyAdmin automatically.'}
+              </div>
+            )}
+          </div>
+
           {/* Databases Panel */}
           <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
             isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
@@ -893,20 +1022,6 @@ export default function WebManagerDashboard() {
                 <span className="flex items-center gap-2">
                   <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.dbTitle}
                 </span>
-                <div className="flex gap-1.5 flex-wrap">
-                  <button
-                    onClick={() => window.open(`http://${window.location.hostname}/phpmyadmin`, '_blank')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-xl border text-white transition-all shadow-sm bg-indigo-600 border-indigo-500 hover:bg-indigo-500`}
-                  >
-                    <Icons.ExternalLink className="w-3.5 h-3.5" /> Port 80
-                  </button>
-                  <button
-                    onClick={() => window.open(`http://${window.location.host}/phpmyadmin`, '_blank')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-xl border text-white transition-all shadow-sm bg-blue-600 border-blue-500 hover:bg-blue-500`}
-                  >
-                    <Icons.ExternalLink className="w-3.5 h-3.5" /> Port 8686
-                  </button>
-                </div>
               </h3>
               <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
             </div>

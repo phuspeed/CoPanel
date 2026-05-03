@@ -528,7 +528,7 @@ print_summary() {
         ADMIN_PWD=$(cat "${CoPanel_HOME}/config/admin_password.txt")
     fi
 
-    cat << EOF
+    cat <<EOF
 
 ${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
 ${GREEN}║          CoPanel Installation Complete! ✓                    ║${NC}
@@ -536,12 +536,13 @@ ${GREEN}╚═══════════════════════
 
 ${BLUE}Installation Summary:${NC}
 
-📍 Initial Admin Password: ${GREEN}${ADMIN_PWD}${NC}
+📍 Admin Password:   ${GREEN}${ADMIN_PWD}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
 🌐 Access URL:        http://localhost:${NGINX_PORT}
 📊 Backend API:       http://localhost:${BACKEND_PORT}
-🔧 Frontend Dev:      http://localhost:${FRONTEND_PORT}
+📜 phpMyAdmin:        http://localhost:${NGINX_PORT}/phpmyadmin
+   ${YELLOW}(Install MariaDB + phpMyAdmin via Package Manager inside CoPanel)${NC}
 
 ${BLUE}Useful Commands:${NC}
 
@@ -562,14 +563,8 @@ Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
 ${YELLOW}Next Steps:${NC}
 
 1. Open browser: http://localhost:${NGINX_PORT}
-2. Access API docs: http://localhost:${BACKEND_PORT}/docs
+2. Go to Package Manager to install MariaDB / PostgreSQL / phpMyAdmin
 3. Review logs: journalctl -u copanel -f
-
-${BLUE}Documentation:${NC}
-
-Architecture:         ${CoPanel_HOME}/README.md
-Backend Setup:        ${CoPanel_HOME}/backend/README.md
-Frontend Setup:       ${CoPanel_HOME}/frontend/README.md
 
 EOF
 }
@@ -607,19 +602,19 @@ EOF
     
     log_step "Step 3: Build & Provision Backend"
     setup_backend
-    
+
     log_step "Step 4: Build & Provision Frontend"
     setup_frontend
-    
+
     log_step "Step 5: Configure Nginx & Firewall"
     setup_nginx
-    
+
     log_step "Step 6: Register Systemd Daemon"
     setup_systemd_service
-    
+
     log_step "Step 7: Launch Panel Engine"
     start_services
-    
+
     log_step "Step 8: System Readiness Checklist"
     verify_installation
     

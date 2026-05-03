@@ -85,3 +85,15 @@ def remove_pkg(pkg_id: str) -> Dict[str, Any]:
         "message": f"Successfully removed package {pkg_id}",
         "package": updated_pkg
     }
+
+
+@router.get("/credentials/mysql")
+def mysql_credentials() -> Dict[str, Any]:
+    """Return MySQL/MariaDB login credentials (created on install)."""
+    return logic.get_mysql_credentials()
+
+
+@router.get("/credentials/postgres")
+def postgres_credentials() -> Dict[str, Any]:
+    """Return PostgreSQL login credentials (created on install)."""
+    return logic.get_postgres_credentials()
