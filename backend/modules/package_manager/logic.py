@@ -195,6 +195,21 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
                         subprocess.run(["yum", "install", "-y", "ufw"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
                         pass
+        elif pkg_id == "phpmyadmin":
+            if not (os.path.exists("/usr/share/phpmyadmin") or os.path.exists("/var/www/html/phpmyadmin")):
+                if shutil.which("apt-get"):
+                    try:
+                        subprocess.run(["debconf-set-selections"], input=b"phpmyadmin phpmyadmin/dbconfig-install boolean false\n", check=False)
+                        subprocess.run(["apt-get", "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["apt-get", "install", "-y", "phpmyadmin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+                elif shutil.which("yum"):
+                    try:
+                        subprocess.run(["yum", "install", "-y", "epel-release"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["yum", "install", "-y", "phpmyadmin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
         save_packages(packages)
         # Load the module dynamically to backend/modules/<pkg_id>
         pkg_module_dir = MODULES_DIR / pkg_id

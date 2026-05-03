@@ -95,3 +95,41 @@ def delete_backup_file(req: dict) -> Dict[str, Any]:
         return {"status": "success", "message": "Backup file removed successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/exchange-oauth-code")
+def exchange_oauth_code(req: dict) -> Dict[str, Any]:
+    """Exchange OAuth code from browser with Google."""
+    try:
+        import requests
+        client_id = req.get("client_id")
+        client_secret = req.get("client_secret")
+        code = req.get("code")
+        redirect_uri = req.get("redirect_uri")
+        
+        if not all([client_id, client_secret, code, redirect_uri]):
+            raise HTTPException(status_code=400, detail="Missing required OAuth parameters.")
+            
+        res = requests.post("https://oauth2.googleapis.com/token", data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code"
+        }, timeout=30)
+        
+        if res.status_code != 200:
+            raise HTTPException(status_code=400, detail=res.text)
+            
+        data = res.json()
+        refresh_token = data.get("refresh_token")
+        
+        cfg = BackupManager.load_config()
+        cfg["google_drive_client_id"] = client_id
+        cfg["google_drive_client_secret"] = client_secret
+        if refresh_token:
+            cfg["google_drive_refresh_token"] = refresh_token
+        BackupManager.save_config(cfg)
+        
+        return {"status": "success", "refresh_token": refresh_token or cfg.get("google_drive_refresh_token")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

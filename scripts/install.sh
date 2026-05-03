@@ -270,6 +270,14 @@ upstream copanel_backend {
     server 127.0.0.1:8000;
 }
 
+upstream php_fpm {
+    server unix:/run/php/php8.3-fpm.sock max_fails=1 fail_timeout=1s;
+    server unix:/run/php/php8.2-fpm.sock max_fails=1 fail_timeout=1s;
+    server unix:/run/php/php8.1-fpm.sock max_fails=1 fail_timeout=1s;
+    server unix:/run/php/php8.0-fpm.sock max_fails=1 fail_timeout=1s;
+    server unix:/run/php/php7.4-fpm.sock max_fails=1 fail_timeout=1s;
+}
+
 server {
     listen 8686;
     listen [::]:8686;
@@ -291,7 +299,7 @@ server {
         location ~ ^/phpmyadmin/(.+\.php)$ {
             try_files $uri =404;
             root /usr/share/;
-            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+            fastcgi_pass php_fpm;
             include fastcgi_params;
             fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         }
