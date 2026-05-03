@@ -133,3 +133,36 @@ def exchange_oauth_code(req: dict) -> Dict[str, Any]:
         return {"status": "success", "refresh_token": refresh_token or cfg.get("google_drive_refresh_token")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/test_connection")
+def test_connection() -> Dict[str, Any]:
+    """Test connection to Google Drive using Rclone."""
+    import subprocess
+    from .logic import BackupManager
+    cfg = BackupManager.load_config()
+    remote = cfg.get("rclone_remote_name", "gdrive")
+    
+    if not cfg.get("google_drive_refresh_token"):
+        raise HTTPException(status_code=400, detail="Missing Google Drive Token. Please authenticate first.")
+        
+    try:
+        from pathlib import Path
+        rc_conf = Path("/root/.config/rclone/rclone.conf")
+        rc_conf.parent.mkdir(parents=True, exist_ok=True)
+        
+        conf_data = f"[{remote}]\ntype = drive\n"
+        if cfg.get("google_drive_client_id"):
+            conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
+        if cfg.get("google_drive_client_secret"):
+            conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
+        if cfg.get("google_drive_refresh_token"):
+            conf_data += f"token = {cfg.get('google_drive_refresh_token')}\n"
+        rc_conf.write_text(conf_data)
+        
+        res = subprocess.run(["rclone", "about", f"{remote}:"], capture_output=True, text=True, timeout=15)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Connected to Google Drive successfully!"}
+        else:
+            return {"status": "error", "message": res.stderr.strip() or "Rclone test failed."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

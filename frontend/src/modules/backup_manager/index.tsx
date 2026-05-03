@@ -124,6 +124,103 @@ export default function BackupAndSyncDashboard() {
     ? `http://${window.location.hostname}.nip.io:${window.location.port || '8686'}/backup-manager`
     : `${window.location.origin}/backup-manager`;
 
+  // States for interactive cron time
+  const [cronHour, setCronHour] = useState<string>('0');
+  const [cronMinute, setCronMinute] = useState<string>('0');
+
+  // Directory picker modal state
+  const [dirPickerOpen, setDirPickerOpen] = useState<boolean>(false);
+  const [currentPickPath, setCurrentPickPath] = useState<string>('');
+  const [dirList, setDirList] = useState<any[]>([]);
+  const [activePickerTarget, setActivePickerTarget] = useState<'source_dir' | 'local_path' | null>(null);
+
+  // Connection status state
+  const [connTesting, setConnTesting] = useState<boolean>(false);
+
+  const openDirectoryPicker = async (target: 'source_dir' | 'local_path', initialPath?: string) => {
+    setActivePickerTarget(target);
+    setDirPickerOpen(true);
+    let p = initialPath || (config.source_dir || '/');
+    if (!p || p === '') p = '/';
+    await fetchDirs(p);
+  };
+
+  const fetchDirs = async (p: string) => {
+    try {
+      setCurrentPickPath(p);
+      const res = await fetch(`/api/file_manager/list?path=${encodeURIComponent(p)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.files) {
+          // Filter only directories
+          const dirsOnly = data.files.filter((f: any) => f.is_dir);
+          setDirList(dirsOnly);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSelectDir = (p: string) => {
+    if (activePickerTarget === 'source_dir') {
+      setConfig({ ...config, source_dir: p });
+    } else if (activePickerTarget === 'local_path') {
+      setLocalPath(p);
+    }
+    setDirPickerOpen(false);
+  };
+
+  const goUpDir = () => {
+    if (!currentPickPath || currentPickPath === '/') return;
+    const parts = currentPickPath.split('/').filter(Boolean);
+    parts.pop();
+    const parentPath = '/' + parts.join('/');
+    fetchDirs(parentPath);
+  };
+
+  useEffect(() => {
+    if (config.cron_expression) {
+      const parts = config.cron_expression.split(' ');
+      if (parts.length >= 2 && !isNaN(Number(parts[1])) && !isNaN(Number(parts[0]))) {
+        setCronHour(parts[1]);
+        setCronMinute(parts[0]);
+      }
+    }
+  }, [config.cron_expression]);
+
+  const updateCronTiming = (h: string, m: string) => {
+    setCronHour(h);
+    setCronMinute(m);
+    setConfig({ ...config, cron_expression: `${m} ${h} * * *` });
+  };
+
+  const handleTestConnection = async () => {
+    setConnTesting(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/backup_manager/test_connection', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setMsg({ text: data.message, isError: false });
+      } else {
+        setMsg({ text: data.message || 'Connection test failed', isError: true });
+      }
+    } catch (err: any) {
+      setMsg({ text: err.message || 'Failed to trigger test connection', isError: true });
+    } finally {
+      setConnTesting(false);
+    }
+  };
+
 
   const fetchConfigAndCrons = async () => {
     try {
@@ -375,30 +472,83 @@ export default function BackupAndSyncDashboard() {
           <div className="space-y-4">
             <div className="space-y-1">
               <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.localPathLabel}</label>
-              <input
-                type="text"
-                value={config.source_dir || ''}
-                onChange={(e) => setConfig({ ...config, source_dir: e.target.value })}
-                placeholder="/var/www/html"
-                required
-                className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
-                  isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                }`}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={config.source_dir || ''}
+                  onChange={(e) => setConfig({ ...config, source_dir: e.target.value })}
+                  placeholder="/var/www/html"
+                  required
+                  className={`flex-1 border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
+                    isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => openDirectoryPicker('source_dir', config.source_dir)}
+                  className={`px-4 py-2 text-xs border rounded-xl flex items-center gap-1 hover:border-indigo-500 font-medium transition duration-200 ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-indigo-600'
+                  }`}
+                >
+                  <Icons.Folder className="w-4 h-4" />
+                  {language === 'vi' ? 'Chọn' : 'Browse'}
+                </button>
+              </div>
               <span className={`text-[10px] block leading-tight ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.localPathDesc}</span>
             </div>
 
             <div className="space-y-1">
               <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.cronLabel}</label>
-              <input
-                type="text"
-                value={config.cron_expression || ''}
-                onChange={(e) => setConfig({ ...config, cron_expression: e.target.value })}
-                placeholder="0 0 * * *"
-                className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
-                  isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                }`}
-              />
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {language === 'vi' ? 'Giờ' : 'Hour'}:
+                  </span>
+                  <select
+                    value={cronHour}
+                    onChange={(e) => updateCronTiming(e.target.value, cronMinute)}
+                    className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    {Array.from({ length: 24 }).map((_, i) => (
+                      <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {language === 'vi' ? 'Phút' : 'Minute'}:
+                  </span>
+                  <select
+                    value={cronMinute}
+                    onChange={(e) => updateCronTiming(cronHour, e.target.value)}
+                    className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    {Array.from({ length: 60 }).map((_, i) => (
+                      <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 flex-1 min-w-[120px]">
+                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Cron:
+                  </span>
+                  <input
+                    type="text"
+                    value={config.cron_expression || ''}
+                    onChange={(e) => setConfig({ ...config, cron_expression: e.target.value })}
+                    placeholder="0 0 * * *"
+                    className={`w-full border rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                    }`}
+                  />
+                </div>
+              </div>
               <span className={`text-[10px] block leading-tight ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.cronDesc}</span>
             </div>
 
@@ -480,14 +630,27 @@ export default function BackupAndSyncDashboard() {
               </div>
 
               {/* Fast OAuth direct authentication trigger */}
-              <button
-                type="button"
-                onClick={handleDirectOAuth}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-xl font-bold text-xs transition-all shadow-md hover:shadow-indigo-500/20"
-              >
-                <Icons.Chrome className="w-4 h-4" />
-                {tr.oauthBtn}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDirectOAuth}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-xl font-bold text-xs transition-all shadow-md hover:shadow-indigo-500/20"
+                >
+                  <Icons.Chrome className="w-4 h-4" />
+                  {tr.oauthBtn}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={connTesting}
+                  className={`px-4 py-3 border font-bold text-xs rounded-xl flex items-center gap-2 transition duration-200 shrink-0 ${
+                    isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-50 border-slate-200 text-slate-700 hover:text-indigo-600'
+                  }`}
+                >
+                  {connTesting ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Globe className="w-4 h-4" />}
+                  {language === 'vi' ? 'Kiểm tra kết nối' : 'Test Connection'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -529,15 +692,26 @@ export default function BackupAndSyncDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherLocal}</label>
-                  <input
-                    type="text"
-                    value={localPath}
-                    onChange={(e) => setLocalPath(e.target.value)}
-                    placeholder="e.g. /home/Docker/saleco"
-                    className={`w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-all font-mono ${
-                      isDark ? 'bg-slate-900/60 border-slate-800/60 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
-                    }`}
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={localPath}
+                      onChange={(e) => setLocalPath(e.target.value)}
+                      placeholder="e.g. /home/Docker/saleco"
+                      className={`flex-1 border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-all font-mono ${
+                        isDark ? 'bg-slate-900/60 border-slate-800/60 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => openDirectoryPicker('local_path', localPath)}
+                      className={`px-3 py-2 text-xs border rounded-xl flex items-center gap-1 hover:border-indigo-500 font-medium transition duration-200 ${
+                        isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-indigo-600'
+                      }`}
+                    >
+                      <Icons.Folder className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherRemote}</label>
@@ -737,6 +911,121 @@ export default function BackupAndSyncDashboard() {
           )}
         </div>
       </div>
+
+      {/* Directory picker modal */}
+      {dirPickerOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className={`w-full max-w-lg p-6 rounded-2xl border shadow-2xl flex flex-col max-h-[85vh] transition duration-300 ${
+            isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+          }`}>
+            <div className="flex items-center justify-between border-b pb-4 mb-4">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <Icons.Folder className="w-5 h-5 text-indigo-500" />
+                {language === 'vi' ? 'Chọn thư mục máy chủ' : 'Select Server Directory'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDirPickerOpen(false)}
+                className={`p-1.5 rounded-xl transition ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}
+              >
+                <Icons.X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Breadcrumb / current path input */}
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                type="button"
+                onClick={goUpDir}
+                disabled={currentPickPath === '/'}
+                className={`p-2 border rounded-xl transition ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300 disabled:opacity-40' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 disabled:opacity-40'
+                }`}
+                title={language === 'vi' ? 'Lên cấp trên' : 'Go up one level'}
+              >
+                <Icons.ArrowUp className="w-4 h-4" />
+              </button>
+              <input
+                type="text"
+                value={currentPickPath}
+                onChange={(e) => setCurrentPickPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') fetchDirs(currentPickPath);
+                }}
+                className={`flex-1 border rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-indigo-500 transition duration-200 ${
+                  isDark ? 'bg-slate-950 border-slate-800 text-indigo-400' : 'bg-slate-50 border-slate-200 text-indigo-600'
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => fetchDirs(currentPickPath)}
+                className={`p-2 border rounded-xl transition ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'
+                }`}
+              >
+                <Icons.RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Directory items list */}
+            <div className={`flex-1 overflow-y-auto border rounded-xl p-2 min-h-[250px] space-y-1 mb-4 select-none ${
+              isDark ? 'bg-slate-950/40 border-slate-800/80' : 'bg-slate-50/50 border-slate-200'
+            }`}>
+              {dirList.length > 0 ? (
+                dirList.map((item: any, idx: number) => (
+                  <div
+                    key={idx}
+                    onClick={() => fetchDirs(item.path)}
+                    className={`p-2.5 rounded-xl flex items-center justify-between text-xs cursor-pointer transition ${
+                      isDark ? 'hover:bg-indigo-950/40 border border-transparent hover:border-indigo-800/60' : 'hover:bg-indigo-50 border border-transparent hover:border-indigo-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Icons.Folder className="w-4 h-4 shrink-0 text-amber-500" />
+                      <span className="font-medium break-all">{item.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectDir(item.path);
+                      }}
+                      className={`px-3 py-1 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition ${
+                        isDark ? 'bg-slate-900 border-slate-800 hover:bg-indigo-600 hover:border-indigo-600 text-indigo-400 hover:text-white' : 'bg-white border-slate-200 hover:bg-indigo-600 hover:border-indigo-600 text-indigo-600 hover:text-white'
+                      }`}
+                    >
+                      {language === 'vi' ? 'Chọn' : 'Select'}
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className={`p-4 text-xs text-center leading-relaxed ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                  {language === 'vi' ? 'Không có thư mục con nào.' : 'No subdirectories found.'}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t pt-3">
+              <button
+                type="button"
+                onClick={() => setDirPickerOpen(false)}
+                className={`px-4 py-2 rounded-xl border text-xs font-bold transition ${
+                  isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {language === 'vi' ? 'Hủy' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectDir(currentPickPath)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold transition shadow"
+              >
+                {language === 'vi' ? 'Chọn thư mục này' : 'Select current folder'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
