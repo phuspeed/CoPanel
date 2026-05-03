@@ -115,6 +115,8 @@ install_dependencies() {
             nodejs npm \
             ufw inotify-tools certbot \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
+    fi
+
     # Install Node.js 20 LTS if not installed or older than 18
     if ! command_exists node || [[ $(node -v | cut -d. -f1 | tr -d 'v') -lt 18 ]]; then
         log_info "Node.js is missing or version is too old. Installing Node.js 20 LTS via NodeSource..."
