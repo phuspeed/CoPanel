@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 IS_WINDOWS = os.name == 'nt'
 
@@ -58,7 +58,16 @@ class SSLManager:
     @staticmethod
     def get_certificates() -> List[Dict[str, Any]]:
         """List all domains and their active SSL certificates."""
+        import re
         domains = set()
+
+        def clean_domain(d: str) -> str:
+            d = d.strip().lower()
+            # Strip leading *. or www.
+            d = re.sub(r'^(www\.|\*\.)', '', d)
+            # Strip Certbot numeric suffixes like -0001
+            d = re.sub(r'-\d+$', '', d)
+            return d
 
         # Find all domains from sites-available
         sites_dir = Path("/etc/nginx/sites-available") if not IS_WINDOWS else Path("./test_nginx/sites-available")
@@ -66,31 +75,62 @@ class SSLManager:
             for file in sites_dir.iterdir():
                 if file.is_file() and file.name not in ["default", "copanel"]:
                     for d in SSLManager.extract_domains_from_nginx(file):
-                        domains.add(d)
+                        domains.add(clean_domain(d))
 
         # Find all domains from /etc/letsencrypt/live
         le_dir = Path("/etc/letsencrypt/live") if not IS_WINDOWS else Path("./test_nginx/letsencrypt/live")
         if le_dir.exists():
             for d_dir in le_dir.iterdir():
                 if d_dir.is_dir() and d_dir.name not in ["README", ".git"]:
-                    domains.add(d_dir.name.strip().lower())
+                    domains.add(clean_domain(d_dir.name))
+
+        # Find all domains from /etc/nginx/ssl
+        ssl_dir = Path("/etc/nginx/ssl") if not IS_WINDOWS else Path("./test_nginx/ssl")
+        if ssl_dir.exists():
+            for d_dir in ssl_dir.iterdir():
+                if d_dir.is_dir():
+                    domains.add(clean_domain(d_dir.name))
+
+        def find_letsencrypt_cert(domain: str) -> Optional[Path]:
+            base_dir = Path("/etc/letsencrypt/live") if not IS_WINDOWS else Path("./test_nginx/letsencrypt/live")
+            if not base_dir.exists():
+                return None
+            p = base_dir / domain / "fullchain.pem"
+            if p.exists():
+                return p
+            for item in base_dir.iterdir():
+                if item.is_dir() and item.name.startswith(domain + "-") and (item / "fullchain.pem").exists():
+                    return item / "fullchain.pem"
+            return None
+
+        def find_custom_cert(domain: str) -> Optional[Path]:
+            base_dir = Path("/etc/nginx/ssl") if not IS_WINDOWS else Path("./test_nginx/ssl")
+            if not base_dir.exists():
+                return None
+            p = base_dir / domain / "fullchain.pem"
+            if p.exists():
+                return p
+            return None
 
         results = []
         for domain in domains:
-            cert_path_letsencrypt = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem") if not IS_WINDOWS else Path(f"./test_nginx/letsencrypt/live/{domain}/fullchain.pem")
-            cert_path_custom = Path(f"/etc/nginx/ssl/{domain}/fullchain.pem") if not IS_WINDOWS else Path(f"./test_nginx/ssl/{domain}/fullchain.pem")
+            if not domain:
+                continue
+
+            cert_path_letsencrypt = find_letsencrypt_cert(domain)
+            cert_path_custom = find_custom_cert(domain)
 
             ssl_active = False
             ssl_type = "None"
             expiry = "N/A"
 
             # Check LetsEncrypt
-            if cert_path_letsencrypt.exists():
+            if cert_path_letsencrypt and cert_path_letsencrypt.exists():
                 ssl_active = True
                 ssl_type = "Let's Encrypt"
                 expiry = SSLManager.get_cert_expiry(cert_path_letsencrypt)
             # Check Custom
-            elif cert_path_custom.exists():
+            elif cert_path_custom and cert_path_custom.exists():
                 ssl_active = True
                 ssl_type = "Custom"
                 expiry = SSLManager.get_cert_expiry(cert_path_custom)

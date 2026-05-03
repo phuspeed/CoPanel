@@ -179,11 +179,11 @@ setup_user_and_dirs() {
             if [[ -d "$CoPanel_HOME/backend/data" ]]; then
                 cp -a "$CoPanel_HOME/backend/data" "$TEMP_BACKUP/" || true
             fi
+            if [[ -d "$CoPanel_HOME/config" ]]; then
+                cp -a "$CoPanel_HOME/config" "$TEMP_BACKUP/" || true
+            fi
             if [[ -f "$CoPanel_HOME/backend/users.json" ]]; then
                 cp -a "$CoPanel_HOME/backend/users.json" "$TEMP_BACKUP/" || true
-            fi
-            if [[ -f "$CoPanel_HOME/config/backup_config.json" ]]; then
-                cp -a "$CoPanel_HOME/config/backup_config.json" "$TEMP_BACKUP/" || true
             fi
             # Add any other potential db files
             for db in "$CoPanel_HOME"/backend/*.db; do
@@ -201,12 +201,12 @@ setup_user_and_dirs() {
                 mkdir -p "$CoPanel_HOME/backend/data"
                 cp -a "$TEMP_BACKUP/data"/. "$CoPanel_HOME/backend/data/" || true
             fi
+            if [[ -d "$TEMP_BACKUP/config" ]]; then
+                mkdir -p "$CoPanel_HOME/config"
+                cp -a "$TEMP_BACKUP/config"/. "$CoPanel_HOME/config/" || true
+            fi
             if [[ -f "$TEMP_BACKUP/users.json" ]]; then
                 cp -a "$TEMP_BACKUP/users.json" "$CoPanel_HOME/backend/" || true
-            fi
-            if [[ -f "$TEMP_BACKUP/backup_config.json" ]]; then
-                mkdir -p "$CoPanel_HOME/config"
-                cp -a "$TEMP_BACKUP/backup_config.json" "$CoPanel_HOME/config/" || true
             fi
             for db in "$TEMP_BACKUP"/*.db; do
                 if [[ -f "$db" ]]; then
@@ -279,8 +279,13 @@ setup_backend() {
         log_success "Python dependencies installed"
     fi
 
-    # Pre-initialize database to immediately create initial admin user & password file
-    python3 -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
+     # Pre-initialize database to immediately create initial admin user & password file
+    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    sudo -u "$CoPanel_USER" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
+    
+    # Final ownership check
+    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    chmod -R u+rwX,go+rX "$CoPanel_HOME"
     
     deactivate
 }
