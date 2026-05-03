@@ -41,11 +41,13 @@ def parse_nginx_config(content: str) -> Dict[str, str]:
 
 # Schemas
 class CreateSiteRequest(BaseModel):
-    filename: str
+    filename: Optional[str] = None
     domain: str
     root: str
     port: Optional[int] = 80
     proxy_port: Optional[int] = None
+    php_version: Optional[str] = None
+    php_modules: Optional[List[str]] = None
 
 class ToggleSiteRequest(BaseModel):
     filename: str
@@ -99,18 +101,30 @@ async def list_sites() -> Dict[str, Any]:
 async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     """Create a new Nginx site from a basic template."""
     try:
-        # Sanitize filename
-        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', req.filename)
+        # Auto-generate filename if not provided
+        fname = req.filename
+        if not fname or fname.strip() == "":
+            domain_name = req.domain.strip().lower()
+            domain_name = re.sub(r'^(https?://)?(www\.)?', '', domain_name)
+            fname = f"{domain_name}.conf"
+
+        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', fname)
         file_path = os.path.join(SITES_AVAILABLE, safe_filename)
+        enabled_path = os.path.join(SITES_ENABLED, safe_filename)
 
         if os.path.exists(file_path):
             raise HTTPException(status_code=400, detail="Site configuration file already exists.")
+
+        # Generate server_name string: include www alias for domain names
+        server_name_str = req.domain
+        if not req.domain.startswith("www.") and "." in req.domain and not req.domain.replace(".", "").isdigit():
+            server_name_str += f" www.{req.domain}"
 
         # Create basic template
         if req.proxy_port:
             template = f"""server {{
     listen {req.port};
-    server_name {req.domain};
+    server_name {server_name_str};
     client_max_body_size 500M;
 
     location / {{
@@ -130,10 +144,35 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     }}
 }}
 """
+        elif req.php_version:
+            # PHP Template
+            template = f"""server {{
+    listen {req.port};
+    server_name {server_name_str};
+    root {req.root};
+    client_max_body_size 500M;
+
+    index index.php index.html index.htm;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
+
+    location ~ \.php$ {{
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php{req.php_version}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }}
+
+    location ~ /\.ht {{
+        deny all;
+    }}
+}}
+"""
         else:
             template = f"""server {{
     listen {req.port};
-    server_name {req.domain};
+    server_name {server_name_str};
     root {req.root};
     client_max_body_size 500M;
 
@@ -145,13 +184,56 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 }}
 """
 
+
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(template)
 
+        # On Linux, if PHP is selected and modules are requested, install them
+        if not IS_WINDOWS and req.php_version and req.php_modules:
+            try:
+                import shutil
+                pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
+                if pkg_manager == "apt-get":
+                    pkgs = [f"php{req.php_version}-{m}" for m in req.php_modules]
+                    subprocess.run(["sudo", "apt-get", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif pkg_manager == "yum":
+                    pkgs = [f"php-{m}" for m in req.php_modules]
+                    subprocess.run(["sudo", "yum", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+        # Automatically activate the new site
+        if not os.path.exists(enabled_path):
+            if IS_WINDOWS:
+                import shutil
+                shutil.copy2(file_path, enabled_path)
+            else:
+                os.symlink(file_path, enabled_path)
+
+        # Test and reload on Linux
+        if not IS_WINDOWS:
+            try:
+                subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
+                subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                # Revert if nginx -t fails
+                if os.path.exists(enabled_path):
+                    if os.path.islink(enabled_path):
+                        os.unlink(enabled_path)
+                    else:
+                        os.remove(enabled_path)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Nginx configuration invalid: {e.stderr}"
+                )
+
         return {
             "status": "success",
-            "message": "Nginx site created successfully in sites-available."
+            "message": "Nginx site created and activated successfully."
         }
+
     except HTTPException:
         raise
     except Exception as e:

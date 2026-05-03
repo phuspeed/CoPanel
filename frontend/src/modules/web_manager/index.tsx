@@ -23,12 +23,17 @@ export default function WebManagerDashboard() {
   const isDark = theme === 'dark';
 
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [filename, setFilename] = useState<string>('');
   const [domain, setDomain] = useState<string>('');
   const [root, setRoot] = useState<string>('/var/www/html');
   const [port, setPort] = useState<number>(80);
   const [proxyPort, setProxyPort] = useState<number | ''>('');
-  const [siteType, setSiteType] = useState<'static' | 'proxy'>('static');
+  const [siteType, setSiteType] = useState<'static' | 'proxy' | 'php'>('static');
+
+  // PHP specific states
+  const [phpVersion, setPhpVersion] = useState<string>('8.2');
+  const [phpModules, setPhpModules] = useState<string[]>([]);
+  const [availablePhpVersions, setAvailablePhpVersions] = useState<string[]>(['8.3', '8.2', '8.1', '8.0', '7.4']);
+  const [availablePhpModules, setAvailablePhpModules] = useState<string[]>(['mysqli', 'curl', 'mbstring', 'gd', 'zip', 'xml', 'redis', 'intl', 'soap', 'bcmath']);
 
   const [viewingSite, setViewingSite] = useState<SiteItem | null>(null);
   const [editedContent, setEditedContent] = useState<string>('');
@@ -57,12 +62,14 @@ export default function WebManagerDashboard() {
       deleteConfirm: (fn: string) => `Are you sure you want to completely delete "${fn}"?`,
       serviceType: 'Service Type',
       staticService: 'Static Web Service',
+      phpService: 'PHP Web Service',
       proxyService: 'Nginx Port Proxy (Reverse Proxy)',
-      confFilename: 'Configuration Filename',
       domainLabel: 'Domain Name (server_name)',
       portLabel: 'Port',
       rootLabel: 'Root Path',
       proxyPortLabel: 'Proxy Port',
+      phpVersionLabel: 'PHP Version',
+      phpModulesLabel: 'PHP Modules (Enable)',
       create: 'Create',
       cancel: 'Cancel'
     },
@@ -87,12 +94,14 @@ export default function WebManagerDashboard() {
       deleteConfirm: (fn: string) => `Bạn có chắc chắn muốn xóa hoàn toàn "${fn}" không?`,
       serviceType: 'Loại dịch vụ',
       staticService: 'Dịch vụ Web Tĩnh',
+      phpService: 'Dịch vụ Web PHP',
       proxyService: 'Nginx Proxy Cổng (Reverse Proxy)',
-      confFilename: 'Tên tệp cấu hình',
       domainLabel: 'Tên miền (server_name)',
       portLabel: 'Cổng truy cập',
       rootLabel: 'Thư mục gốc',
       proxyPortLabel: 'Cổng Proxy',
+      phpVersionLabel: 'Phiên bản PHP',
+      phpModulesLabel: 'PHP Modules (Bật)',
       create: 'Tạo mới',
       cancel: 'Hủy'
     }
@@ -127,6 +136,28 @@ export default function WebManagerDashboard() {
   useEffect(() => {
     fetchSites();
   }, []);
+
+  useEffect(() => {
+    const fetchPhpOptions = async () => {
+      try {
+        const resV = await fetch('/api/php_manager/versions');
+        if (resV.ok) {
+          const dV = await resV.json();
+          if (dV.versions) setAvailablePhpVersions(dV.versions);
+        }
+        const resM = await fetch('/api/php_manager/modules');
+        if (resM.ok) {
+          const dM = await resM.json();
+          if (dM.modules) setAvailablePhpModules(dM.modules);
+        }
+      } catch (err) {
+        console.error('Error fetching PHP options:', err);
+      }
+    };
+    if (showCreateModal) {
+      fetchPhpOptions();
+    }
+  }, [showCreateModal]);
 
   const handleToggleStatus = async (item: SiteItem) => {
     try {
@@ -164,28 +195,29 @@ export default function WebManagerDashboard() {
   };
 
   const handleCreateSite = async () => {
-    if (!filename || !domain) return;
+    if (!domain) return;
     try {
       const response = await fetch('/api/web_manager/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          filename,
           domain,
-          root: siteType === 'static' ? root : '',
+          root: siteType !== 'proxy' ? root : '',
           port,
           proxy_port: siteType === 'proxy' ? (proxyPort || null) : null,
+          php_version: siteType === 'php' ? phpVersion : null,
+          php_modules: siteType === 'php' ? phpModules : null,
         }),
       });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to create site');
       }
-      setFilename('');
       setDomain('');
       setRoot('/var/www/html');
       setPort(80);
       setProxyPort('');
+      setPhpModules([]);
       setShowCreateModal(false);
       fetchSites();
     } catch (err) {
@@ -217,6 +249,14 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const handleToggleModule = (mod: string) => {
+    if (phpModules.includes(mod)) {
+      setPhpModules(phpModules.filter((m) => m !== mod));
+    } else {
+      setPhpModules([...phpModules, mod]);
+    }
+  };
+
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 transition-all duration-300 ${
@@ -236,7 +276,7 @@ export default function WebManagerDashboard() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs md:text-sm transition"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs md:text-sm transition shadow-lg"
           >
             <Icons.Plus className="w-4 h-4" /> {tr.createBtn}
           </button>
@@ -339,19 +379,19 @@ export default function WebManagerDashboard() {
 
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className={`p-6 rounded-2xl w-full max-w-lg shadow-2xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+          <div className={`p-6 rounded-2xl w-full max-w-lg shadow-2xl border flex flex-col h-[85vh] transition-all duration-300 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+            <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 flex-shrink-0 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
               <Icons.Plus className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.createBtn}
             </h3>
-            <div className="space-y-4">
+            <div className="space-y-4 flex-1 overflow-auto pr-1">
               <div>
                 <label className={`text-[10px] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                   {tr.serviceType}
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setSiteType('static')}
-                    className={`p-3 rounded-xl border font-bold text-xs flex flex-col items-center justify-center gap-1 transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
                       siteType === 'static'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
@@ -360,8 +400,18 @@ export default function WebManagerDashboard() {
                     <Icons.Globe className="w-4 h-4" /> {tr.staticService}
                   </button>
                   <button
+                    onClick={() => setSiteType('php')}
+                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
+                      siteType === 'php'
+                        ? 'bg-blue-600/10 border-blue-500 text-blue-500'
+                        : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
+                    }`}
+                  >
+                    <Icons.Code className="w-4 h-4" /> {tr.phpService}
+                  </button>
+                  <button
                     onClick={() => setSiteType('proxy')}
-                    className={`p-3 rounded-xl border font-bold text-xs flex flex-col items-center justify-center gap-1 transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
                       siteType === 'proxy'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
@@ -370,21 +420,6 @@ export default function WebManagerDashboard() {
                     <Icons.Shield className="w-4 h-4" /> {tr.proxyService}
                   </button>
                 </div>
-              </div>
-
-              <div>
-                <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {tr.confFilename}
-                </label>
-                <input
-                  type="text"
-                  value={filename}
-                  onChange={(e) => setFilename(e.target.value)}
-                  className={`w-full border px-4 py-2 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
-                  }`}
-                  placeholder="e.g. example.com"
-                />
               </div>
 
               <div>
@@ -402,6 +437,50 @@ export default function WebManagerDashboard() {
                 />
               </div>
 
+              {siteType === 'php' && (
+                <div className="space-y-3 p-3.5 border rounded-xl bg-slate-50/50 dark:bg-slate-950/20 dark:border-slate-800/80">
+                  <div>
+                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {tr.phpVersionLabel}
+                    </label>
+                    <select
+                      value={phpVersion}
+                      onChange={(e) => setPhpVersion(e.target.value)}
+                      className={`w-full border px-3 py-1.5 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-100 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      {availablePhpVersions.map((v) => (
+                        <option key={v} value={v}>PHP {v}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {tr.phpModulesLabel}
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5 max-h-32 overflow-auto p-1">
+                      {availablePhpModules.map((mod) => (
+                        <label key={mod} className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[10px] cursor-pointer transition select-none ${
+                          phpModules.includes(mod)
+                            ? 'bg-blue-600/10 border-blue-500/40 text-blue-400 font-bold'
+                            : isDark ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-white border-slate-100 text-slate-600'
+                        }`}>
+                          <input
+                            type="checkbox"
+                            checked={phpModules.includes(mod)}
+                            onChange={() => handleToggleModule(mod)}
+                            className="hidden"
+                          />
+                          {phpModules.includes(mod) ? <Icons.CheckSquare className="w-3.5 h-3.5 shrink-0" /> : <Icons.Square className="w-3.5 h-3.5 shrink-0" />}
+                          {mod}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -416,7 +495,7 @@ export default function WebManagerDashboard() {
                     }`}
                   />
                 </div>
-                {siteType === 'static' ? (
+                {siteType !== 'proxy' ? (
                   <div>
                     <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {tr.rootLabel}
@@ -448,7 +527,7 @@ export default function WebManagerDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 mt-6">
+            <div className="flex items-center justify-end gap-3 mt-6 flex-shrink-0 border-t pt-4 dark:border-slate-800">
               <button
                 onClick={() => setShowCreateModal(false)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
@@ -459,8 +538,8 @@ export default function WebManagerDashboard() {
               </button>
               <button
                 onClick={handleCreateSite}
-                disabled={!filename || !domain}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition"
+                disabled={!domain}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold disabled:opacity-50 transition shadow-md"
               >
                 {tr.create}
               </button>

@@ -12,43 +12,93 @@ IS_WINDOWS = os.name == 'nt'
 
 class SSLManager:
     @staticmethod
+    def get_cert_expiry(cert_path: Path) -> str:
+        """Read fullchain.pem to get expiration date string."""
+        if not cert_path.exists():
+            return "N/A"
+        try:
+            # Use openssl command to read expiration date
+            res = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", str(cert_path)], capture_output=True, text=True)
+            if res.returncode == 0:
+                line = res.stdout.strip()
+                if "notAfter=" in line:
+                    return line.split("notAfter=")[1].strip()
+        except Exception:
+            pass
+        return "N/A"
+
+    @staticmethod
     def get_certificates() -> List[Dict[str, Any]]:
         """List all domains and their active SSL certificates."""
+        domains = set()
+
         # Find all domains from sites-available
         sites_dir = Path("/etc/nginx/sites-available") if not IS_WINDOWS else Path("./test_nginx/sites-available")
-        if not sites_dir.exists():
-            return []
+        if sites_dir.exists():
+            for file in sites_dir.iterdir():
+                if file.is_file() and file.name not in ["default", "copanel"]:
+                    domains.add(file.name)
+
+        # Find all domains from /etc/letsencrypt/live
+        le_dir = Path("/etc/letsencrypt/live") if not IS_WINDOWS else Path("./test_nginx/letsencrypt/live")
+        if le_dir.exists():
+            for d_dir in le_dir.iterdir():
+                if d_dir.is_dir() and d_dir.name not in ["README", ".git"]:
+                    domains.add(d_dir.name)
 
         results = []
-        for file in sites_dir.iterdir():
-            if file.is_file():
-                domain = file.name
-                if domain in ["default", "copanel"]:
-                    continue
+        for domain in domains:
+            cert_path_letsencrypt = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem") if not IS_WINDOWS else Path(f"./test_nginx/letsencrypt/live/{domain}/fullchain.pem")
+            cert_path_custom = Path(f"/etc/nginx/ssl/{domain}/fullchain.pem") if not IS_WINDOWS else Path(f"./test_nginx/ssl/{domain}/fullchain.pem")
 
-                # Check if certbot or custom certificate exists
-                cert_path_letsencrypt = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem")
-                cert_path_custom = Path(f"/etc/nginx/ssl/{domain}/fullchain.pem")
+            ssl_active = False
+            ssl_type = "None"
+            expiry = "N/A"
 
-                ssl_active = False
-                ssl_type = "None"
-                expiry = "N/A"
+            # Check LetsEncrypt
+            if cert_path_letsencrypt.exists():
+                ssl_active = True
+                ssl_type = "Let's Encrypt"
+                expiry = SSLManager.get_cert_expiry(cert_path_letsencrypt)
+            # Check Custom
+            elif cert_path_custom.exists():
+                ssl_active = True
+                ssl_type = "Custom"
+                expiry = SSLManager.get_cert_expiry(cert_path_custom)
 
-                if cert_path_letsencrypt.exists():
-                    ssl_active = True
-                    ssl_type = "Let's Encrypt"
-                elif cert_path_custom.exists():
-                    ssl_active = True
-                    ssl_type = "Custom"
-
-                results.append({
-                    "domain": domain,
-                    "active": ssl_active,
-                    "type": ssl_type,
-                    "expiry": expiry
-                })
+            results.append({
+                "domain": domain,
+                "active": ssl_active,
+                "type": ssl_type,
+                "expiry": expiry
+            })
 
         return results
+
+    @staticmethod
+    def renew_certificates() -> dict:
+        """Renew all Let's Encrypt certificates using Certbot renew."""
+        if IS_WINDOWS:
+            return {"status": "success", "message": "All Let's Encrypt certificates successfully renewed (Mock Mode)."}
+
+        if not shutil.which("certbot"):
+            return {"status": "error", "message": "Certbot CLI is not installed on this server."}
+
+        try:
+            # Run certbot renew
+            res = subprocess.run(["sudo", "certbot", "renew", "--non-interactive"], capture_output=True, text=True)
+            if res.returncode != 0:
+                return {"status": "error", "message": f"Certbot renewal failed: {res.stderr or res.stdout}"}
+
+            # Reload Nginx after a successful renewal
+            if shutil.which("nginx"):
+                subprocess.run(["nginx", "-t"], shell=False, capture_output=True)
+                subprocess.run(["systemctl", "reload", "nginx"], shell=False, capture_output=True)
+
+            return {"status": "success", "message": "All Let's Encrypt certificates successfully renewed and Nginx reloaded."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
 
     @staticmethod
     def issue_certbot(domain: str, email: str) -> dict:

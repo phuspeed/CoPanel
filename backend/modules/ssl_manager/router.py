@@ -52,3 +52,17 @@ def install_custom_ssl(req: CustomSSLRequest) -> Dict[str, Any]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/renew")
+def renew_certificates() -> Dict[str, Any]:
+    """Renew all available Let's Encrypt certificates."""
+    try:
+        res = SSLManager.renew_certificates()
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res["message"])
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
