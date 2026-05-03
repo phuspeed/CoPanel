@@ -6,11 +6,7 @@ import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
-interface SyncRule {
-  local_path: string;
-  remote_path: string;
-  type: 'database' | 'static_files';
-}
+
 
 export default function BackupAndSyncDashboard() {
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
@@ -125,8 +121,6 @@ export default function BackupAndSyncDashboard() {
     : `${window.location.origin}/backup-manager`;
 
   // States for interactive cron time
-  const [cronHour, setCronHour] = useState<string>('0');
-  const [cronMinute, setCronMinute] = useState<string>('0');
 
   // Directory picker modal state
   const [dirPickerOpen, setDirPickerOpen] = useState<boolean>(false);
@@ -136,6 +130,7 @@ export default function BackupAndSyncDashboard() {
 
   // Connection status state
   const [connTesting, setConnTesting] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'rclone' | 'scheduled' | 'realtime'>('rclone');
 
   const openDirectoryPicker = async (target: 'source_dir' | 'local_path', initialPath?: string) => {
     setActivePickerTarget(target);
@@ -183,21 +178,7 @@ export default function BackupAndSyncDashboard() {
     fetchDirs(parentPath);
   };
 
-  useEffect(() => {
-    if (config.cron_expression) {
-      const parts = config.cron_expression.split(' ');
-      if (parts.length >= 2 && !isNaN(Number(parts[1])) && !isNaN(Number(parts[0]))) {
-        setCronHour(parts[1]);
-        setCronMinute(parts[0]);
-      }
-    }
-  }, [config.cron_expression]);
 
-  const updateCronTiming = (h: string, m: string) => {
-    setCronHour(h);
-    setCronMinute(m);
-    setConfig({ ...config, cron_expression: `${m} ${h} * * *` });
-  };
 
   const handleTestConnection = async () => {
     setConnTesting(true);
@@ -328,25 +309,55 @@ export default function BackupAndSyncDashboard() {
     setConfig({ ...config, sync_rules: rules });
   };
 
-  const handleSetupCron = async () => {
+  // Multiple Backup Task Handlers
+  const [taskSourceDir, setTaskSourceDir] = useState<string>('');
+  const [taskRcloneFolder, setTaskRcloneFolder] = useState<string>('CoPanel-Backups');
+  const [taskHour, setTaskHour] = useState<string>('0');
+  const [taskMinute, setTaskMinute] = useState<string>('0');
+
+  const handleAddTask = () => {
+    if (!taskSourceDir || !taskRcloneFolder) return;
+    const currentTasks = config.backup_tasks ? [...config.backup_tasks] : [];
+    const newTask = {
+      id: 'task_' + Math.random().toString(36).substr(2, 6),
+      source_dir: taskSourceDir,
+      rclone_folder: taskRcloneFolder,
+      cron_expression: `${taskMinute} ${taskHour} * * *`
+    };
+    currentTasks.push(newTask);
+    setConfig({ ...config, backup_tasks: currentTasks });
+    setTaskSourceDir('');
+    setTaskRcloneFolder('CoPanel-Backups');
+    setTaskHour('0');
+    setTaskMinute('0');
+  };
+
+  const handleDeleteTask = (idx: number) => {
+    const currentTasks = config.backup_tasks ? [...config.backup_tasks] : [];
+    currentTasks.splice(idx, 1);
+    setConfig({ ...config, backup_tasks: currentTasks });
+  };
+
+  const handleRunTaskNow = async (id: string) => {
     setMsg(null);
     try {
-      const res = await fetch('/api/backup_manager/cronjobs', {
+      const res = await fetch('/api/backup_manager/backup-task-now', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ cron_expression: config.cron_expression })
+        body: JSON.stringify({ id })
       });
-      if (res.ok) {
-        setMsg({ text: language === 'vi' ? '✓ Đăng ký tiến trình Cron thành công!' : '✓ Successfully scheduled cron timer!', isError: false });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setMsg({ text: data.message, isError: false });
         fetchConfigAndCrons();
       } else {
-        setMsg({ text: 'Failed to create crontab timer.', isError: true });
+        setMsg({ text: data.message || 'Backup execution failed.', isError: true });
       }
     } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
+      setMsg({ text: 'Error initiating manual backup task.', isError: true });
     }
   };
 
@@ -364,25 +375,6 @@ export default function BackupAndSyncDashboard() {
       }
     } catch {
       setMsg({ text: 'Error connecting to backend.', isError: true });
-    }
-  };
-
-  const handleBackupNow = async () => {
-    setMsg({ text: language === 'vi' ? 'Đang tạo và đồng bộ sao lưu, vui lòng chờ...' : 'Backing up now, please wait...', isError: false });
-    try {
-      const res = await fetch('/api/backup_manager/backup-now', {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMsg({ text: `✓ ${data.message}`, isError: false });
-        fetchConfigAndCrons();
-      } else {
-        setMsg({ text: data.detail || 'Backup failed.', isError: true });
-      }
-    } catch {
-      setMsg({ text: 'Error invoking backup.', isError: true });
     }
   };
 
@@ -459,106 +451,59 @@ export default function BackupAndSyncDashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-        {/* Backup configuration */}
-        <form onSubmit={handleSaveConfig} className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 h-fit ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-            <Icons.Settings className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-            {tr.configsTitle}
-          </h3>
+      {/* 3-Tab switcher */}
+      <div className="flex border-b mb-6 select-none overflow-x-auto gap-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab('rclone')}
+          className={`flex items-center gap-2 px-6 py-3 text-xs font-bold transition duration-200 border-b-2 shrink-0 ${
+            activeTab === 'rclone'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50/20'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+          }`}
+        >
+          <Icons.Globe className="w-4 h-4" />
+          {language === 'vi' ? '1. Cấu hình Rclone' : '1. Rclone Setup'}
+        </button>
 
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.localPathLabel}</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={config.source_dir || ''}
-                  onChange={(e) => setConfig({ ...config, source_dir: e.target.value })}
-                  placeholder="/var/www/html"
-                  required
-                  className={`flex-1 border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => openDirectoryPicker('source_dir', config.source_dir)}
-                  className={`px-4 py-2 text-xs border rounded-xl flex items-center gap-1 hover:border-indigo-500 font-medium transition duration-200 ${
-                    isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-indigo-600'
-                  }`}
-                >
-                  <Icons.Folder className="w-4 h-4" />
-                  {language === 'vi' ? 'Chọn' : 'Browse'}
-                </button>
-              </div>
-              <span className={`text-[10px] block leading-tight ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.localPathDesc}</span>
-            </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('scheduled')}
+          className={`flex items-center gap-2 px-6 py-3 text-xs font-bold transition duration-200 border-b-2 shrink-0 ${
+            activeTab === 'scheduled'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50/20'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+          }`}
+        >
+          <Icons.Calendar className="w-4 h-4" />
+          {language === 'vi' ? '2. Sao lưu định kỳ (Local)' : '2. Scheduled Backups'}
+        </button>
 
-            <div className="space-y-1">
-              <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.cronLabel}</label>
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {language === 'vi' ? 'Giờ' : 'Hour'}:
-                  </span>
-                  <select
-                    value={cronHour}
-                    onChange={(e) => updateCronTiming(e.target.value, cronMinute)}
-                    className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
-                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                    }`}
-                  >
-                    {Array.from({ length: 24 }).map((_, i) => (
-                      <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
-                    ))}
-                  </select>
-                </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('realtime')}
+          className={`flex items-center gap-2 px-6 py-3 text-xs font-bold transition duration-200 border-b-2 shrink-0 ${
+            activeTab === 'realtime'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50/20'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+          }`}
+        >
+          <Icons.Eye className="w-4 h-4" />
+          {language === 'vi' ? '3. Đồng bộ thời gian thực' : '3. Real-time Sync'}
+        </button>
+      </div>
 
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {language === 'vi' ? 'Phút' : 'Minute'}:
-                  </span>
-                  <select
-                    value={cronMinute}
-                    onChange={(e) => updateCronTiming(cronHour, e.target.value)}
-                    className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
-                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                    }`}
-                  >
-                    {Array.from({ length: 60 }).map((_, i) => (
-                      <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
-                    ))}
-                  </select>
-                </div>
+      <div>
+        {activeTab === 'rclone' && (
+          <form onSubmit={handleSaveConfig} className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 h-fit max-w-xl mx-auto ${
+            isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
+          }`}>
+            <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+              <Icons.Globe className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+              {tr.cloudTitle}
+            </h3>
 
-                <div className="flex items-center gap-2 flex-1 min-w-[120px]">
-                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    Cron:
-                  </span>
-                  <input
-                    type="text"
-                    value={config.cron_expression || ''}
-                    onChange={(e) => setConfig({ ...config, cron_expression: e.target.value })}
-                    placeholder="0 0 * * *"
-                    className={`w-full border rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
-                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
-                    }`}
-                  />
-                </div>
-              </div>
-              <span className={`text-[10px] block leading-tight ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.cronDesc}</span>
-            </div>
-
-            {/* Cloud Storage section */}
-            <div className={`border-t pt-4 space-y-4 ${isDark ? 'border-slate-800/80' : 'border-slate-100'}`}>
-              <h4 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>
-                <Icons.Globe className="w-3.5 h-3.5" /> {tr.cloudTitle}
-              </h4>
-
-              {/* Step 1: Callback URI */}
+            <div className="space-y-4">
               <div className={`border p-4 rounded-xl space-y-3 ${isDark ? 'bg-indigo-950/20 border-indigo-900/30' : 'bg-indigo-50/40 border-indigo-100'}`}>
                 <h5 className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
                   <Icons.ExternalLink className="w-3.5 h-3.5 shrink-0" />
@@ -651,54 +596,217 @@ export default function BackupAndSyncDashboard() {
                   {language === 'vi' ? 'Kiểm tra kết nối' : 'Test Connection'}
                 </button>
               </div>
+
+              <button
+                type="submit"
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl font-bold text-xs transition-all shadow-md"
+              >
+                <Icons.Save className="w-4 h-4" />
+                {language === 'vi' ? 'Lưu cấu hình Rclone' : 'Save Rclone Configuration'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {activeTab === 'scheduled' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+            <div className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 transition duration-300 h-fit ${
+              isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
+            }`}>
+              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                <Icons.Plus className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                {language === 'vi' ? 'Tạo tác vụ sao lưu mới' : 'New Scheduled Backup Task'}
+              </h3>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    {language === 'vi' ? 'Thư mục nguồn cần sao lưu' : 'Local Directory to Back up'}
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={taskSourceDir}
+                      onChange={(e) => setTaskSourceDir(e.target.value)}
+                      placeholder="/var/www/html"
+                      className={`flex-1 border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
+                        isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => openDirectoryPicker('source_dir', taskSourceDir)}
+                      className={`px-4 py-2 text-xs border rounded-xl flex items-center gap-1 hover:border-indigo-500 font-medium transition duration-200 ${
+                        isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-indigo-600'
+                      }`}
+                    >
+                      <Icons.Folder className="w-4 h-4" />
+                      {language === 'vi' ? 'Chọn' : 'Browse'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    {language === 'vi' ? 'Thư mục đích trên Rclone (Cloud)' : 'Google Drive Remote Folder'}
+                  </label>
+                  <input
+                    type="text"
+                    value={taskRcloneFolder}
+                    onChange={(e) => setTaskRcloneFolder(e.target.value)}
+                    placeholder="CoPanel-Backups/site1"
+                    className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                      isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                    }`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    {language === 'vi' ? 'Lựa chọn thời gian chạy định kỳ' : 'Cron Timing Pattern'}
+                  </label>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{language === 'vi' ? 'Giờ' : 'Hour'}:</span>
+                      <select
+                        value={taskHour}
+                        onChange={(e) => setTaskHour(e.target.value)}
+                        className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {Array.from({ length: 24 }).map((_, i) => (
+                          <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{language === 'vi' ? 'Phút' : 'Minute'}:</span>
+                      <select
+                        value={taskMinute}
+                        onChange={(e) => setTaskMinute(e.target.value)}
+                        className={`border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 font-mono transition-all ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50/50 border-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {Array.from({ length: 60 }).map((_, i) => (
+                          <option key={i} value={i}>{i.toString().padStart(2, '0')}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 flex-wrap pt-2">
+                  <button
+                    type="button"
+                    onClick={handleAddTask}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs transition-all shadow"
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {language === 'vi' ? 'Thêm tác vụ' : 'Add Task'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveConfig}
+                    className={`px-5 py-3 border font-bold text-xs rounded-xl flex items-center gap-2 transition duration-200 ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-50 border-slate-200 text-slate-700 hover:text-indigo-600'
+                    }`}
+                  >
+                    <Icons.Save className="w-4 h-4" />
+                    {language === 'vi' ? 'Lưu' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* List of active scheduled tasks */}
+            <div className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 transition duration-300 h-fit ${
+              isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
+            }`}>
+              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                <Icons.List className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                {language === 'vi' ? 'Tác vụ sao lưu định kỳ' : 'Backup Tasks'}
+              </h3>
+              {config.backup_tasks && config.backup_tasks.length > 0 ? (
+                <div className="space-y-3">
+                  {config.backup_tasks.map((t: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className={`p-4 rounded-xl border flex flex-wrap items-center justify-between gap-4 transition duration-200 ${
+                        isDark ? 'bg-slate-950 border-slate-800/80 hover:border-slate-700' : 'bg-slate-50/50 border-slate-200/80 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="space-y-1 flex-1 min-w-[200px]">
+                        <div className={`text-xs font-bold font-mono break-all leading-tight ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                          {t.source_dir}
+                        </div>
+                        <div className={`text-[10px] leading-tight flex items-center gap-3 mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          <span className="flex items-center gap-1">
+                            <Icons.Folder className="w-3.5 h-3.5" />
+                            {t.rclone_folder}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Icons.Calendar className="w-3.5 h-3.5" />
+                            {t.cron_expression}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleRunTaskNow(t.id)}
+                          className={`p-2 border rounded-xl transition ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-indigo-400 hover:text-indigo-300' : 'bg-white hover:bg-indigo-50 border-slate-200 text-indigo-600 hover:text-indigo-700'
+                          }`}
+                          title={language === 'vi' ? 'Chạy backup ngay' : 'Trigger now'}
+                        >
+                          <Icons.Play className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTask(idx)}
+                          className={`p-2 border rounded-xl transition ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400 hover:text-red-300' : 'bg-white hover:bg-red-50 border-slate-200 text-red-600 hover:text-red-700'
+                          }`}
+                          title={language === 'vi' ? 'Xóa tác vụ' : 'Delete task'}
+                        >
+                          <Icons.Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={`text-xs text-center border p-4 rounded-xl leading-relaxed ${isDark ? 'text-slate-500 border-slate-800/40 bg-slate-950/20' : 'text-slate-400 border-slate-100 bg-slate-50/50'}`}>
+                  {language === 'vi' ? 'Chưa có tác vụ sao lưu nào được thiết lập.' : 'No scheduled backup tasks found.'}
+                </div>
+              )}
             </div>
           </div>
+        )}
 
-          <div className={`flex flex-wrap items-center gap-2 pt-2 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-            <button
-              type="submit"
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-lg ${
-                isDark ? 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20' : 'bg-indigo-600 hover:bg-indigo-500'
-              }`}
-            >
-              <Icons.Save className="w-3.5 h-3.5" /> {tr.saveConfigBtn}
-            </button>
-            <button
-              type="button"
-              onClick={handleBackupNow}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-lg ${
-                isDark ? 'bg-green-600 hover:bg-green-500 hover:shadow-green-500/20' : 'bg-green-600 hover:bg-green-500'
-              }`}
-            >
-              <Icons.Zap className="w-3.5 h-3.5" /> {tr.syncNowBtn}
-            </button>
-          </div>
-        </form>
-
-        {/* Sync rules creator (Real-time Watcher) */}
-        <div className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 h-fit flex flex-col justify-between ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <div className="space-y-4">
-            <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-              <Icons.Eye className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-              {tr.watcherTitle}
-            </h3>
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherDesc}</p>
-
-            <div className={`border p-4 rounded-xl space-y-3 transition duration-200 ${
-              isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/50 border-slate-100'
+        {activeTab === 'realtime' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+            <div className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 transition duration-300 h-fit ${
+              isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
             }`}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                <Icons.Eye className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                {tr.watcherTitle}
+              </h3>
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherDesc}</p>
+
+              <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherLocal}</label>
+                  <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                    {tr.watcherLocal}
+                  </label>
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={localPath}
                       onChange={(e) => setLocalPath(e.target.value)}
                       placeholder="e.g. /home/Docker/saleco"
-                      className={`flex-1 border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-all font-mono ${
+                      className={`flex-1 border rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-all font-mono ${
                         isDark ? 'bg-slate-900/60 border-slate-800/60 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
                       }`}
                     />
@@ -713,8 +821,11 @@ export default function BackupAndSyncDashboard() {
                     </button>
                   </div>
                 </div>
+
                 <div className="space-y-1">
-                  <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherRemote}</label>
+                  <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                    {tr.watcherRemote}
+                  </label>
                   <input
                     type="text"
                     value={remotePath}
@@ -725,94 +836,97 @@ export default function BackupAndSyncDashboard() {
                     }`}
                   />
                 </div>
-              </div>
 
-              <div className="space-y-1">
-                <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.watcherMode}</label>
-                <select
-                  value={ruleType}
-                  onChange={(e) => setRuleType(e.target.value as any)}
-                  className={`w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
-                    isDark ? 'bg-slate-900/60 border-slate-800/60 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
-                  }`}
-                >
-                  <option value="static_files">{tr.modeStatic}</option>
-                  <option value="database">{tr.modeDb}</option>
-                </select>
-              </div>
+                <div className="space-y-1">
+                  <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                    {tr.watcherMode}
+                  </label>
+                  <select
+                    value={ruleType}
+                    onChange={(e) => setRuleType(e.target.value as any)}
+                    className={`w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-all ${
+                      isDark ? 'bg-slate-900/60 border-slate-800/60 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    <option value="static_files">{tr.modeStatic}</option>
+                    <option value="database">{tr.modeDb}</option>
+                  </select>
+                </div>
 
-              <button
-                type="button"
-                onClick={handleAddRule}
-                disabled={!localPath || !remotePath}
-                className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-lg disabled:opacity-40 ${
-                  isDark ? 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20' : 'bg-indigo-600 hover:bg-indigo-500'
-                }`}
-              >
-                <Icons.Plus className="w-3.5 h-3.5" /> {tr.addWatcherBtn}
-              </button>
+                <div className="flex gap-2 flex-wrap pt-2">
+                  <button
+                    type="button"
+                    onClick={handleAddRule}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs transition-all shadow"
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {tr.addWatcherBtn}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveConfig}
+                    className={`px-5 py-3 border font-bold text-xs rounded-xl flex items-center gap-2 transition duration-200 ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-indigo-400' : 'bg-slate-50 border-slate-200 text-slate-700 hover:text-indigo-600'
+                    }`}
+                  >
+                    <Icons.Save className="w-4 h-4" />
+                    {language === 'vi' ? 'Lưu' : 'Save'}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {/* Existing rules list */}
-            {config.sync_rules && config.sync_rules.length > 0 ? (
-              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                {config.sync_rules.map((rule: SyncRule, idx: number) => (
-                  <div key={idx} className={`flex items-center justify-between p-3 border rounded-xl text-xs gap-3 ${
-                    isDark ? 'bg-slate-950/60 border-slate-800/60' : 'bg-slate-50 border-slate-100'
-                  }`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1 font-mono font-bold break-all text-indigo-500 dark:text-indigo-300">
-                        {rule.local_path}
-                      </div>
-                      <div className={`font-mono flex items-center gap-1 break-all ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-                        <Icons.ArrowRight className="w-3 h-3 shrink-0" /> {rule.remote_path}
-                      </div>
-                      <span className={`text-[10px] font-semibold mt-1 block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                        {rule.type === 'database' ? 'DB/WAL Mode (--inplace)' : 'Static Mode (--size-only)'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteRule(idx)}
-                      className={`p-2 rounded-xl border transition shrink-0 ${
-                        isDark ? 'bg-slate-900 hover:bg-red-950/60 border-slate-800 hover:border-red-900/60 text-red-400' : 'bg-white hover:bg-red-50 border-slate-200 hover:border-red-200 text-red-600'
+            {/* List of active synchronization rules */}
+            <div className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-4 transition duration-300 h-fit flex flex-col justify-between ${
+              isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
+            }`}>
+              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                <Icons.List className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                {language === 'vi' ? 'Danh sách quy tắc đồng bộ' : 'Sync Rules'}
+              </h3>
+              {config.sync_rules && config.sync_rules.length > 0 ? (
+                <div className="space-y-3">
+                  {config.sync_rules.map((r: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className={`p-4 rounded-xl border flex flex-wrap items-center justify-between gap-4 transition duration-200 ${
+                        isDark ? 'bg-slate-950 border-slate-800/80 hover:border-slate-700' : 'bg-slate-50/50 border-slate-200/80 hover:border-slate-300'
                       }`}
-                      title="Remove Rule"
                     >
-                      <Icons.Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
-                isDark ? 'text-slate-500 border-slate-800/40 bg-slate-950/20' : 'text-slate-400 border-slate-100 bg-slate-50/50'
-              }`}>
-                {tr.noRules}
-              </div>
-            )}
+                      <div className="space-y-1 flex-1 min-w-[200px]">
+                        <div className={`text-xs font-bold font-mono break-all leading-tight ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                          {r.local_path}
+                        </div>
+                        <div className={`text-[10px] leading-tight flex items-center gap-3 mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          <span className="flex items-center gap-1">
+                            <Icons.Globe className="w-3.5 h-3.5" />
+                            {r.remote_path}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Icons.Cpu className="w-3.5 h-3.5" />
+                            {r.type === 'database' ? tr.modeDb : tr.modeStatic}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteRule(idx)}
+                        className={`p-2 border rounded-xl transition shrink-0 ${
+                          isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-900/40 text-red-400' : 'bg-white hover:bg-red-50 border-slate-200 hover:border-red-200 text-red-600'
+                        }`}
+                      >
+                        <Icons.Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={`text-xs text-center border p-4 rounded-xl leading-relaxed ${isDark ? 'text-slate-500 border-slate-800/40 bg-slate-950/20' : 'text-slate-400 border-slate-100 bg-slate-50/50'}`}>
+                  {tr.noRules}
+                </div>
+              )}
+            </div>
           </div>
-
-          <div className={`flex flex-wrap items-center gap-2 pt-4 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-            <button
-              type="button"
-              onClick={handleSetupCron}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-lg ${
-                isDark ? 'bg-blue-600 hover:bg-blue-500 hover:shadow-blue-500/20' : 'bg-blue-600 hover:bg-blue-500'
-              }`}
-            >
-              <Icons.Clock className="w-3.5 h-3.5" /> {language === 'vi' ? 'Lên lịch Cron' : 'Register Cron'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteCrons}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 font-bold border rounded-xl transition-all ${
-                isDark ? 'bg-red-950/40 hover:bg-red-900/40 border-red-900/40 text-red-400' : 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600'
-              }`}
-            >
-              <Icons.Trash2 className="w-3.5 h-3.5" /> {tr.clearCrons}
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Background cron processes and Disk storage usage */}

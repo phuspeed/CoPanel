@@ -30,6 +30,7 @@ class BackupManager:
             "google_drive_client_secret": "",
             "google_drive_refresh_token": "",
             "cron_expression": "0 0 * * *",
+            "backup_tasks": [],
             "sync_rules": []
         }
 
@@ -43,6 +44,8 @@ class BackupManager:
             
             # Generate the watcher script and restart its systemd daemon
             BackupManager.generate_rclone_watcher()
+            # Register cron jobs
+            BackupManager.setup_cron()
             return True
         except Exception:
             return False
@@ -250,18 +253,31 @@ WantedBy=multi-user.target
         return False
 
     @staticmethod
-    def setup_cron(cron_expr: str) -> bool:
-        """Adds or updates backup crontab timing schedule."""
-        cron_command = f"{cron_expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupManager; BackupManager.backup_and_sync()' >> /opt/copanel/logs/backup.log 2>&1"
+    def setup_cron(cron_expr: str = "") -> bool:
+        """Saves all backup tasks into crontab."""
         try:
+            cfg = BackupManager.load_config()
+            tasks = cfg.get("backup_tasks", [])
+            
             res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
             current_lines = []
             if res.returncode == 0:
-                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line]
-            
-            current_lines.append(cron_command)
+                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line and "run_backup_task" not in line]
+
+            if cfg.get("source_dir") and cfg.get("cron_expression"):
+                expr = cfg.get("cron_expression")
+                cmd = f"{expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupManager; BackupManager.backup_and_sync()' >> /opt/copanel/logs/backup.log 2>&1"
+                current_lines.append(cmd)
+
+            for t in tasks:
+                t_id = t.get("id")
+                expr = t.get("cron_expression", "0 0 * * *")
+                if not t_id or not expr:
+                    continue
+                cmd = f"{expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupManager; BackupManager.run_backup_task(\"{t_id}\")' >> /opt/copanel/logs/backup_{t_id}.log 2>&1"
+                current_lines.append(cmd)
+
             new_crontab = "\n".join(current_lines) + "\n"
-            
             subprocess.run(["crontab", "-"], input=new_crontab, text=True)
             return True
         except Exception:
@@ -273,9 +289,58 @@ WantedBy=multi-user.target
         try:
             res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
             if res.returncode == 0:
-                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line]
+                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line and "run_backup_task" not in line]
                 new_crontab = "\n".join(current_lines) + "\n"
                 subprocess.run(["crontab", "-"], input=new_crontab, text=True)
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def run_backup_task(task_id: str) -> dict:
+        """Executes a specific backup task by ID from backup_config.json."""
+        cfg = BackupManager.load_config()
+        tasks = cfg.get("backup_tasks", [])
+        task = next((t for t in tasks if t.get("id") == task_id), None)
+        
+        if not task:
+            return {"status": "error", "message": f"Backup task {task_id} not found."}
+            
+        src = task.get("source_dir")
+        if not src or not Path(src).exists():
+            return {"status": "error", "message": f"Target folder {src} does not exist."}
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = Path("/opt/copanel/backups")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        
+        zip_path = backup_dir / f"backup_{task_id}_{timestamp}.zip"
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                source_path = Path(src)
+                for file_path in source_path.rglob('*'):
+                    if file_path.is_file():
+                        zipf.write(file_path, file_path.relative_to(source_path))
+                        
+            remote = cfg.get("rclone_remote_name", "gdrive")
+            rclone_folder = task.get("rclone_folder", "CoPanel-Backups")
+            
+            if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
+                rc_conf = Path("/root/.config/rclone/rclone.conf")
+                rc_conf.parent.mkdir(parents=True, exist_ok=True)
+                
+                conf_data = f"[{remote}]\ntype = drive\n"
+                if cfg.get("google_drive_client_id"):
+                    conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
+                if cfg.get("google_drive_client_secret"):
+                    conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
+                if cfg.get("google_drive_refresh_token"):
+                    conf_data += f"token = {cfg.get('google_drive_refresh_token')}\n"
+                
+                rc_conf.write_text(conf_data)
+                subprocess.run(["rclone", "copy", str(zip_path), f"{remote}:{rclone_folder}"], timeout=300)
+                
+            return {"status": "success", "file": str(zip_path), "message": f"Task {task_id} backup generated and synced successfully!"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}

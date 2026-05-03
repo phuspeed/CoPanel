@@ -166,3 +166,18 @@ def test_connection() -> Dict[str, Any]:
             return {"status": "error", "message": res.stderr.strip() or "Rclone test failed."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/backup-task-now")
+def run_backup_task_now(req: dict) -> Dict[str, Any]:
+    """Trigger a specific multiple backup task immediately."""
+    from .logic import BackupManager
+    try:
+        t_id = req.get("id")
+        if not t_id:
+            raise HTTPException(status_code=400, detail="Task ID is required.")
+        res = BackupManager.run_backup_task(t_id)
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res["message"])
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
