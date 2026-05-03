@@ -423,7 +423,7 @@ export default function BackupAndSyncDashboard() {
             isDark ? 'bg-gradient-to-r from-indigo-400 via-purple-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
           }`}>
             <Icons.Cloud className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-            {tr.title}
+            {tr.title} <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-semibold tracking-wider">v1.1 - Premium Tabbed</span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
             {tr.desc}
