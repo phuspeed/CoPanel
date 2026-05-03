@@ -40,6 +40,28 @@ def init_db():
     """)
     conn.commit()
 
+    import os
+    env_admin_pass = os.environ.get("ADMIN_PASSWORD")
+    if env_admin_pass:
+        admin_pass_hash = hash_password(env_admin_pass)
+        cursor.execute("SELECT id FROM users WHERE username = 'admin' OR role = 'superadmin';")
+        admin_row = cursor.fetchone()
+        if admin_row:
+            cursor.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (admin_pass_hash, admin_row["id"])
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role, permitted_modules, permitted_folders) VALUES (?, ?, ?, ?, ?)",
+                ("admin", admin_pass_hash, "superadmin", "[\"all\"]", "[\"/\"]")
+            )
+        conn.commit()
+        PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PWD_PATH.write_text(env_admin_pass)
+        conn.close()
+        return
+
     # Seed default superadmin
     cursor.execute("SELECT id, username, password_hash FROM users WHERE role = 'superadmin';")
     rows = cursor.fetchall()
@@ -168,6 +190,21 @@ def delete_user(user_id: int) -> bool:
     conn.commit()
     rows_affected = cursor.rowcount
     conn.close()
+    return rows_affected > 0
+
+
+def change_admin_password(new_password: str) -> bool:
+    """Changes the superadmin password directly in the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    pwd_hash = hash_password(new_password)
+    cursor.execute("UPDATE users SET password_hash = ? WHERE username = 'admin' OR role = 'superadmin'", (pwd_hash,))
+    conn.commit()
+    rows_affected = cursor.rowcount
+    conn.close()
+    
+    PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PWD_PATH.write_text(new_password)
     return rows_affected > 0
 
 

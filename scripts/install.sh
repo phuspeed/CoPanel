@@ -241,9 +241,11 @@ setup_user_and_dirs() {
                 --exclude "venv" \
                 --exclude "node_modules" \
                 --exclude ".git" \
+                --exclude "config" \
+                --exclude "backend/data" \
                 "$REPO_DIR/" "$CoPanel_HOME/"
         else
-            cp -a "$REPO_DIR"/. "$CoPanel_HOME"/
+            cp -an "$REPO_DIR"/. "$CoPanel_HOME"/
         fi
     fi
 
@@ -281,7 +283,7 @@ setup_backend() {
 
      # Pre-initialize database to immediately create initial admin user & password file
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
-    sudo -u "$CoPanel_USER" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
+    sudo -u "$CoPanel_USER" ADMIN_PASSWORD="$ADMIN_PASSWORD" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
     
     # Final ownership check
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
