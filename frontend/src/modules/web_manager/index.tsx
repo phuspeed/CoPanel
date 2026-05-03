@@ -893,14 +893,20 @@ export default function WebManagerDashboard() {
                 <span className="flex items-center gap-2">
                   <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.dbTitle}
                 </span>
-                <button
-                  onClick={() => window.open(`http://${window.location.hostname}/phpmyadmin`, '_blank')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-xl border text-white transition-all shadow-sm ${
-                    isDark ? 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500' : 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500'
-                  }`}
-                >
-                  <Icons.ExternalLink className="w-3.5 h-3.5" /> {tr.openPmaBtn}
-                </button>
+                <div className="flex gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => window.open(`http://${window.location.hostname}/phpmyadmin`, '_blank')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-xl border text-white transition-all shadow-sm bg-indigo-600 border-indigo-500 hover:bg-indigo-500`}
+                  >
+                    <Icons.ExternalLink className="w-3.5 h-3.5" /> Port 80
+                  </button>
+                  <button
+                    onClick={() => window.open(`http://${window.location.host}/phpmyadmin`, '_blank')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-xl border text-white transition-all shadow-sm bg-blue-600 border-blue-500 hover:bg-blue-500`}
+                  >
+                    <Icons.ExternalLink className="w-3.5 h-3.5" /> Port 8686
+                  </button>
+                </div>
               </h3>
               <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
             </div>

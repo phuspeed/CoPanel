@@ -284,6 +284,22 @@ server {
         try_files $uri $uri/ /index.html;
     }
     
+    # phpMyAdmin direct configuration
+    location /phpmyadmin {
+        root /usr/share/;
+        index index.php index.html index.htm;
+        location ~ ^/phpmyadmin/(.+\.php)$ {
+            try_files $uri =404;
+            root /usr/share/;
+            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+        location ~* ^/phpmyadmin/(.+\.(jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
+            root /usr/share/;
+        }
+    }
+    
     # API endpoints
     location /api/ {
         proxy_pass http://copanel_backend;
