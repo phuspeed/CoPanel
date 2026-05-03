@@ -75,6 +75,12 @@ check_os() {
     
     . /etc/os-release
     log_info "Detected OS: $ID $VERSION_ID"
+
+    # Check for unsupported CentOS 7 EOL
+    if [[ "$ID" == "centos" && "$VERSION_ID" == "7" ]] || [[ "$ID" == "centos" && "$VERSION" =~ ^7 ]]; then
+        log_error "CentOS 7 reached End-of-Life (EOL) and is no longer supported by CoPanel. Please use a modern Linux distribution (Ubuntu 20+, Debian 11+, Rocky Linux 8+, AlmaLinux 8+)."
+        exit 1
+    fi
 }
 
 command_exists() {
@@ -101,14 +107,6 @@ install_dependencies() {
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
     elif command_exists yum; then
-        if [ -f /etc/redhat-release ] && grep -q "release 7" /etc/redhat-release; then
-            log_info "CentOS 7 EOL detected. Switching to CentOS Vault repositories..."
-            sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
-            sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
-            sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
-            yum clean all || true
-            yum makecache || true
-        fi
         yum install -y \
             python3 python3-pip \
             nginx \
