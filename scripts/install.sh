@@ -308,6 +308,7 @@ setup_frontend() {
         
         # Build frontend
         log_info "Building frontend..."
+        rm -rf dist
         npm run build
         
         log_success "Frontend built and ready"
@@ -348,6 +349,7 @@ server {
     location / {
         root /opt/copanel/frontend/dist;
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
     }
     
     # phpMyAdmin direct configuration
