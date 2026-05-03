@@ -166,10 +166,55 @@ setup_user_and_dirs() {
     
     # Check if running via one-liner (curl/wget), clone from GitHub directly
     if [[ ! -d "$REPO_DIR/backend" ]] || [[ ! -f "$REPO_DIR/backend/main.py" ]]; then
-        log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
-        rm -rf "$CoPanel_HOME"
-        git clone https://github.com/phuspeed/CoPanel.git "$CoPanel_HOME"
-        REPO_DIR="$CoPanel_HOME"
+        if [[ -d "$CoPanel_HOME/.git" ]]; then
+            log_info "CoPanel already exists with Git repository. Updating codebase..."
+            cd "$CoPanel_HOME"
+            git fetch --all || true
+            git reset --hard origin/main || true
+            REPO_DIR="$CoPanel_HOME"
+        else
+            log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
+            # Let's preserve specific data directories/files if they exist
+            TEMP_BACKUP=$(mktemp -d)
+            if [[ -d "$CoPanel_HOME/backend/data" ]]; then
+                cp -a "$CoPanel_HOME/backend/data" "$TEMP_BACKUP/" || true
+            fi
+            if [[ -f "$CoPanel_HOME/backend/users.json" ]]; then
+                cp -a "$CoPanel_HOME/backend/users.json" "$TEMP_BACKUP/" || true
+            fi
+            if [[ -f "$CoPanel_HOME/config/backup_config.json" ]]; then
+                cp -a "$CoPanel_HOME/config/backup_config.json" "$TEMP_BACKUP/" || true
+            fi
+            # Add any other potential db files
+            for db in "$CoPanel_HOME"/backend/*.db; do
+                if [[ -f "$db" ]]; then
+                    cp -a "$db" "$TEMP_BACKUP/" || true
+                fi
+            done
+            
+            rm -rf "$CoPanel_HOME"
+            git clone https://github.com/phuspeed/CoPanel.git "$CoPanel_HOME"
+            REPO_DIR="$CoPanel_HOME"
+            
+            # Restore the backed up data if any
+            if [[ -d "$TEMP_BACKUP/data" ]]; then
+                mkdir -p "$CoPanel_HOME/backend/data"
+                cp -a "$TEMP_BACKUP/data"/. "$CoPanel_HOME/backend/data/" || true
+            fi
+            if [[ -f "$TEMP_BACKUP/users.json" ]]; then
+                cp -a "$TEMP_BACKUP/users.json" "$CoPanel_HOME/backend/" || true
+            fi
+            if [[ -f "$TEMP_BACKUP/backup_config.json" ]]; then
+                mkdir -p "$CoPanel_HOME/config"
+                cp -a "$TEMP_BACKUP/backup_config.json" "$CoPanel_HOME/config/" || true
+            fi
+            for db in "$TEMP_BACKUP"/*.db; do
+                if [[ -f "$db" ]]; then
+                    cp -a "$db" "$CoPanel_HOME/backend/" || true
+                fi
+            done
+            rm -rf "$TEMP_BACKUP"
+        fi
     fi
 
     # Ensure directory exists with correct permissions
