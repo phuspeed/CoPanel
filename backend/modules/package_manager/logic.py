@@ -92,6 +92,13 @@ DEFAULT_PACKAGES: List[Dict[str, Any]] = [
         "id": "firewall_service", "name": "Advanced Linux Firewall",
         "description": "Standard host-based firewall rules management.",
         "icon": "Shield", "status": "not_installed", "category": "Security & System",
+    },
+    {
+        "id": "fail2ban", "name": "Fail2Ban",
+        "description": "Intrusion prevention software framework.",
+        "icon": "Lock", "status": "not_installed", "category": "Security & System",
+        "apt": ["fail2ban"], "yum": ["fail2ban"],
+        "service": "fail2ban", "detect_bin": "fail2ban-client",
     }
 ]
 
@@ -121,6 +128,7 @@ def load_packages() -> List[Dict[str, Any]]:
         "mariadb": "mariadb",
         "postgresql": "psql",
         "mongodb": "mongod",
+        "fail2ban": "fail2ban-client",
     }
 
     for default_pkg in DEFAULT_PACKAGES:

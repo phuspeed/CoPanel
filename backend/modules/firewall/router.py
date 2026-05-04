@@ -31,6 +31,10 @@ class DeleteRuleRequest(BaseModel):
     port: str
     action: str
 
+class UnbanRequest(BaseModel):
+    jail: str
+    ip: str
+
 
 def find_ufw_path() -> str:
     import shutil
@@ -240,23 +244,4 @@ async def delete_firewall_rule(req: DeleteRuleRequest) -> Dict[str, Any]:
 
     if IS_WINDOWS:
         original_count = len(MOCK_RULES)
-        MOCK_RULES = [r for r in MOCK_RULES if not (r["port"] == req.port and r["action"] == req.action.upper())]
-        if len(MOCK_RULES) == original_count:
-            raise HTTPException(status_code=404, detail="Rule not found in Mock Mode.")
-        return {
-            "status": "success",
-            "message": "Firewall rule deleted successfully (Mock Mode)."
-        }
-
-    try:
-        if not run_ufw_delete_cmd(req.action.lower(), req.port):
-            raise HTTPException(status_code=500, detail="Failed to delete firewall rule via ufw CLI.")
-
-        return {
-            "status": "success",
-            "message": "Firewall rule deleted successfully."
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        MOCK_RULES = [r for r in MOCK_RULE
