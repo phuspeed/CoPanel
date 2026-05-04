@@ -1,10 +1,12 @@
 """
 Firewall Module Router
-Manages ufw firewall rules.
+Manages ufw firewall rules and Fail2Ban intrusion prevention system.
 """
 import os
 import re
+import shutil
 import subprocess
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -20,6 +22,10 @@ MOCK_RULES = [
     {"port": "8686/tcp", "action": "ALLOW", "comment": "CoPanel Web UI"}
 ]
 MOCK_STATUS = "active"
+MOCK_F2B_INSTALLED = True
+MOCK_F2B_ACTIVE = True
+MOCK_F2B_JAILS = ["sshd"]
+MOCK_F2B_BANNED = [{"ip": "192.168.1.100", "jail": "sshd"}]
 
 # Schemas
 class RuleRequest(BaseModel):
@@ -37,8 +43,6 @@ class UnbanRequest(BaseModel):
 
 
 def find_ufw_path() -> str:
-    import shutil
-    import os
     for p in ["/usr/sbin/ufw", "/sbin/ufw", "/usr/bin/ufw", "/bin/ufw"]:
         if os.path.exists(p) and os.access(p, os.X_OK):
             return p
@@ -48,12 +52,31 @@ def find_ufw_path() -> str:
     return "ufw"
 
 
+def find_fail2ban_path() -> str:
+    for p in ["/usr/bin/fail2ban-client", "/bin/fail2ban-client", "/usr/sbin/fail2ban-client", "/sbin/fail2ban-client"]:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    w = shutil.which("fail2ban-client")
+    if w:
+        return w
+    return "fail2ban-client"
+
+
+def check_fail2ban_installed() -> bool:
+    if IS_WINDOWS:
+        return MOCK_F2B_INSTALLED
+    p = find_fail2ban_path()
+    if p and p != "fail2ban-client":
+        return True
+    return bool(shutil.which("fail2ban-client"))
+
+
 def run_cmd(cmd: List[str]) -> str:
     """Run system command using subprocess safely."""
     try:
         res = subprocess.run(cmd, shell=False, capture_output=True, text=True, check=False)
         return res.stdout if res.returncode == 0 else res.stderr
-    except Exception as e:
+    except Exception:
         return ""
 
 
@@ -68,11 +91,9 @@ async def get_firewall_status() -> Dict[str, Any]:
             "rules": MOCK_RULES
         }
 
-    import shutil
-    from pathlib import Path
     ufw_path = find_ufw_path()
     has_ufw = shutil.which("ufw") or Path(ufw_path).exists()
-    if not IS_WINDOWS and not has_ufw:
+    if not has_ufw:
         return {
             "status": "success",
             "active": False,
@@ -81,16 +102,12 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
     try:
-        # Run ufw status numbered to get ports and numbers correctly
         res = subprocess.run([ufw_path, "status"], shell=False, capture_output=True, text=True, check=False)
         out = res.stdout if res.returncode == 0 else res.stderr
 
         is_active = "Status: active" in out
 
         # Extract rules
-        # Format of rule lines:
-        # 22/tcp                     ALLOW       Anywhere
-        # 80                         ALLOW       Anywhere
         rules = []
         lines = out.splitlines()
         for line in lines:
@@ -131,7 +148,6 @@ def run_ufw_cmd(action: str, port: str) -> bool:
     """Helper to run UFW commands natively."""
     ufw_path = find_ufw_path()
     try:
-        # Allow/Deny rule
         res = subprocess.run([ufw_path, action, port], shell=False, capture_output=True, text=True)
         if res.returncode == 0:
             return True
@@ -161,9 +177,7 @@ async def enable_firewall() -> Dict[str, Any]:
         return {"status": "success", "message": "Firewall enabled successfully (Mock Mode)."}
     ufw_path = find_ufw_path()
     try:
-        # Before enabling, we must ensure SSH port 22 is open so users don't get locked out!
         subprocess.run([ufw_path, "allow", "22"], shell=False, check=False)
-        # Enable
         res = subprocess.run([ufw_path, "enable"], input="y\n", shell=False, capture_output=True, text=True)
         if res.returncode == 0:
             return {"status": "success", "message": "Firewall enabled successfully."}
@@ -194,7 +208,6 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
     """Add a rule to the firewall."""
     global MOCK_RULES
 
-    # Always enforce SSH safety check
     if "22" in req.port and req.action.upper() == "DENY":
         raise HTTPException(
             status_code=400,
@@ -202,7 +215,6 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
         )
 
     if IS_WINDOWS:
-        # Check if rule exists
         for rule in MOCK_RULES:
             if rule["port"] == req.port:
                 raise HTTPException(status_code=400, detail="Rule already exists.")
@@ -235,7 +247,6 @@ async def delete_firewall_rule(req: DeleteRuleRequest) -> Dict[str, Any]:
     """Delete a rule from the firewall."""
     global MOCK_RULES
 
-    # Enforce SSH safety check
     if "22" in req.port:
         raise HTTPException(
             status_code=400,
@@ -244,4 +255,135 @@ async def delete_firewall_rule(req: DeleteRuleRequest) -> Dict[str, Any]:
 
     if IS_WINDOWS:
         original_count = len(MOCK_RULES)
-        MOCK_RULES = [r for r in MOCK_RULE
+        MOCK_RULES = [r for r in MOCK_RULES if not (r["port"] == req.port and r["action"] == req.action.upper())]
+        if len(MOCK_RULES) == original_count:
+            raise HTTPException(status_code=404, detail="Rule not found in Mock Mode.")
+        return {
+            "status": "success",
+            "message": "Firewall rule deleted successfully (Mock Mode)."
+        }
+
+    try:
+        if not run_ufw_delete_cmd(req.action.lower(), req.port):
+            raise HTTPException(status_code=500, detail="Failed to delete firewall rule via ufw CLI.")
+
+        return {
+            "status": "success",
+            "message": "Firewall rule deleted successfully."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- FAIL2BAN SPECIFIC ENDPOINTS ---
+
+@router.get("/fail2ban/status")
+async def get_fail2ban_status() -> Dict[str, Any]:
+    """Fetch real Fail2Ban status and banned IPs list."""
+    global MOCK_F2B_ACTIVE, MOCK_F2B_JAILS, MOCK_F2B_BANNED
+    
+    installed = check_fail2ban_installed()
+    if not installed:
+        return {
+            "status": "success",
+            "installed": False,
+            "active": False,
+            "jails": [],
+            "banned": []
+        }
+
+    if IS_WINDOWS:
+        return {
+            "status": "success",
+            "installed": True,
+            "active": MOCK_F2B_ACTIVE,
+            "jails": MOCK_F2B_JAILS,
+            "banned": MOCK_F2B_BANNED
+        }
+
+    f2b_path = find_fail2ban_path()
+    try:
+        # Check if fail2ban systemd service is active or fail2ban-client is responding
+        ping_res = subprocess.run([f2b_path, "ping"], shell=False, capture_output=True, text=True)
+        is_active = "Server echoed pong" in ping_res.stdout
+        
+        # Get all Jails
+        res = subprocess.run([f2b_path, "status"], shell=False, capture_output=True, text=True)
+        jails = []
+        if res.returncode == 0:
+            match = re.search(r'Jail list:\s+(.+)', res.stdout)
+            if match:
+                jails = [j.strip() for j in match.group(1).split(',')]
+                
+        # Get banned IPs for each jail
+        banned = []
+        for jail in jails:
+            jres = subprocess.run([f2b_path, "status", jail], shell=False, capture_output=True, text=True)
+            if jres.returncode == 0:
+                ip_match = re.search(r'Banned IP list:\s+(.+)', jres.stdout)
+                if ip_match:
+                    ips = [ip.strip() for ip in ip_match.group(1).split(' ') if ip.strip()]
+                    for ip in ips:
+                        banned.append({"ip": ip, "jail": jail})
+
+        return {
+            "status": "success",
+            "installed": True,
+            "active": is_active,
+            "jails": jails,
+            "banned": banned
+        }
+    except Exception as e:
+        return {
+            "status": "success",
+            "installed": True,
+            "active": False,
+            "jails": [],
+            "banned": [],
+            "error_message": f"Fail2Ban is installed but unresponsive: {str(e)}"
+        }
+
+
+@router.post("/fail2ban/install")
+async def install_fail2ban() -> Dict[str, Any]:
+    """Trigger Fail2Ban installation on system."""
+    global MOCK_F2B_INSTALLED
+    if IS_WINDOWS:
+        MOCK_F2B_INSTALLED = True
+        return {"status": "success", "message": "Fail2Ban installed successfully (Mock Mode)."}
+
+    # Determine package manager
+    try:
+        if shutil.which("apt-get"):
+            cmd = "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban"
+        elif shutil.which("yum"):
+            cmd = "sudo yum install -y fail2ban"
+        else:
+            raise HTTPException(status_code=500, detail="No suitable package manager found.")
+
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode == 0:
+            return {"status": "success", "message": "Fail2Ban installed successfully!"}
+        raise HTTPException(status_code=500, detail=res.stderr or "Installation failed.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fail2ban/unban")
+async def unban_ip(req: UnbanRequest) -> Dict[str, Any]:
+    """Unbans an IP address from a Fail2Ban jail."""
+    global MOCK_F2B_BANNED
+    if IS_WINDOWS:
+        MOCK_F2B_BANNED = [b for b in MOCK_F2B_BANNED if not (b["ip"] == req.ip and b["jail"] == req.jail)]
+        return {"status": "success", "message": f"Successfully unbanned IP {req.ip} from {req.jail} (Mock Mode)."}
+
+    f2b_path = find_fail2ban_path()
+    try:
+        res = subprocess.run([f2b_path, "set", req.jail, "unbanip", req.ip], shell=False, capture_output=True, text=True)
+        if res.returncode == 0:
+            return {"status": "success", "message": f"Successfully unbanned IP {req.ip} from {req.jail}."}
+        raise HTTPException(status_code=500, detail=res.stderr or f"Failed to unban IP {req.ip}.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
