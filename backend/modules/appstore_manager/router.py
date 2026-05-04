@@ -32,3 +32,9 @@ def install_package(req: dict) -> Dict[str, Any]:
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/build-status/{pkg_id}")
+def get_build_status(pkg_id: str) -> Dict[str, Any]:
+    """Retrieves real-time build logs and installation status."""
+    return AppStoreManager.get_build_status(pkg_id)
+

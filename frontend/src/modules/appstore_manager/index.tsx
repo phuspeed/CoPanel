@@ -20,6 +20,10 @@ export default function AppStoreDashboard() {
   const [loading, setLoading] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [activePkgId, setActivePkgId] = useState<string | null>(null);
+  const [buildLogs, setBuildLogs] = useState<string[]>([]);
+  const [buildStatus, setBuildStatus] = useState<string | null>(null);
+
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
@@ -87,6 +91,9 @@ export default function AppStoreDashboard() {
 
   const handleInstall = async (pkg: Package) => {
     setInstallingId(pkg.id);
+    setActivePkgId(pkg.id);
+    setBuildLogs(["Starting real-time build status tracking..."]);
+    setBuildStatus("running");
     setMsg(tr.installing(pkg.name));
     try {
       const res = await fetch('/api/appstore_manager/install', {
@@ -100,11 +107,37 @@ export default function AppStoreDashboard() {
       const d = await res.json();
       if (res.ok) {
         setMsg(tr.installSuccess(pkg.name));
+        
+        const interval = setInterval(async () => {
+          try {
+            const token = localStorage.getItem('copanel_token');
+            const r = await fetch(`/api/appstore_manager/build-status/${pkg.id}`, {
+              headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            if (r.ok) {
+              const b = await r.json();
+              if (b.logs) setBuildLogs(b.logs);
+              if (b.status === 'success' || b.status === 'failed') {
+                setBuildStatus(b.status);
+                clearInterval(interval);
+                if (b.status === 'success') {
+                  setMsg(`✓ ${pkg.name} installed and built successfully!`);
+                } else {
+                  setMsg(`❌ Error building ${pkg.name}: ${b.error || 'Build failed.'}`);
+                }
+              }
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }, 1500);
       } else {
         setMsg(tr.installError(d.detail || 'Extraction failed.'));
+        setBuildStatus("failed");
       }
     } catch {
       setMsg(tr.commError);
+      setBuildStatus("failed");
     } finally {
       setInstallingId(null);
     }
@@ -152,6 +185,48 @@ export default function AppStoreDashboard() {
           <span>{msg}</span>
         </div>
       )}
+
+      {activePkgId && buildLogs.length > 0 && (
+        <div className={`p-4 border rounded-2xl max-w-2xl backdrop-blur-md space-y-3 ${
+          isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between border-b pb-2 select-none">
+            <div className="flex items-center gap-2">
+              <Icons.Terminal className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                Build Logs & Progress
+              </span>
+            </div>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wide border flex items-center gap-1.5 ${
+              buildStatus === 'success'
+                ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                : buildStatus === 'failed'
+                ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                : 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse'
+            }`}>
+              {buildStatus === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
+              {buildStatus || 'running'}
+            </span>
+          </div>
+
+          <div className={`font-mono text-[11px] p-4 rounded-xl h-48 overflow-y-auto space-y-1.5 border transition-all duration-200 ${
+            isDark ? 'bg-slate-950/80 border-slate-800/80 text-slate-300' : 'bg-white border-slate-100 text-slate-700'
+          }`}>
+            {buildLogs.map((log, i) => (
+              <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
+                {log.startsWith('❌') || log.includes('Error') || log.includes('ERR') ? (
+                  <span className="text-red-400">{log}</span>
+                ) : log.startsWith('🎉') || log.startsWith('✓') || log.includes('success') ? (
+                  <span className="text-green-400 font-bold">{log}</span>
+                ) : (
+                  <span>{log}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
 
       {catalog.length === 0 ? (
         <div className={`p-12 text-center text-xs border rounded-2xl ${isDark ? 'border-slate-800 text-slate-400 bg-slate-900/20' : 'border-slate-200 text-slate-500 bg-white shadow-sm'}`}>
