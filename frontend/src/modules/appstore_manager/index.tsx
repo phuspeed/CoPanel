@@ -414,19 +414,6 @@ export default function AppStoreDashboard() {
                     {isInstalling ? tr.btnInstalling : tr.btnInstall}
                   </button>
                 )}
-                {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (
-                  <button
-                    onClick={() => navigate('/package_manager')}
-                    className={`w-full flex items-center justify-center gap-1.5 py-2.5 border rounded-xl font-bold text-xs transition-all duration-200 ${
-                      isDark ? 'text-blue-400 border-blue-500/30 bg-blue-950/20 hover:bg-blue-900/30' : 'text-blue-600 border-blue-200 bg-blue-50/40 hover:bg-blue-50'
-                    }`}
-                  >
-                    <Icons.ExternalLink className="w-3.5 h-3.5" />
-                    {language === 'vi' 
-                      ? `Đi đến Package Manager để cài ${pkg.system_packages?.[0] || requiredPackageMap[pkg.id]?.name}` 
-                      : `Go to Package Manager to install ${pkg.system_packages?.[0] || requiredPackageMap[pkg.id]?.name}`}
-                  </button>
-                )}
               </div>
             );
           })}
