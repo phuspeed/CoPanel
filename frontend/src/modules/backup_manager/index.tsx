@@ -464,7 +464,10 @@ export default function BackupAndSyncDashboard() {
           <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center justify-center md:justify-start gap-2 ${isDark ? 'bg-gradient-to-r from-indigo-400 via-purple-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
             }`}>
             <Icons.Cloud className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-            {tr.title} <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-semibold tracking-wider">v1.1 - Premium Tabbed</span>
+            {tr.title}
+            <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
+              v1.0.2
+            </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
             {tr.desc}

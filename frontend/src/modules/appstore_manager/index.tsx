@@ -272,10 +272,13 @@ export default function AppStoreDashboard() {
         isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
       }`}>
         <div className="space-y-2 max-w-2xl">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight ${
+          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2 ${
             isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
           }`}>
             {tr.title}
+            <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
+              v1.0.4
+            </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
             {tr.desc}

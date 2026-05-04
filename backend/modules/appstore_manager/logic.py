@@ -27,7 +27,25 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
             return remote_version != local_version and remote_version > local_version
 
 
+CORE_PACKAGE_VERSIONS = {
+    "appstore_manager": "1.0.3",
+    "ssl_manager": "1.0.1",
+    "backup_manager": "1.0.2",
+    "package_manager": "1.0.0"
+}
+
 def get_local_version(pkg_id: str, modules_dir: Path) -> str:
+    # 0. Check core hardcoded versions first for absolute reliability
+    if pkg_id in CORE_PACKAGE_VERSIONS:
+        version_file = modules_dir / pkg_id / "version.txt"
+        if version_file.exists():
+            try:
+                return version_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+        # If no version.txt exists yet, return hardcoded core version
+        return CORE_PACKAGE_VERSIONS[pkg_id]
+
     # 1. Check version.txt inside backend module directory
     version_file = modules_dir / pkg_id / "version.txt"
     if version_file.exists():
