@@ -247,9 +247,9 @@ export default function AppStoreDashboard() {
       )}
 
       {activePkgId && buildLogs.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in">
-          <div className={`w-full max-w-2xl border rounded-2xl shadow-2xl backdrop-blur-md space-y-4 p-6 flex flex-col justify-between max-h-[85vh] transition-all duration-300 scale-in-center ${
-            isDark ? 'bg-slate-900/90 border-slate-700/80 text-slate-100' : 'bg-white/95 border-slate-200 text-slate-900 shadow-slate-500/10'
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+          <div className={`w-full max-w-2xl border rounded-2xl shadow-2xl space-y-4 p-6 flex flex-col justify-between max-h-[85vh] transition-all duration-300 ${
+            isDark ? 'bg-slate-900/95 border-slate-700/80 text-slate-100' : 'bg-white border-slate-200 text-slate-900 shadow-slate-500/10'
           }`}>
             <div className="flex items-center justify-between border-b pb-3 select-none">
               <div className="flex items-center gap-2">
