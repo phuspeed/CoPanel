@@ -22,16 +22,18 @@ def install_package(req: dict) -> Dict[str, Any]:
     """Downloads and installs a selected package."""
     pkg_id = req.get("id")
     download_url = req.get("download_url")
+    version = req.get("version", "1.0.0")
     if not pkg_id or not download_url:
         raise HTTPException(status_code=400, detail="Package id and download_url are required.")
     
     try:
-        res = AppStoreManager.install_package(pkg_id, download_url)
+        res = AppStoreManager.install_package(pkg_id, download_url, version)
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/build-status/{pkg_id}")
 def get_build_status(pkg_id: str) -> Dict[str, Any]:

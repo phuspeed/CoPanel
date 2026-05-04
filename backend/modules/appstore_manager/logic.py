@@ -13,6 +13,77 @@ CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/
 BUILD_TASKS = {}
 
 
+def is_update_available(remote_version: str, local_version: str) -> bool:
+    try:
+        r = [int(x) for x in remote_version.split(".")]
+        l = [int(x) for x in local_version.split(".")]
+        return r > l
+    except Exception:
+        try:
+            from packaging.version import parse
+            return parse(remote_version) > parse(local_version)
+        except Exception:
+            return remote_version != local_version and remote_version > local_version
+
+
+def get_local_version(pkg_id: str, modules_dir: Path) -> str:
+    # 1. Check version.txt inside backend module directory
+    version_file = modules_dir / pkg_id / "version.txt"
+    if version_file.exists():
+        try:
+            return version_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    # 2. Check in global installed_packages.json
+    installed_file = modules_dir.parent / "config" / "installed_packages.json"
+    if installed_file.exists():
+        try:
+            with open(installed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and pkg_id in data:
+                    return str(data[pkg_id])
+        except Exception:
+            pass
+
+    # 3. Default fallback
+    return "1.0.0"
+
+
+def save_local_version(pkg_id: str, version: str):
+    if Path("/opt/copanel").exists():
+        modules_dir = Path("/opt/copanel/backend/modules")
+    else:
+        current_file_dir = Path(__file__).parent.resolve()
+        modules_dir = current_file_dir.parent.parent.resolve() / "backend" / "modules"
+        
+    try:
+        vfile = modules_dir / pkg_id / "version.txt"
+        vfile.parent.mkdir(parents=True, exist_ok=True)
+        vfile.write_text(version, encoding="utf-8")
+    except Exception:
+        pass
+        
+    try:
+        cfg_dir = modules_dir.parent / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        installed_file = cfg_dir / "installed_packages.json"
+        data = {}
+        if installed_file.exists():
+            try:
+                with open(installed_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if not isinstance(data, dict):
+                        data = {}
+            except Exception:
+                pass
+        data[pkg_id] = version
+        with open(installed_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+
 class AppStoreManager:
     @staticmethod
     def get_catalog() -> list:
@@ -54,13 +125,22 @@ class AppStoreManager:
             ]
             
         for p in packages:
-            p["installed"] = (modules_dir / p["id"]).exists()
+            installed = (modules_dir / p["id"]).exists()
+            p["installed"] = installed
+            if installed:
+                local_ver = get_local_version(p["id"], modules_dir)
+                p["local_version"] = local_ver
+                p["has_update"] = is_update_available(p.get("version", "1.0.0"), local_ver)
+            else:
+                p["local_version"] = ""
+                p["has_update"] = False
             
         return packages
 
 
+
     @staticmethod
-    def install_package(pkg_id: str, download_url: str) -> dict:
+    def install_package(pkg_id: str, download_url: str, version: str = "1.0.0") -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
         BUILD_TASKS[pkg_id] = {
@@ -149,6 +229,10 @@ class AppStoreManager:
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
+                    try:
+                        save_local_version(pkg_id, version)
+                    except Exception:
+                        pass
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"

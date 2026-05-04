@@ -14,7 +14,11 @@ interface Package {
   icon: string;
   download_url: string;
   installed?: boolean;
+  has_update?: boolean;
+  local_version?: string;
+  is_core?: boolean;
 }
+
 
 export default function AppStoreDashboard() {
   const [catalog, setCatalog] = useState<Package[]>([]);
@@ -109,7 +113,7 @@ export default function AppStoreDashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: pkg.id, download_url: pkg.download_url })
+        body: JSON.stringify({ id: pkg.id, download_url: pkg.download_url, version: pkg.version })
       });
       const d = await res.json();
       if (res.ok) {
@@ -292,9 +296,26 @@ export default function AppStoreDashboard() {
                       <h4 className={`text-sm md:text-base font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                         {pkg.name}
                       </h4>
-                      <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                        {pkg.version}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                          v{pkg.version}
+                        </span>
+                        {pkg.installed && pkg.local_version && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
+                            Local: v{pkg.local_version}
+                          </span>
+                        )}
+                        {pkg.is_core && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-emerald-400 bg-emerald-950/20 border-emerald-800/40' : 'text-emerald-600 bg-emerald-50 border-emerald-200'}`}>
+                            {language === 'vi' ? 'Mặc định' : 'Core'}
+                          </span>
+                        )}
+                        {pkg.has_update && (
+                          <span className="text-[10px] px-2 py-0.5 rounded border font-mono bg-amber-500/10 text-amber-500 border-amber-500/30 animate-pulse font-bold">
+                            {language === 'vi' ? 'Có bản cập nhật' : 'Update Available'}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -306,21 +327,27 @@ export default function AppStoreDashboard() {
                     <button
                       onClick={() => handleInstall(pkg)}
                       disabled={isInstalling || installingId !== null || uninstallingId !== null}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg hover:shadow-indigo-500/20 transition-all duration-200"
-                    >
-                      {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RotateCw className="w-4 h-4" />}
-                      {isInstalling ? tr.btnInstalling : tr.btnReinstall}
-                    </button>
-                    <button
-                      onClick={() => handleUninstall(pkg)}
-                      disabled={uninstallingId !== null || installingId !== null}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 border hover:bg-red-500/10 disabled:opacity-50 rounded-xl font-bold text-xs transition-all duration-200 ${
-                        isDark ? 'text-red-400 border-red-500/30 bg-red-950/20' : 'text-red-600 border-red-200 bg-red-50/40 hover:bg-red-50'
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg transition-all duration-200 ${
+                        pkg.has_update
+                          ? 'bg-amber-600 hover:bg-amber-500 hover:shadow-amber-500/20'
+                          : 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20'
                       }`}
                     >
-                      {uninstallingId === pkg.id ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Trash2 className="w-4 h-4" />}
-                      {uninstallingId === pkg.id ? tr.btnUninstalling : tr.btnUninstall}
+                      {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RotateCw className="w-4 h-4" />}
+                      {isInstalling ? tr.btnInstalling : (pkg.has_update ? (language === 'vi' ? 'Cập nhật' : 'Update') : tr.btnReinstall)}
                     </button>
+                    {!pkg.is_core && (
+                      <button
+                        onClick={() => handleUninstall(pkg)}
+                        disabled={uninstallingId !== null || installingId !== null}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 border hover:bg-red-500/10 disabled:opacity-50 rounded-xl font-bold text-xs transition-all duration-200 ${
+                          isDark ? 'text-red-400 border-red-500/30 bg-red-950/20' : 'text-red-600 border-red-200 bg-red-50/40 hover:bg-red-50'
+                        }`}
+                      >
+                        {uninstallingId === pkg.id ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Trash2 className="w-4 h-4" />}
+                        {uninstallingId === pkg.id ? tr.btnUninstalling : tr.btnUninstall}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <button
