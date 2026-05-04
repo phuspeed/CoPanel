@@ -22,7 +22,7 @@ IS_WINDOWS = os.name == 'nt'
 # Package catalogue
 # ---------------------------------------------------------------------------
 DEFAULT_PACKAGES: List[Dict[str, Any]] = [
-    # ── Web Servers ─────────────────────────────────────────────────────────
+    # ── Web Servers & Proxies ────────────────────────────────────────────────
     {
         "id": "nginx", "name": "Nginx",
         "description": "High-performance HTTP & reverse proxy server.",
@@ -34,6 +34,27 @@ DEFAULT_PACKAGES: List[Dict[str, Any]] = [
         "description": "Robust, industry-standard open-source web server.",
         "icon": "Globe", "status": "not_installed", "category": "Web Server",
         "apt": ["apache2"], "yum": ["httpd"], "service": "apache2",
+    },
+    {
+        "id": "openlitespeed", "name": "OpenLiteSpeed",
+        "description": "High-performance, lightweight web server by LiteSpeed.",
+        "icon": "Zap", "status": "not_installed", "category": "Web Server",
+        "apt": ["openlitespeed"], "yum": ["openlitespeed"], "service": "lsws",
+        "detect_bin": "openlitespeed",
+    },
+    {
+        "id": "haproxy", "name": "HAProxy",
+        "description": "Reliable, high performance TCP/HTTP load balancer.",
+        "icon": "Share2", "status": "not_installed", "category": "Web Server",
+        "apt": ["haproxy"], "yum": ["haproxy"], "service": "haproxy",
+        "detect_bin": "haproxy",
+    },
+    {
+        "id": "varnish", "name": "Varnish Cache",
+        "description": "Web application accelerator / caching HTTP reverse proxy.",
+        "icon": "Wind", "status": "not_installed", "category": "Web Server",
+        "apt": ["varnish"], "yum": ["varnish"], "service": "varnish",
+        "detect_bin": "varnishd",
     },
     # ── Databases ────────────────────────────────────────────────────────────
     {
@@ -87,6 +108,93 @@ DEFAULT_PACKAGES: List[Dict[str, Any]] = [
         "description": "Web-based SQL visual administration tool.",
         "icon": "Layout", "status": "not_installed", "category": "Database Tools",
     },
+    # ── Runtimes & Languages ─────────────────────────────────────────────────
+    {
+        "id": "nodejs", "name": "Node.js & PM2",
+        "description": "JavaScript runtime environment and process manager.",
+        "icon": "Code", "status": "not_installed", "category": "Runtimes",
+        "apt": ["nodejs", "npm"], "yum": ["nodejs", "npm"],
+        "detect_bin": "node",
+    },
+    {
+        "id": "python3", "name": "Python 3 & Pip",
+        "description": "Python programming language and package installer.",
+        "icon": "Code", "status": "not_installed", "category": "Runtimes",
+        "apt": ["python3", "python3-pip", "python3-venv"], "yum": ["python3", "python3-pip"],
+        "detect_bin": "python3",
+    },
+    {
+        "id": "java", "name": "Java (OpenJDK 17)",
+        "description": "Standard Java Development Kit and Runtime.",
+        "icon": "Coffee", "status": "not_installed", "category": "Runtimes",
+        "apt": ["openjdk-17-jdk"], "yum": ["java-17-openjdk-devel"],
+        "detect_bin": "java",
+    },
+    {
+        "id": "golang", "name": "Go (Golang)",
+        "description": "Statically typed, compiled programming language by Google.",
+        "icon": "Box", "status": "not_installed", "category": "Runtimes",
+        "apt": ["golang"], "yum": ["golang"],
+        "detect_bin": "go",
+    },
+    {
+        "id": "php-fpm", "name": "PHP-FPM",
+        "description": "FastCGI Process Manager for PHP scripts.",
+        "icon": "Code", "status": "not_installed", "category": "Runtimes",
+        "apt": ["php-fpm", "php-cli", "php-common"], "yum": ["php-fpm", "php-cli", "php-common"],
+        "detect_bin": "php",
+    },
+    # ── DevOps & Containers ──────────────────────────────────────────────────
+    {
+        "id": "docker", "name": "Docker Engine",
+        "description": "Containerization platform to build and run apps.",
+        "icon": "Layers", "status": "not_installed", "category": "DevOps",
+        "apt": ["docker.io", "docker-compose"], "yum": ["docker", "docker-compose"],
+        "detect_bin": "docker",
+    },
+    {
+        "id": "git", "name": "Git",
+        "description": "Distributed version control system.",
+        "icon": "GitBranch", "status": "not_installed", "category": "DevOps",
+        "apt": ["git"], "yum": ["git"],
+        "detect_bin": "git",
+    },
+    {
+        "id": "composer", "name": "Composer",
+        "description": "Dependency Manager for PHP.",
+        "icon": "Package", "status": "not_installed", "category": "DevOps",
+        "apt": ["composer"], "yum": ["composer"],
+        "detect_bin": "composer",
+    },
+    # ── Utilities & Process Managers ─────────────────────────────────────────
+    {
+        "id": "supervisor", "name": "Supervisor",
+        "description": "Process control system for UNIX-like OS.",
+        "icon": "Cpu", "status": "not_installed", "category": "Utilities",
+        "apt": ["supervisor"], "yum": ["supervisor"],
+        "detect_bin": "supervisord",
+    },
+    {
+        "id": "htop", "name": "Htop",
+        "description": "Interactive process viewer and system monitor.",
+        "icon": "Activity", "status": "not_installed", "category": "Utilities",
+        "apt": ["htop"], "yum": ["htop"],
+        "detect_bin": "htop",
+    },
+    {
+        "id": "zip-utils", "name": "Zip & Unzip",
+        "description": "Archiving and compression utilities.",
+        "icon": "Archive", "status": "not_installed", "category": "Utilities",
+        "apt": ["zip", "unzip", "tar"], "yum": ["zip", "unzip", "tar"],
+        "detect_bin": "unzip",
+    },
+    {
+        "id": "net-tools", "name": "Net-tools (netstat)",
+        "description": "Network diagnostic tools and commands.",
+        "icon": "Wifi", "status": "not_installed", "category": "Utilities",
+        "apt": ["net-tools", "curl", "wget"], "yum": ["net-tools", "curl", "wget"],
+        "detect_bin": "netstat",
+    },
     # ── Security & System ────────────────────────────────────────────────────
     {
         "id": "firewall_service", "name": "Advanced Linux Firewall",
@@ -99,6 +207,20 @@ DEFAULT_PACKAGES: List[Dict[str, Any]] = [
         "icon": "Lock", "status": "not_installed", "category": "Security & System",
         "apt": ["fail2ban"], "yum": ["fail2ban"],
         "service": "fail2ban", "detect_bin": "fail2ban-client",
+    },
+    {
+        "id": "clamav", "name": "ClamAV",
+        "description": "Open source antivirus engine for detecting trojans, viruses, malware.",
+        "icon": "ShieldAlert", "status": "not_installed", "category": "Security & System",
+        "apt": ["clamav", "clamav-daemon"], "yum": ["clamav", "clamd"],
+        "detect_bin": "clamscan",
+    },
+    {
+        "id": "certbot", "name": "Certbot",
+        "description": "Automatically enable HTTPS on your website with Let's Encrypt.",
+        "icon": "Key", "status": "not_installed", "category": "Security & System",
+        "apt": ["certbot"], "yum": ["certbot"],
+        "detect_bin": "certbot",
     }
 ]
 
@@ -121,6 +243,9 @@ def load_packages() -> List[Dict[str, Any]]:
     detect_binaries = {
         "nginx": "nginx",
         "apache2": "apache2",
+        "openlitespeed": "openlitespeed",
+        "haproxy": "haproxy",
+        "varnish": "varnishd",
         "redis": "redis-server",
         "memcached": "memcached",
         "firewall_service": "ufw",
@@ -129,6 +254,20 @@ def load_packages() -> List[Dict[str, Any]]:
         "postgresql": "psql",
         "mongodb": "mongod",
         "fail2ban": "fail2ban-client",
+        "nodejs": "node",
+        "python3": "python3",
+        "java": "java",
+        "golang": "go",
+        "php-fpm": "php",
+        "docker": "docker",
+        "git": "git",
+        "composer": "composer",
+        "supervisor": "supervisord",
+        "htop": "htop",
+        "zip-utils": "unzip",
+        "net-tools": "netstat",
+        "clamav": "clamscan",
+        "certbot": "certbot"
     }
 
     for default_pkg in DEFAULT_PACKAGES:

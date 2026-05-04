@@ -151,9 +151,6 @@ export default function WebManagerDashboard() {
       colAccessDb: 'Assigned Database',
       noUsers: 'No specific DB users found.',
 
-      // Web Services
-      wsTitle: 'Web Services & Reverse Proxies',
-      wsDesc: 'Check and control local web services like Nginx, Apache2, or OpenLiteSpeed.',
       colService: 'Service Name',
       colServiceStatus: 'Status',
       colInstalled: 'Installed',
@@ -953,18 +950,25 @@ export default function WebManagerDashboard() {
               <p>{tr.loadingSites}</p>
             </div>
           ) : webServices.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {webServices.map((ws, index) => (
-                <div key={index} className={`border p-5 rounded-2xl flex flex-col justify-between gap-4 transition duration-200 ${
-                  isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/50 border-slate-100'
-                }`}>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                        {ws.name}
-                      </span>
-                                               {ws.installed ? ws.status : 'not installed'}
-                      </span>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {webServices.map((ws, index) => (
+                  <div key={index} className={`border p-5 rounded-2xl flex flex-col justify-between gap-4 transition duration-200 ${
+                    isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/50 border-slate-100'
+                  }`}>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                          {ws.name}
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                          ws.status === 'running' ? (isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200')
+                          : ws.status === 'stopped' ? (isDark ? 'bg-red-500/15 text-red-400 border-red-500/30' : 'bg-red-100 text-red-700 border-red-200')
+                          : (isDark ? 'bg-slate-500/15 text-slate-400 border-slate-500/30' : 'bg-slate-100 text-slate-500 border-slate-200')
+                        }`}>
+                          {ws.installed ? ws.status : 'not installed'}
+                        </span>
+                      </div>
                       <p className={`text-[11px] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{ws.description}</p>
                       {ws.conflicts_with?.length > 0 && (
                         <div className={`flex items-center gap-1.5 text-[10px] font-semibold mt-1 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
@@ -973,53 +977,59 @@ export default function WebManagerDashboard() {
                         </div>
                       )}
                     </div>
+                    <div className="border-t pt-3 dark:border-slate-800/60">
+                      {!ws.installed ? (
+                        <button
+                          onClick={() => handleInstallStack(ws.id)}
+                          disabled={installingStack !== null || ws.conflicts_with?.length > 0}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-bold text-xs text-white transition shadow-sm"
+                        >
+                          {installingStack === ws.id ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                          {installingStack === ws.id ? (language === 'vi' ? 'Đang cài...' : 'Installing...') : tr.wsInstallStack}
+                        </button>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1.5 w-full">
+                          <button onClick={() => handleServiceAction(ws.id, 'start')} className="flex items-center justify-center p-1.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold transition"><Icons.Play className="w-3 h-3" /></button>
+                          <button onClick={() => handleServiceAction(ws.id, 'stop')} className="flex items-center justify-center p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition"><Icons.Square className="w-3 h-3" /></button>
+                          <button onClick={() => handleServiceAction(ws.id, 'restart')} className="flex items-center justify-center p-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl text-xs font-bold transition"><Icons.RotateCcw className="w-3 h-3" /></button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="border-t pt-3 dark:border-slate-800/60">
-                    {!ws.installed ? (
-                      <button
-                        onClick={() => handleInstallStack(ws.id)}
-                        disabled={installingStack !== null || ws.conflicts_with?.length > 0}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-bold text-xs text-white transition shadow-sm"
-                      >
-                        {installingStack === ws.id ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
-                        {installingStack === ws.id ? (language === 'vi' ? 'Đang cài...' : 'Installing...') : tr.wsInstallStack}
-                      </button>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-1.5 w-full">
-                        <button onClick={() => handleServiceAction(ws.id, 'start')} className="flex items-center justify-center p-1.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold transition"><Icons.Play className="w-3 h-3" /></button>
-                        <button onClick={() => handleServiceAction(ws.id, 'stop')} className="flex items-center justify-center p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition"><Icons.Square className="w-3 h-3" /></button>
-                        <button onClick={() => handleServiceAction(ws.id, 'restart')} className="flex items-center justify-center p-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl text-xs font-bold transition"><Icons.RotateCcw className="w-3 h-3" /></button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            {/* Nginx + Apache Combo */}
-            <div className={`border rounded-2xl p-5 space-y-3 ${isDark ? 'border-violet-800/30 bg-violet-950/10' : 'border-violet-200 bg-violet-50/40'}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
-                    <Icons.Layers className="w-4 h-4" /> {tr.wsCombo}
-                  </h4>
-                  <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.wsComboDesc}</p>
+              {/* Nginx + Apache Combo */}
+              <div className={`border rounded-2xl p-5 space-y-3 ${isDark ? 'border-violet-800/30 bg-violet-950/10' : 'border-violet-200 bg-violet-50/40'}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
+                      <Icons.Layers className="w-4 h-4" /> {tr.wsCombo}
+                    </h4>
+                    <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.wsComboDesc}</p>
+                  </div>
+                  <button
+                    onClick={() => handleInstallStack('nginx_apache')}
+                    disabled={installingStack !== null}
+                    className="shrink-0 flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition shadow-sm disabled:opacity-50"
+                  >
+                    {installingStack === 'nginx_apache' ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                    {tr.wsInstallStack}
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleInstallStack('nginx_apache')}
-                  disabled={installingStack !== null}
-                  className="shrink-0 flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition shadow-sm disabled:opacity-50"
-                >
-                  {installingStack === 'nginx_apache' ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
-                  {tr.wsInstallStack}
-                </button>
+                <div className={`text-[11px] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${isDark ? 'bg-amber-950/20 border-amber-800/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                  <Icons.Info className="w-3.5 h-3.5 shrink-0" />
+                  {language === 'vi' ? 'Nginx nghe cổng 80/443, Apache2 tự động cấu hình sang cổng 8080.' : 'Nginx listens on 80/443; Apache2 is auto-configured to port 8080.'}
+                </div>
               </div>
-              <div className={`text-[11px] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${isDark ? 'bg-amber-950/20 border-amber-800/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
-                <Icons.Info className="w-3.5 h-3.5 shrink-0" />
-                {language === 'vi' ? 'Nginx nghe cổng 80/443, Apache2 tự động cấu hình sang cổng 8080.' : 'Nginx listens on 80/443; Apache2 is auto-configured to port 8080.'}
-              </div>
+            </>
+          ) : (
+            <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
+              isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
+            }`}>
+              {language === 'vi' ? 'Không có dịch vụ web nào.' : 'No web services found.'}
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1353,6 +1363,7 @@ export default function WebManagerDashboard() {
             )}
           </div>
         </div>
+      </div>
       )}
 
       {activeTab === 'php' && (
