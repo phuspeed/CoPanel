@@ -46,12 +46,13 @@ class SSLManager:
         except Exception:
             pass
 
-        # Fallback: file name without .conf extension
-        fname = file_path.name
-        if fname.endswith(".conf"):
-            fname = fname[:-5]
-        if fname not in extracted and fname not in ["default", "copanel"]:
-            extracted.append(fname)
+        # Fallback ONLY IF no domain was extracted from server_name
+        if not extracted:
+            fname = file_path.name
+            if fname.endswith(".conf"):
+                fname = fname[:-5]
+            if fname not in ["default", "copanel"]:
+                extracted.append(fname)
 
         return extracted
 
