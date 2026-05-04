@@ -39,18 +39,59 @@ def delete_profile(profile_id: int) -> Dict[str, Any]:
 
 @router.get("/remotes")
 def list_remotes() -> Dict[str, Any]:
+    remotes = ProfileManager.get_rclone_remotes()
+    if not remotes and os.name == 'nt':
+        return {"status": "success", "data": ["gdrive", "dropbox", "s3"]}
+    return {"status": "success", "data": remotes}
+
+@router.get("/system-folders")
+def get_system_folders() -> Dict[str, Any]:
+    import os
     if os.name == 'nt':
-        return {"status": "success", "data": ["gdrive:", "dropbox:", "s3:"]}
-    try:
-        res = subprocess.run(["rclone", "listremotes"], capture_output=True, text=True, timeout=5)
-        remotes = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-        return {"status": "success", "data": remotes}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        current_file_dir = Path(__file__).parent.resolve()
+        proj = current_file_dir.parent.parent.parent.resolve()
+        return {
+            "status": "success",
+            "data": [
+                {"name": "Project Root", "path": str(proj)},
+                {"name": "Backup Dir", "path": str(proj / "backups")}
+            ]
+        }
+    return {
+        "status": "success",
+        "data": [
+            {"name": "Root (/) ", "path": "/"},
+            {"name": "CoPanel (/opt/copanel)", "path": "/opt/copanel"},
+            {"name": "Web Content (/var/www)", "path": "/var/www"},
+            {"name": "User Homes (/home)", "path": "/home"},
+            {"name": "System Logs (/var/log)", "path": "/var/log"}
+        ]
+    }
+
+@router.get("/rclone-config")
+def get_rclone_config() -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "content": ProfileManager.load_rclone_config(),
+        "path": str(ProfileManager.get_rclone_config_path())
+    }
+
+@router.post("/rclone-config")
+def save_rclone_config(data: dict) -> Dict[str, Any]:
+    content = data.get("content", "")
+    ok = ProfileManager.save_rclone_config(content)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Failed to save rclone configuration file.")
+    return {"status": "success"}
 
 @router.get("/explore")
 def explore_files(path: str = "/") -> Dict[str, Any]:
     """Simple file explorer for Visual File Selector"""
+    import os
+    if os.name == 'nt' and path == "/":
+        current_file_dir = Path(__file__).parent.resolve()
+        path = str(current_file_dir.parent.parent.parent.resolve())
+        
     target = Path(path)
     if not target.exists() or not target.is_dir():
         return {"status": "success", "data": []}

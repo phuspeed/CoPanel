@@ -26,6 +26,12 @@ export default function BackupManagerDashboard() {
   const [remotes, setRemotes] = useState<string[]>([]);
   const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
 
+  // System & rclone states
+  const [systemFolders, setSystemFolders] = useState<{name: string, path: string}[]>([]);
+  const [showRcloneConfig, setShowRcloneConfig] = useState(false);
+  const [rcloneConfigContent, setRcloneConfigContent] = useState('');
+  const [rcloneConfigPath, setRcloneConfigPath] = useState('');
+
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
   const [wizardTab, setWizardTab] = useState(1);
@@ -102,6 +108,7 @@ export default function BackupManagerDashboard() {
   useEffect(() => {
     fetchProfiles();
     fetchRemotes();
+    fetchSystemFolders();
   }, []);
 
   const fetchProfiles = async () => {
@@ -121,6 +128,48 @@ export default function BackupManagerDashboard() {
       if (res.ok) setRemotes(data.data || []);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const fetchSystemFolders = async () => {
+    try {
+      const res = await fetch('/api/backup_manager/system-folders', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok) setSystemFolders(data.data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchRcloneConfig = async () => {
+    try {
+      const res = await fetch('/api/backup_manager/rclone-config', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok) {
+        setRcloneConfigContent(data.content || '');
+        setRcloneConfigPath(data.path || '');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const saveRcloneConfig = async () => {
+    try {
+      const res = await fetch('/api/backup_manager/rclone-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content: rcloneConfigContent })
+      });
+      if (res.ok) {
+        setMsg({ text: 'Rclone configuration saved successfully!', isError: false });
+        setShowRcloneConfig(false);
+        fetchRemotes();
+      } else {
+        setMsg({ text: 'Failed to save rclone configuration', isError: true });
+      }
+    } catch (e) {
+      setMsg({ text: 'Error saving rclone configuration', isError: true });
     }
   };
 
@@ -375,6 +424,18 @@ export default function BackupManagerDashboard() {
             <button onClick={() => setShowExplorer(false)} className="text-slate-400 hover:text-red-500"><Icons.X className="w-5 h-5"/></button>
           </div>
           
+          <div className={`p-3 border-b flex flex-wrap gap-1.5 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+            {systemFolders.map(f => (
+              <button 
+                key={f.path} 
+                onClick={() => loadExplorer(f.path)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition ${isDark ? 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300' : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-600'}`}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+
           <div className={`p-3 flex items-center gap-2 text-xs font-mono border-b ${isDark ? 'bg-slate-950 text-slate-300 border-slate-800' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
             <button onClick={() => {
                const parts = explorerPath.split('/').filter(Boolean);
@@ -430,10 +491,16 @@ export default function BackupManagerDashboard() {
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.desc}</p>
         </div>
-        <button onClick={() => { setForm({profile_name: '', source_type: 'folder', source_path: '', remote_name: '', remote_path: '', cron_expression: '0 0 * * *', is_active: 1, realtime_sync: 0, rclone_flags: '{}'}); setWizardTab(1); setShowWizard(true); }} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition">
-          <Icons.Plus className="w-5 h-5" />
-          {tr.newProfile}
-        </button>
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          <button onClick={() => { fetchRcloneConfig(); setShowRcloneConfig(true); }} className="px-5 py-3 bg-slate-600 hover:bg-slate-500 text-white font-bold text-sm rounded-xl shadow-lg flex items-center gap-2 transition">
+            <Icons.Settings className="w-5 h-5" />
+            Rclone Profiles
+          </button>
+          <button onClick={() => { setForm({profile_name: '', source_type: 'folder', source_path: '', remote_name: '', remote_path: '', cron_expression: '0 0 * * *', is_active: 1, realtime_sync: 0, rclone_flags: '{}'}); setWizardTab(1); setShowWizard(true); }} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition">
+            <Icons.Plus className="w-5 h-5" />
+            {tr.newProfile}
+          </button>
+        </div>
       </div>
 
       {msg && (
@@ -499,6 +566,34 @@ export default function BackupManagerDashboard() {
 
       {showWizard && renderWizard()}
       {showExplorer && renderExplorer()}
+      {showRcloneConfig && (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm bg-black/40`}>
+          <div className={`w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col overflow-hidden ${isDark ? 'bg-slate-900 border border-slate-800' : 'bg-white border border-slate-200'}`}>
+            <div className={`p-4 flex items-center justify-between border-b ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}>
+              <div className="space-y-0.5">
+                <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>Rclone Profiles Configuration</h3>
+                <p className={`text-[10px] font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{rcloneConfigPath}</p>
+              </div>
+              <button onClick={() => setShowRcloneConfig(false)} className="text-slate-400 hover:text-red-500"><Icons.X className="w-5 h-5"/></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Paste or modify the standard rclone INI config content. Each remote name defined in square brackets (e.g. <code>[my_remote]</code>) can be selected when creating a backup profile.</p>
+              <textarea
+                value={rcloneConfigContent}
+                onChange={e => setRcloneConfigContent(e.target.value)}
+                placeholder={"[my_gdrive]\ntype = drive\nscope = drive"}
+                className={`w-full h-80 p-4 font-mono text-xs rounded-xl border focus:border-indigo-500 outline-none ${isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+              />
+            </div>
+
+            <div className={`p-4 border-t flex justify-end gap-3 ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}>
+              <button onClick={() => setShowRcloneConfig(false)} className={`px-4 py-2 text-xs font-bold rounded-xl border transition ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-300' : 'border-slate-300 hover:bg-slate-100 text-slate-600'}`}>Close</button>
+              <button onClick={saveRcloneConfig} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
       {renderStreamModal()}
     </div>
   );
