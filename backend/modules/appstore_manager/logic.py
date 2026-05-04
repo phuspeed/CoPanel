@@ -84,6 +84,14 @@ def save_local_version(pkg_id: str, version: str):
         pass
 
 
+DEPENDENCY_PACKAGES = {
+    "module_redis": {"id": "redis", "apt": "redis-server", "yum": "redis"},
+    "module_cron": {"id": "memcached", "apt": "memcached", "yum": "memcached"},
+    "web_manager": {"id": "nginx", "apt": "nginx", "yum": "nginx"},
+    "database_manager": {"id": "mariadb", "apt": "mariadb-server", "yum": "mariadb-server"},
+}
+
+
 class AppStoreManager:
     @staticmethod
     def get_catalog() -> list:
@@ -156,6 +164,31 @@ class AppStoreManager:
             import threading
             is_windows = platform.system() == "Windows"
             
+            # Auto-install Linux package dependencies in parallel
+            dep = DEPENDENCY_PACKAGES.get(pkg_id)
+            if dep:
+                import shutil
+                if not shutil.which(dep.get("apt")) and not shutil.which(dep.get("yum", dep.get("id"))):
+                    BUILD_TASKS[pkg_id]["logs"].append(f"Package system dependency '{dep['id']}' not found. Installing in background...")
+                    import subprocess
+                    import platform as plat
+                    if plat.system() != "Windows":
+                        if shutil.which("apt-get"):
+                            cmd = f"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {dep['apt']}"
+                        elif shutil.which("yum"):
+                            cmd = f"sudo yum install -y {dep['yum']}"
+                        else:
+                            cmd = None
+                            
+                        if cmd:
+                            try:
+                                subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                BUILD_TASKS[pkg_id]["logs"].append(f"Successfully triggered installation for '{dep['id']}' via OS package manager.")
+                            except Exception as e:
+                                BUILD_TASKS[pkg_id]["logs"].append(f"Warning: Could not auto-install '{dep['id']}': {str(e)}")
+                    else:
+                        BUILD_TASKS[pkg_id]["logs"].append(f"OS is Windows. Skipping auto-installation of Linux package '{dep['id']}'.")
+
             current_file_dir = Path(__file__).parent.resolve()
             project_root = current_file_dir.parent.parent.parent.resolve()
             
