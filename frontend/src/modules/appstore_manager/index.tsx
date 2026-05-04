@@ -435,9 +435,15 @@ export default function AppStoreDashboard() {
                       </div>
                     </div>
                   </div>
-                  <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                     {pkg.description}
                   </p>
+                  {((pkg as any).changelog_vi || (pkg as any).changelog_en) && (
+                    <div className={`text-[10px] p-2 rounded-xl border leading-relaxed ${isDark ? 'bg-slate-800/40 border-slate-700/60 text-slate-400' : 'bg-slate-50 border-slate-200/80 text-slate-500'}`}>
+                      <span className="font-bold block mb-0.5 text-blue-400">{language === 'vi' ? 'Nội dung cập nhật:' : 'Changelog / Release Notes:'}</span>
+                      <span className="italic">{language === 'vi' ? ((pkg as any).changelog_vi || (pkg as any).changelog_en) : ((pkg as any).changelog_en || (pkg as any).changelog_vi)}</span>
+                    </div>
+                  )}
                   {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (
                     <div className={`text-[10px] flex flex-wrap items-center gap-1.5 leading-relaxed pt-1.5 border-t ${isDark ? 'text-slate-400 border-slate-800' : 'text-slate-500 border-slate-100'}`}>
                       <Icons.Settings className="w-3.5 h-3.5 shrink-0" />
