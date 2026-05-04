@@ -344,11 +344,11 @@ export default function AppStoreDashboard() {
                       </h4>
                       <div className="flex flex-wrap items-center gap-1 mt-1">
                         <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                          v{pkg.version}
+                          {language === 'vi' ? 'Mới nhất: ' : 'Latest: '}v{pkg.version}
                         </span>
                         {pkg.installed && pkg.local_version && (
                           <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-                            Local: v{pkg.local_version}
+                            {language === 'vi' ? 'Đang cài: ' : 'Installed: '}v{pkg.local_version}
                           </span>
                         )}
                         {pkg.is_core && (
