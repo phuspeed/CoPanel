@@ -129,6 +129,9 @@ export default function AppStoreDashboard() {
                 clearInterval(interval);
                 if (b.status === 'success') {
                   setMsg(`✓ ${pkg.name} installed and built successfully!`);
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 2000);
                 } else {
                   setMsg(`❌ Error building ${pkg.name}: ${b.error || 'Build failed.'}`);
                 }
@@ -169,6 +172,9 @@ export default function AppStoreDashboard() {
       if (res.ok) {
         setMsg(`✓ ${pkg.name} removed successfully! System is rebuilding frontend.`);
         fetchCatalog();
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
       } else {
         setMsg(`❌ Error uninstalling: ${d.detail || 'Request failed.'}`);
       }
