@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
+CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-Appstore/main/packages.json"
 BUILD_TASKS = {}
 
 
