@@ -30,7 +30,7 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
 CORE_PACKAGE_VERSIONS = {
     "appstore_manager": "1.0.3",
     "ssl_manager": "1.0.1",
-    "backup_manager": "1.0.2",
+    "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
 }
 
