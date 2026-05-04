@@ -121,16 +121,36 @@ def exchange_oauth_code(req: dict) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail=res.text)
             
         data = res.json()
-        refresh_token = data.get("refresh_token")
-        
+        import json
+        import datetime
+
         cfg = BackupManager.load_config()
+        prev_token_str = cfg.get("google_drive_refresh_token") or "{}"
+        prev_token = {}
+        if prev_token_str.strip().startswith("{"):
+            try:
+                prev_token = json.loads(prev_token_str)
+            except Exception:
+                pass
+
+        merged_token = {
+            "access_token": data.get("access_token") or prev_token.get("access_token") or "",
+            "token_type": data.get("token_type") or prev_token.get("token_type") or "Bearer",
+            "refresh_token": data.get("refresh_token") or prev_token.get("refresh_token") or "",
+            "expiry": prev_token.get("expiry") or "0001-01-01T00:00:00Z"
+        }
+        if "expires_in" in data:
+            expiry_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=data["expires_in"])
+            merged_token["expiry"] = expiry_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        full_token_json_str = json.dumps(merged_token)
+
         cfg["google_drive_client_id"] = client_id
         cfg["google_drive_client_secret"] = client_secret
-        if refresh_token:
-            cfg["google_drive_refresh_token"] = refresh_token
+        cfg["google_drive_refresh_token"] = full_token_json_str
         BackupManager.save_config(cfg)
-        
-        return {"status": "success", "refresh_token": refresh_token or cfg.get("google_drive_refresh_token")}
+
+        return {"status": "success", "refresh_token": full_token_json_str}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -150,13 +170,23 @@ def test_connection() -> Dict[str, Any]:
         rc_conf = Path("/root/.config/rclone/rclone.conf")
         rc_conf.parent.mkdir(parents=True, exist_ok=True)
         
+        token_str = cfg.get("google_drive_refresh_token") or ""
+        if token_str and not token_str.strip().startswith("{"):
+            import json
+            token_str = json.dumps({
+                "access_token": "",
+                "token_type": "Bearer",
+                "refresh_token": token_str.strip(),
+                "expiry": "0001-01-01T00:00:00Z"
+            })
+
         conf_data = f"[{remote}]\ntype = drive\n"
         if cfg.get("google_drive_client_id"):
             conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
         if cfg.get("google_drive_client_secret"):
             conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-        if cfg.get("google_drive_refresh_token"):
-            conf_data += f"token = {cfg.get('google_drive_refresh_token')}\n"
+        if token_str:
+            conf_data += f"token = {token_str}\n"
         rc_conf.write_text(conf_data)
         
         res = subprocess.run(["rclone", "about", f"{remote}:"], capture_output=True, text=True, timeout=15)

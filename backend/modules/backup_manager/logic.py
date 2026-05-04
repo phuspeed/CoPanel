@@ -168,16 +168,23 @@ WantedBy=multi-user.target
             
             if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
                 # Update/Create rclone config on the fly
-                rc_conf = Path("/root/.config/rclone/rclone.conf")
-                rc_conf.parent.mkdir(parents=True, exist_ok=True)
-                
+                token_str = cfg.get("google_drive_refresh_token") or ""
+                if token_str and not token_str.strip().startswith("{"):
+                    import json
+                    token_str = json.dumps({
+                        "access_token": "",
+                        "token_type": "Bearer",
+                        "refresh_token": token_str.strip(),
+                        "expiry": "0001-01-01T00:00:00Z"
+                    })
+
                 conf_data = f"[{remote}]\ntype = drive\n"
                 if cfg.get("google_drive_client_id"):
                     conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
                 if cfg.get("google_drive_client_secret"):
                     conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-                if cfg.get("google_drive_refresh_token"):
-                    conf_data += f"token = {cfg.get('google_drive_refresh_token')}\n"
+                if token_str:
+                    conf_data += f"token = {token_str}\n"
                 
                 rc_conf.write_text(conf_data)
                 
@@ -327,16 +334,23 @@ WantedBy=multi-user.target
             rclone_folder = task.get("rclone_folder", "CoPanel-Backups")
             
             if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
-                rc_conf = Path("/root/.config/rclone/rclone.conf")
-                rc_conf.parent.mkdir(parents=True, exist_ok=True)
-                
+                token_str = cfg.get("google_drive_refresh_token") or ""
+                if token_str and not token_str.strip().startswith("{"):
+                    import json
+                    token_str = json.dumps({
+                        "access_token": "",
+                        "token_type": "Bearer",
+                        "refresh_token": token_str.strip(),
+                        "expiry": "0001-01-01T00:00:00Z"
+                    })
+
                 conf_data = f"[{remote}]\ntype = drive\n"
                 if cfg.get("google_drive_client_id"):
                     conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
                 if cfg.get("google_drive_client_secret"):
                     conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-                if cfg.get("google_drive_refresh_token"):
-                    conf_data += f"token = {cfg.get('google_drive_refresh_token')}\n"
+                if token_str:
+                    conf_data += f"token = {token_str}\n"
                 
                 rc_conf.write_text(conf_data)
                 subprocess.run(["rclone", "copy", str(zip_path), f"{remote}:{rclone_folder}"], timeout=300)
