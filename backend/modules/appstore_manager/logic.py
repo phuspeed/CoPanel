@@ -35,18 +35,7 @@ CORE_PACKAGE_VERSIONS = {
 }
 
 def get_local_version(pkg_id: str, modules_dir: Path) -> str:
-    # 0. Check core hardcoded versions first for absolute reliability
-    if pkg_id in CORE_PACKAGE_VERSIONS:
-        version_file = modules_dir / pkg_id / "version.txt"
-        if version_file.exists():
-            try:
-                return version_file.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
-        # If no version.txt exists yet, return hardcoded core version
-        return CORE_PACKAGE_VERSIONS[pkg_id]
-
-    # 1. Check version.txt inside backend module directory
+    # 1. Check version.txt inside backend module directory first
     version_file = modules_dir / pkg_id / "version.txt"
     if version_file.exists():
         try:
@@ -70,7 +59,11 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
             except Exception:
                 pass
 
-    # 3. Default fallback
+    # 3. Fall back to core package hardcoded version
+    if pkg_id in CORE_PACKAGE_VERSIONS:
+        return CORE_PACKAGE_VERSIONS[pkg_id]
+
+    # 4. Default fallback
     return "1.0.0"
 
 
@@ -138,24 +131,36 @@ class AppStoreManager:
     @staticmethod
     def load_config() -> dict:
         """Loads config for AppStore (e.g., custom community catalogs)."""
-        if APPSTORE_CONFIG_FILE.exists():
-            try:
-                with open(APPSTORE_CONFIG_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+        possible_config_files = [
+            Path("/opt/copanel/config/appstore_config.json"),
+            Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
+        ]
+        for cfg_file in possible_config_files:
+            if cfg_file.exists():
+                try:
+                    with open(cfg_file, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception:
+                    pass
         return {"community_urls": []}
 
     @staticmethod
     def save_config(cfg: dict) -> bool:
-        """Saves config for AppStore."""
-        try:
-            APPSTORE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(APPSTORE_CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=4)
-            return True
-        except Exception:
-            return False
+        """Saves config for AppStore to all possible paths."""
+        possible_config_files = [
+            Path("/opt/copanel/config/appstore_config.json"),
+            Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
+        ]
+        success = False
+        for cfg_file in possible_config_files:
+            try:
+                cfg_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(cfg_file, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=4)
+                success = True
+            except Exception:
+                pass
+        return success
 
     @staticmethod
     def get_catalog() -> list:
