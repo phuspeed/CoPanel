@@ -38,3 +38,19 @@ def get_build_status(pkg_id: str) -> Dict[str, Any]:
     """Retrieves real-time build logs and installation status."""
     return AppStoreManager.get_build_status(pkg_id)
 
+@router.post("/uninstall")
+def uninstall_package(req: dict) -> Dict[str, Any]:
+    """Removes the selected package."""
+    pkg_id = req.get("id")
+    if not pkg_id:
+        raise HTTPException(status_code=400, detail="Package id is required.")
+        
+    try:
+        res = AppStoreManager.uninstall_package(pkg_id)
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res["message"])
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+

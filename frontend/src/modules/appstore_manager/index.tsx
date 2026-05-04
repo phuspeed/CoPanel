@@ -13,6 +13,7 @@ interface Package {
   version: string;
   icon: string;
   download_url: string;
+  installed?: boolean;
 }
 
 export default function AppStoreDashboard() {
@@ -44,6 +45,9 @@ export default function AppStoreDashboard() {
       installError: (err: string) => `Error installing package: ${err}`,
       btnInstall: 'Install Extension',
       btnInstalling: 'Installing...',
+      btnUninstall: 'Uninstall',
+      btnReinstall: 'Reinstall',
+      btnUninstalling: 'Uninstalling...',
       noApps: 'No applications currently found in AppStore.'
     },
     vi: {
@@ -59,6 +63,9 @@ export default function AppStoreDashboard() {
       installError: (err: string) => `Lỗi khi cài đặt: ${err}`,
       btnInstall: 'Cài đặt Extension',
       btnInstalling: 'Đang cài đặt...',
+      btnUninstall: 'Gỡ bỏ',
+      btnReinstall: 'Cài lại',
+      btnUninstalling: 'Đang gỡ...',
       noApps: 'Không tìm thấy ứng dụng nào trong AppStore.'
     }
   };
@@ -142,6 +149,36 @@ export default function AppStoreDashboard() {
       setInstallingId(null);
     }
   };
+
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null);
+
+  const handleUninstall = async (pkg: Package) => {
+    setUninstallingId(pkg.id);
+    setMsg(`Uninstalling ${pkg.name}...`);
+    try {
+      const token = localStorage.getItem('copanel_token');
+      const res = await fetch('/api/appstore_manager/uninstall', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ id: pkg.id })
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setMsg(`✓ ${pkg.name} removed successfully! System is rebuilding frontend.`);
+        fetchCatalog();
+      } else {
+        setMsg(`❌ Error uninstalling: ${d.detail || 'Request failed.'}`);
+      }
+    } catch {
+      setMsg(tr.commError);
+    } finally {
+      setUninstallingId(null);
+    }
+  };
+
 
   if (loading && catalog.length === 0) {
     return (
@@ -258,14 +295,37 @@ export default function AppStoreDashboard() {
                     {pkg.description}
                   </p>
                 </div>
-                <button
-                  onClick={() => handleInstall(pkg)}
-                  disabled={isInstalling || installingId !== null}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg hover:shadow-blue-500/20 transition-all duration-200"
-                >
-                  {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Package className="w-4 h-4" />}
-                  {isInstalling ? tr.btnInstalling : tr.btnInstall}
-                </button>
+                {pkg.installed ? (
+                  <div className="flex gap-2 w-full">
+                    <button
+                      onClick={() => handleInstall(pkg)}
+                      disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg hover:shadow-indigo-500/20 transition-all duration-200"
+                    >
+                      {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RotateCw className="w-4 h-4" />}
+                      {isInstalling ? tr.btnInstalling : tr.btnReinstall}
+                    </button>
+                    <button
+                      onClick={() => handleUninstall(pkg)}
+                      disabled={uninstallingId !== null || installingId !== null}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 border hover:bg-red-500/10 disabled:opacity-50 rounded-xl font-bold text-xs transition-all duration-200 ${
+                        isDark ? 'text-red-400 border-red-500/30 bg-red-950/20' : 'text-red-600 border-red-200 bg-red-50/40 hover:bg-red-50'
+                      }`}
+                    >
+                      {uninstallingId === pkg.id ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Trash2 className="w-4 h-4" />}
+                      {uninstallingId === pkg.id ? tr.btnUninstalling : tr.btnUninstall}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleInstall(pkg)}
+                    disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg hover:shadow-blue-500/20 transition-all duration-200"
+                  >
+                    {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Package className="w-4 h-4" />}
+                    {isInstalling ? tr.btnInstalling : tr.btnInstall}
+                  </button>
+                )}
               </div>
             );
           })}

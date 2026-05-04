@@ -16,17 +16,25 @@ BUILD_TASKS = {}
 class AppStoreManager:
     @staticmethod
     def get_catalog() -> list:
-        """Fetches available packages from remote GitHub catalog."""
+        """Fetches available packages from remote GitHub catalog with installed status."""
+        current_file_dir = Path(__file__).parent.resolve()
+        project_root = current_file_dir.parent.parent.parent.resolve()
+        
+        if Path("/opt/copanel").exists():
+            modules_dir = Path("/opt/copanel/backend/modules")
+        else:
+            modules_dir = project_root / "backend" / "modules"
+            
+        packages = []
         try:
             req = urllib.request.Request(
                 CATALOG_URL, 
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
             with urllib.request.urlopen(req, timeout=5) as response:
-                return json.loads(response.read().decode())
+                packages = json.loads(response.read().decode())
         except Exception:
-            # Fallback mock packages for a complete AppStore demonstration
-            return [
+            packages = [
                 {
                     "id": "module_redis",
                     "name": "Redis Cache Manager",
@@ -44,6 +52,12 @@ class AppStoreManager:
                     "download_url": "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages/module_cron.zip"
                 }
             ]
+            
+        for p in packages:
+            p["installed"] = (modules_dir / p["id"]).exists()
+            
+        return packages
+
 
     @staticmethod
     def install_package(pkg_id: str, download_url: str) -> dict:
@@ -160,3 +174,34 @@ class AppStoreManager:
         """Retrieves status and logs for the given package ID."""
         global BUILD_TASKS
         return BUILD_TASKS.get(pkg_id, {"status": "not_started", "logs": [], "error": ""})
+
+    @staticmethod
+    def uninstall_package(pkg_id: str) -> dict:
+        """Removes installed package directories."""
+        current_file_dir = Path(__file__).parent.resolve()
+        project_root = current_file_dir.parent.parent.parent.resolve()
+        
+        if Path("/opt/copanel").exists():
+            dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
+            dst_frontend = Path(f"/opt/copanel/frontend/src/modules/{pkg_id}")
+            frontend_cwd = Path("/opt/copanel/frontend")
+        else:
+            dst_backend = project_root / "backend" / "modules" / pkg_id
+            dst_frontend = project_root / "frontend" / "src" / "modules" / pkg_id
+            frontend_cwd = project_root / "frontend"
+            
+        try:
+            if dst_backend.exists():
+                shutil.rmtree(dst_backend)
+            if dst_frontend.exists():
+                shutil.rmtree(dst_frontend)
+                
+            # Trigger build to remove the module from the frontend bundle
+            import platform
+            is_windows = platform.system() == "Windows"
+            subprocess.Popen(["npm", "run", "build"], cwd=frontend_cwd, shell=is_windows)
+            
+            return {"status": "success", "message": f"Package {pkg_id} uninstalled successfully."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
