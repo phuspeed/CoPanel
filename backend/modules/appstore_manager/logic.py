@@ -114,7 +114,31 @@ DEPENDENCY_PACKAGES = {
 }
 
 
+APPSTORE_CONFIG_FILE = Path("/opt/copanel/config/appstore_config.json") if Path("/opt/copanel").exists() else Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
+
 class AppStoreManager:
+    @staticmethod
+    def load_config() -> dict:
+        """Loads config for AppStore (e.g., custom community catalogs)."""
+        if APPSTORE_CONFIG_FILE.exists():
+            try:
+                with open(APPSTORE_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"community_urls": []}
+
+    @staticmethod
+    def save_config(cfg: dict) -> bool:
+        """Saves config for AppStore."""
+        try:
+            APPSTORE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(APPSTORE_CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=4)
+            return True
+        except Exception:
+            return False
+
     @staticmethod
     def get_catalog() -> list:
         """Fetches available packages from remote GitHub catalog with installed status."""
@@ -148,25 +172,44 @@ class AppStoreManager:
                 with urllib.request.urlopen(req, timeout=5) as response:
                     packages = json.loads(response.read().decode("utf-8"))
             except Exception:
-                packages = [
-                {
-                    "id": "module_redis",
-                    "name": "Redis Cache Manager",
-                    "description": "Visual dashboard to view keys, monitor memory, and restart local Redis instance.",
-                    "version": "1.0.0",
-                    "icon": "Database",
-                    "download_url": "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages/module_redis.zip"
-                },
-                {
-                    "id": "module_cron",
-                    "name": "Cloud Backup Extension",
-                    "description": "Premium scheduled cron backup and cloud uploader.",
-                    "version": "1.0.1",
-                    "icon": "Cloud",
-                    "download_url": "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages/module_cron.zip"
-                }
-            ]
-            
+                packages = []
+
+        # Load community URLs from config
+        cfg = AppStoreManager.load_config()
+        community_urls = cfg.get("community_urls", [])
+        for url in community_urls:
+            if not url or not isinstance(url, str) or not url.startswith("http"):
+                continue
+            try:
+                fetch_url = url
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                if "raw.githubusercontent.com" in url:
+                    parts = url.replace("https://raw.githubusercontent.com/", "").split("/")
+                    if len(parts) >= 3:
+                        user, repo = parts[0], parts[1]
+                        fetch_url = f"https://api.github.com/repos/{user}/{repo}/contents/packages.json"
+                        headers['Accept'] = 'application/vnd.github.v3.raw'
+
+                req = urllib.request.Request(fetch_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    comm_pkgs = json.loads(response.read().decode("utf-8"))
+                    if isinstance(comm_pkgs, list):
+                        for p in comm_pkgs:
+                            if isinstance(p, dict) and "id" in p:
+                                p["is_community"] = True
+                                packages.append(p)
+            except Exception:
+                pass
+
+        seen = set()
+        merged_packages = []
+        for p in packages:
+            if p.get("id") not in seen:
+                seen.add(p["id"])
+                merged_packages.append(p)
+
+        packages = merged_packages
+
         for p in packages:
             installed = (modules_dir / p["id"]).exists()
             p["installed"] = installed

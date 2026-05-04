@@ -37,6 +37,10 @@ export default function AppStoreDashboard() {
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
 
 
+  const [communityUrls, setCommunityUrls] = useState<string[]>([]);
+  const [newUrl, setNewUrl] = useState('');
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
   const navigate = useNavigate();
@@ -84,6 +88,53 @@ export default function AppStoreDashboard() {
 
   const tr = t[language || 'en'];
 
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch('/api/appstore_manager/config', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.community_urls) setCommunityUrls(d.community_urls);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const saveConfig = async (urls: string[]) => {
+    try {
+      const res = await fetch('/api/appstore_manager/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ community_urls: urls })
+      });
+      if (res.ok) {
+        fetchCatalog();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddUrl = () => {
+    if (!newUrl.trim() || !newUrl.startsWith('http')) return;
+    if (communityUrls.includes(newUrl.trim())) return;
+    const updated = [...communityUrls, newUrl.trim()];
+    setCommunityUrls(updated);
+    setNewUrl('');
+    saveConfig(updated);
+  };
+
+  const handleRemoveUrl = (urlToRemove: string) => {
+    const updated = communityUrls.filter(u => u !== urlToRemove);
+    setCommunityUrls(updated);
+    saveConfig(updated);
+  };
+
   const fetchCatalog = async () => {
     setLoading(true);
     setMsg(null);
@@ -105,6 +156,7 @@ export default function AppStoreDashboard() {
   };
 
   useEffect(() => {
+    fetchConfig();
     fetchCatalog();
   }, [language]);
 
@@ -233,7 +285,18 @@ export default function AppStoreDashboard() {
           isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50/60 border-slate-200 shadow-sm'
         }`}>
           <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{tr.source}</span>
-          <span className={`text-base md:text-lg font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.live}</span>
+          <span className={`text-base md:text-lg font-mono font-bold mb-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.live}</span>
+          <button
+            onClick={() => setIsConfigOpen(true)}
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs transition-all duration-200 ${
+              isDark 
+                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700 hover:border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
+            }`}
+          >
+            <Icons.Settings className="w-3.5 h-3.5" />
+            {language === 'vi' ? 'Cộng đồng' : 'Community'}
+          </button>
         </div>
       </div>
 
@@ -356,6 +419,11 @@ export default function AppStoreDashboard() {
                             {language === 'vi' ? 'Mặc định' : 'Core'}
                           </span>
                         )}
+                        {(pkg as any).is_community && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-cyan-400 bg-cyan-950/20 border-cyan-800/40' : 'text-cyan-600 bg-cyan-50 border-cyan-200'}`}>
+                            {language === 'vi' ? 'Cộng đồng' : 'Community'}
+                          </span>
+                        )}
                         {pkg.has_update && (
                           <span className="text-[10px] px-2 py-0.5 rounded border font-mono bg-amber-500/10 text-amber-500 border-amber-500/30 animate-pulse font-bold">
                             {language === 'vi' ? 'Có bản cập nhật' : 'Update Available'}
@@ -417,6 +485,103 @@ export default function AppStoreDashboard() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {isConfigOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+          <div className={`w-full max-w-lg border rounded-2xl shadow-2xl space-y-4 p-6 flex flex-col justify-between max-h-[85vh] transition-all duration-300 ${
+            isDark ? 'bg-slate-900/95 border-slate-700/80 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <div className="flex items-center justify-between border-b pb-3 select-none">
+              <div className="flex items-center gap-2">
+                <Icons.Globe className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+                <div>
+                  <span className={`text-sm font-bold uppercase tracking-wider ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                    {language === 'vi' ? 'Quản lý AppStore Cộng đồng' : 'Manage Community AppStores'}
+                  </span>
+                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {language === 'vi' ? 'Thêm/xóa danh mục của bên thứ ba' : 'Add or remove third-party catalogs'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsConfigOpen(false)}
+                className={`p-1.5 rounded-lg border transition-all duration-200 ${
+                  isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-800 border-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border-slate-200'
+                }`}
+              >
+                <Icons.X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 flex-1">
+              <div className="space-y-2">
+                <label className={`text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {language === 'vi' ? 'Thêm URL packages.json mới:' : 'Add new packages.json URL:'}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newUrl}
+                    onChange={(e) => setNewUrl(e.target.value)}
+                    placeholder="https://github.com/..."
+                    className={`flex-1 text-xs px-3 py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all duration-200 ${
+                      isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'
+                    }`}
+                  />
+                  <button
+                    onClick={handleAddUrl}
+                    className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-white font-bold text-xs bg-indigo-600 hover:bg-indigo-500 hover:shadow-lg transition-all duration-200`}
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {language === 'vi' ? 'Thêm' : 'Add'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 flex-1 h-[25vh] overflow-y-auto">
+                <label className={`text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {language === 'vi' ? 'Danh sách AppStore hiện tại:' : 'Current AppStore Catalogs:'}
+                </label>
+                {communityUrls.length === 0 ? (
+                  <p className={`text-xs text-center py-4 italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {language === 'vi' ? 'Chưa có AppStore cộng đồng nào được thêm.' : 'No community AppStores added yet.'}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {communityUrls.map((url, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-200 ${
+                          isDark ? 'bg-slate-800/40 border-slate-700/60' : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <span className={`text-xs font-mono break-all line-clamp-1 flex-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                          {url}
+                        </span>
+                        <button
+                          onClick={() => handleRemoveUrl(url)}
+                          className={`p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 hover:text-red-500 transition-all duration-200`}
+                        >
+                          <Icons.Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsConfigOpen(false)}
+              className={`w-full py-2.5 font-bold text-xs rounded-xl transition-all duration-200 border ${
+                isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-sm'
+              }`}
+            >
+              {language === 'vi' ? 'Đóng' : 'Close'}
+            </button>
+          </div>
         </div>
       )}
     </div>

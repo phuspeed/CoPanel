@@ -57,3 +57,24 @@ def uninstall_package(req: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/config")
+def get_appstore_config() -> Dict[str, Any]:
+    """Retrieves AppStore custom settings and URLs."""
+    try:
+        return AppStoreManager.load_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/config")
+def save_appstore_config(req: dict) -> Dict[str, Any]:
+    """Saves AppStore custom settings."""
+    try:
+        res = AppStoreManager.save_config(req)
+        if not res:
+            raise HTTPException(status_code=500, detail="Failed to save AppStore configuration.")
+        return {"status": "success", "message": "Configuration saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
