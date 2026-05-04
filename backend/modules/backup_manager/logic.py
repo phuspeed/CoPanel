@@ -1,378 +1,297 @@
-"""
-Backup & Sync Management Logic
-Supports local directory backup, scheduling cron jobs, and syncing via Rclone to Google Drive.
-"""
-from pathlib import Path
 import os
 import json
-import shutil
+import sqlite3
 import subprocess
-import zipfile
+import shutil
+import threading
+import time
+from pathlib import Path
 from datetime import datetime
 
-CONFIG_FILE = Path("/opt/copanel/config/backup_config.json")
+DB_PATH = Path("/opt/copanel/config/backup_manager.db")
+CRON_TAG_START = "# BEGIN COPANEL BACKUP"
+CRON_TAG_END = "# END COPANEL BACKUP"
+BACKUP_DIR = Path("/opt/copanel/backups")
 
-class BackupManager:
+class ProfileManager:
     @staticmethod
-    def load_config() -> dict:
-        """Loads Backup and Rclone configurations from disk."""
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {
-            "source_dir": "",
-            "rclone_remote_name": "gdrive",
-            "rclone_folder": "CoPanel-Backups",
-            "google_drive_client_id": "",
-            "google_drive_client_secret": "",
-            "google_drive_refresh_token": "",
-            "cron_expression": "0 0 * * *",
-            "backup_tasks": [],
-            "sync_rules": []
-        }
+    def _get_db():
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        return conn
 
     @staticmethod
-    def save_config(cfg: dict) -> bool:
-        """Saves Backup and Rclone configurations to disk."""
-        try:
-            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2, ensure_ascii=False)
+    def init_db():
+        with ProfileManager._get_db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL, -- 'folder' or 'mysql'
+                    source_path TEXT NOT NULL, -- local folder path or db name
+                    remote_name TEXT NOT NULL,
+                    remote_path TEXT NOT NULL,
+                    cron_expression TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    realtime_sync INTEGER DEFAULT 0,
+                    rclone_flags TEXT -- JSON string
+                )
+            """)
+            # Create a general config table if needed
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+
+    @staticmethod
+    def get_profiles():
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("SELECT * FROM profiles ORDER BY id DESC")
+            return [dict(r) for r in cursor.fetchall()]
+
+    @staticmethod
+    def get_profile(profile_id: int):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("SELECT * FROM profiles WHERE id = ?", (profile_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def create_profile(data: dict):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("""
+                INSERT INTO profiles (
+                    profile_name, source_type, source_path, remote_name, 
+                    remote_path, cron_expression, is_active, realtime_sync, rclone_flags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get("profile_name", "Untitled"),
+                data.get("source_type", "folder"),
+                data.get("source_path", ""),
+                data.get("remote_name", ""),
+                data.get("remote_path", ""),
+                data.get("cron_expression", ""),
+                int(data.get("is_active", 1)),
+                int(data.get("realtime_sync", 0)),
+                json.dumps(data.get("rclone_flags", {}))
+            ))
+        ProfileManager.sync_crontab()
+        RealtimeSyncManager.update_watchers()
+        return cursor.lastrowid
+
+    @staticmethod
+    def update_profile(profile_id: int, data: dict):
+        # Build dynamic update query
+        fields = []
+        values = []
+        for k in ["profile_name", "source_type", "source_path", "remote_name", "remote_path", "cron_expression", "is_active", "realtime_sync"]:
+            if k in data:
+                fields.append(f"{k} = ?")
+                values.append(int(data[k]) if isinstance(data[k], bool) else data[k])
+        if "rclone_flags" in data:
+            fields.append("rclone_flags = ?")
+            values.append(json.dumps(data["rclone_flags"]))
             
-            # Generate the watcher script and restart its systemd daemon
-            BackupManager.generate_rclone_watcher()
-            # Register cron jobs
-            BackupManager.setup_cron()
-            return True
-        except Exception:
+        if not fields:
             return False
+
+        values.append(profile_id)
+        with ProfileManager._get_db() as conn:
+            conn.execute(f"UPDATE profiles SET {', '.join(fields)} WHERE id = ?", values)
+        ProfileManager.sync_crontab()
+        RealtimeSyncManager.update_watchers()
+        return True
 
     @staticmethod
-    def generate_rclone_watcher() -> bool:
-        """Generates the rclone watcher script and systemd service."""
-        cfg = BackupManager.load_config()
-        rules = cfg.get("sync_rules", [])
-        if not rules:
-            return False
+    def delete_profile(profile_id: int):
+        with ProfileManager._get_db() as conn:
+            conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        ProfileManager.sync_crontab()
+        RealtimeSyncManager.update_watchers()
+        return True
 
-        # Build inotify monitoring dirs
-        monitor_dirs = set()
-        for r in rules:
-            lp = r.get("local_path")
-            if lp:
-                p = os.path.dirname(lp)
-                if p and p != "/":
-                    monitor_dirs.add(p)
+    @staticmethod
+    def set_setting(key: str, value: str):
+        with ProfileManager._get_db() as conn:
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
-        if not monitor_dirs:
-            monitor_dirs.add("/home/Docker")
+    @staticmethod
+    def get_setting(key: str, default: str = "") -> str:
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
 
-        monitor_dirs_str = " ".join(f'"{d}"' for d in monitor_dirs)
-
-        # Build sync commands inside sync_function
-        sync_cmds = []
-        for r in rules:
-            lp = r.get("local_path")
-            rp = r.get("remote_path")
-            t = r.get("type", "static_files")
-
-            if not lp or not rp:
+    @staticmethod
+    def sync_crontab():
+        """Updates the OS crontab cleanly for all active profiles."""
+        if os.name == 'nt':
+            return # Skip on Windows
+            
+        profiles = ProfileManager.get_profiles()
+        
+        # Read current crontab
+        res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        current_cron = res.stdout if res.returncode == 0 else ""
+        
+        # Filter out old CoPanel block
+        lines = current_cron.splitlines()
+        clean_lines = []
+        in_block = False
+        for line in lines:
+            if line.strip() == CRON_TAG_START:
+                in_block = True
                 continue
+            if line.strip() == CRON_TAG_END:
+                in_block = False
+                continue
+            if not in_block:
+                clean_lines.append(line)
+                
+        # Generate new block
+        new_block = [CRON_TAG_START]
+        for p in profiles:
+            if p["is_active"] and p.get("cron_expression"):
+                expr = p["cron_expression"].strip()
+                pid = p["id"]
+                # Command triggers API or internal CLI
+                cmd = f"{expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupTaskEngine; BackupTaskEngine.run_sync_task({pid})' >> /opt/copanel/logs/backup_{pid}.log 2>&1"
+                new_block.append(cmd)
+        new_block.append(CRON_TAG_END)
+        
+        if len(new_block) > 2: # Has actual tasks
+            clean_lines.extend(new_block)
+            
+        new_cron_text = "\n".join(clean_lines) + "\n"
+        subprocess.run(["crontab", "-"], input=new_cron_text, text=True)
 
-            if t == "database":
-                sync_cmds.append(f'    rclone sync "{lp}" "{rp}" --metadata --inplace --transfers 1 --checkers 2 --use-mmap')
-            else:
-                sync_cmds.append(f'    rclone sync "{lp}" "{rp}" --size-only --transfers 1 --checkers 2')
-
-        sync_cmds_str = "\n".join(sync_cmds)
-
-        script_content = f"""#!/bin/bash
-
-# Generated by CoPanel
-MONITOR_DIRS=({monitor_dirs_str})
-
-sync_function() {{
-    echo "--- Phát hiện thay đổi, bắt đầu gom dữ liệu và đồng bộ: \\$(date) ---"
-{sync_cmds_str}
-    echo "--- Đồng bộ hoàn tất lúc \\$(date) ---"
-}}
-
-# Theo dõi sự thay đổi
-inotifywait -m -r -e modify,create,delete,move "\\${{MONITOR_DIRS[@]}}" | while read path action file; do
-    # Chỉ sync nếu file thay đổi nằm trong các thư mục mục tiêu
-    echo "Sự kiện mới tại \\$path\\$file - Đợi 5 phút để gom dữ liệu..."
-    sleep 300
-    sync_function
-done
-"""
-        try:
-            # Save the file
-            watcher_path = Path("/root/rclone_watcher.sh")
-            watcher_path.write_text(script_content, encoding="utf-8")
-            watcher_path.chmod(0o755)
-
-            # Create the systemd service file
-            service_content = f"""[Unit]
-Description=Rclone Real-time Watcher for CoPanel
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/root/rclone_watcher.sh
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"""
-            service_path = Path("/etc/systemd/system/rclone-watcher.service")
-            service_path.write_text(service_content, encoding="utf-8")
-
-            # Reload systemd and restart
-            subprocess.run(["systemctl", "daemon-reload"], check=False)
-            subprocess.run(["systemctl", "enable", "rclone-watcher"], check=False)
-            subprocess.run(["systemctl", "restart", "rclone-watcher"], check=False)
-
-            return True
-        except Exception:
-            return False
-
+class BackupTaskEngine:
     @staticmethod
-    def backup_and_sync() -> dict:
-        """Zips source directory and uploads using Rclone."""
-        cfg = BackupManager.load_config()
-        src = cfg.get("source_dir")
-        if not src or not Path(src).exists():
-            return {"status": "error", "message": f"Target folder {src} does not exist."}
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = Path("/opt/copanel/backups")
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        
-        zip_path = backup_dir / f"backup_{timestamp}.zip"
-        
+    def export_mysql(db_name: str, out_file: Path) -> bool:
+        if os.name == 'nt':
+            # Mock success for Windows UI dev
+            out_file.write_text("Mock SQL dump data")
+            return True
         try:
-            # Create local backup zip
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                source_path = Path(src)
-                for file_path in source_path.rglob('*'):
-                    if file_path.is_file():
-                        zipf.write(file_path, file_path.relative_to(source_path))
-            
-            # Sync to Google Drive via Rclone
-            remote = cfg.get("rclone_remote_name", "gdrive")
-            rclone_folder = cfg.get("rclone_folder", "CoPanel-Backups")
-            
-            if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
-                # Update/Create rclone config on the fly
-                token_str = cfg.get("google_drive_refresh_token") or ""
-                is_valid_json = False
-                if token_str.strip().startswith("{"):
-                    try:
-                        import json
-                        json.loads(token_str)
-                        is_valid_json = True
-                    except Exception:
-                        pass
-
-                if token_str and not is_valid_json:
-                    import json
-                    token_str = json.dumps({
-                        "access_token": "",
-                        "token_type": "Bearer",
-                        "refresh_token": token_str.strip(),
-                        "expiry": "0001-01-01T00:00:00Z"
-                    })
-
-                conf_data = f"[{remote}]\ntype = drive\n"
-                if cfg.get("google_drive_client_id"):
-                    conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
-                if cfg.get("google_drive_client_secret"):
-                    conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-                if token_str:
-                    conf_data += f"token = {token_str}\n"
-                
-                rc_conf.write_text(conf_data)
-                
-                # Copy file to remote
-                subprocess.run(["rclone", "copy", str(zip_path), f"{remote}:{rclone_folder}"], timeout=300)
-                
-            return {"status": "success", "file": str(zip_path), "message": "Backup generated and synced successfully!"}
+            # Requires valid mysql credentials, assume root without pass or copanel config handles it.
+            # Usually mysqldump without credentials uses ~/.my.cnf or we just try default socket.
+            with open(out_file, "w") as f:
+                res = subprocess.run(["mysqldump", db_name], stdout=f, stderr=subprocess.PIPE, text=True)
+                if res.returncode != 0:
+                    print(f"MySQL Dump Error: {res.stderr}")
+                    return False
+            return True
         except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    @staticmethod
-    def list_cron_jobs() -> list:
-        """Retrieves CoPanel backup crons from active crontab."""
-        try:
-            res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            if res.returncode == 0:
-                lines = res.stdout.strip().split("\n")
-                results = []
-                for line in lines:
-                    if "backup_and_sync" in line:
-                        parts = line.split()
-                        if len(parts) >= 5:
-                            expression = " ".join(parts[:5])
-                            results.append({
-                                "expression": expression,
-                                "command": line,
-                                "raw": line
-                            })
-                        else:
-                            results.append({
-                                "expression": "N/A",
-                                "command": line,
-                                "raw": line
-                            })
-                return results
-        except Exception:
-            pass
-        return []
-
-    @staticmethod
-    def list_backups() -> list:
-        """Scan /opt/copanel/backups and returns local backup files."""
-        backup_dir = Path("/opt/copanel/backups")
-        if not backup_dir.exists():
-            return []
-        
-        backups = []
-        try:
-            for item in backup_dir.iterdir():
-                if item.is_file() and item.suffix == ".zip":
-                    stat = item.stat()
-                    backups.append({
-                        "name": item.name,
-                        "path": str(item),
-                        "size": stat.st_size,
-                        "modified": stat.st_mtime
-                    })
-            backups.sort(key=lambda x: x["modified"], reverse=True)
-        except Exception:
-            pass
-        return backups
-
-    @staticmethod
-    def delete_backup(filename: str) -> bool:
-        """Deletes a backup file by name from /opt/copanel/backups."""
-        try:
-            p = Path("/opt/copanel/backups") / filename
-            if p.exists() and p.is_file():
-                p.unlink()
-                return True
-        except Exception:
-            pass
-        return False
-
-    @staticmethod
-    def setup_cron(cron_expr: str = "") -> bool:
-        """Saves all backup tasks into crontab."""
-        try:
-            cfg = BackupManager.load_config()
-            tasks = cfg.get("backup_tasks", [])
-            
-            res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            current_lines = []
-            if res.returncode == 0:
-                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line and "run_backup_task" not in line]
-
-            if cfg.get("source_dir") and cfg.get("cron_expression"):
-                expr = cfg.get("cron_expression")
-                cmd = f"{expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupManager; BackupManager.backup_and_sync()' >> /opt/copanel/logs/backup.log 2>&1"
-                current_lines.append(cmd)
-
-            for t in tasks:
-                t_id = t.get("id")
-                expr = t.get("cron_expression", "0 0 * * *")
-                if not t_id or not expr:
-                    continue
-                cmd = f"{expr} /opt/copanel/venv/bin/python -c 'import sys; sys.path.append(\"/opt/copanel/backend\"); from modules.backup_manager.logic import BackupManager; BackupManager.run_backup_task(\"{t_id}\")' >> /opt/copanel/logs/backup_{t_id}.log 2>&1"
-                current_lines.append(cmd)
-
-            new_crontab = "\n".join(current_lines) + "\n"
-            subprocess.run(["crontab", "-"], input=new_crontab, text=True)
-            return True
-        except Exception:
+            print(f"Exception during mysql dump: {e}")
             return False
 
     @staticmethod
-    def delete_cron() -> bool:
-        """Removes active CoPanel backup crons."""
-        try:
-            res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            if res.returncode == 0:
-                current_lines = [line for line in res.stdout.split("\n") if line and "backup_and_sync" not in line and "run_backup_task" not in line]
-                new_crontab = "\n".join(current_lines) + "\n"
-                subprocess.run(["crontab", "-"], input=new_crontab, text=True)
-            return True
-        except Exception:
-            return False
+    def run_sync_task(profile_id: int):
+        """Runs the actual sync task blocking (used by Cron or internal tools)."""
+        profile = ProfileManager.get_profile(profile_id)
+        if not profile: return
+        
+        flags_str = profile.get("rclone_flags", "{}")
+        flags = json.loads(flags_str) if flags_str else {}
+        
+        source_path = profile["source_path"]
+        remote_path = f"{profile['remote_name']}:{profile['remote_path']}"
+        
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # 1. SQL Dump Handling
+        if profile["source_type"] == "mysql":
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dump_file = BACKUP_DIR / f"{source_path}_{timestamp}.sql"
+            success = BackupTaskEngine.export_mysql(source_path, dump_file)
+            if not success:
+                return # Abort if SQL dump fails
+            
+            # Change source_path to the generated SQL file
+            source_path = str(dump_file)
+        
+        # 2. Build rclone command
+        cmd = ["rclone", "sync" if flags.get("sync_deletions") else "copy", source_path, remote_path]
+        if flags.get("inplace"): cmd.append("--inplace")
+        if flags.get("metadata"): cmd.append("--metadata")
+        if flags.get("size_only"): cmd.append("--size-only")
+        cmd.extend(["--transfers", str(flags.get("transfers", 4))])
+        
+        # 3. Execute blocking
+        subprocess.run(cmd, capture_output=True)
+        
+        # 4. Clean up temporary SQL dump
+        if profile["source_type"] == "mysql" and os.path.exists(source_path):
+            os.remove(source_path)
+
+
+class RealtimeSyncManager:
+    """Manages background threads for Real-time inotifywait syncing."""
+    _threads = {} # profile_id -> dict
+    
+    @staticmethod
+    def update_watchers():
+        if os.name == 'nt': return
+        
+        profiles = ProfileManager.get_profiles()
+        active_realtime_ids = set()
+        
+        for p in profiles:
+            pid = p["id"]
+            if p["is_active"] and p["realtime_sync"] and p["source_type"] == "folder":
+                active_realtime_ids.add(pid)
+                if pid not in RealtimeSyncManager._threads:
+                    RealtimeSyncManager.start_watcher(p)
+            
+        # Stop watchers for inactive/deleted profiles
+        to_stop = set(RealtimeSyncManager._threads.keys()) - active_realtime_ids
+        for pid in to_stop:
+            RealtimeSyncManager.stop_watcher(pid)
 
     @staticmethod
-    def run_backup_task(task_id: str) -> dict:
-        """Executes a specific backup task by ID from backup_config.json."""
-        cfg = BackupManager.load_config()
-        tasks = cfg.get("backup_tasks", [])
-        task = next((t for t in tasks if t.get("id") == task_id), None)
+    def start_watcher(profile: dict):
+        pid = profile["id"]
+        source_path = profile["source_path"]
         
-        if not task:
-            return {"status": "error", "message": f"Backup task {task_id} not found."}
+        # If inotify-tools is missing, silently fail or mock
+        if not shutil.which("inotifywait"):
+            return
             
-        src = task.get("source_dir")
-        if not src or not Path(src).exists():
-            return {"status": "error", "message": f"Target folder {src} does not exist."}
+        def _watcher_loop():
+            proc = subprocess.Popen(
+                ["inotifywait", "-m", "-r", "-e", "modify,create,delete,move", source_path],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+            )
+            RealtimeSyncManager._threads[pid] = {"process": proc, "running": True}
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = Path("/opt/copanel/backups")
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        
-        zip_path = backup_dir / f"backup_{task_id}_{timestamp}.zip"
-        
-        try:
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                source_path = Path(src)
-                for file_path in source_path.rglob('*'):
-                    if file_path.is_file():
-                        zipf.write(file_path, file_path.relative_to(source_path))
-                        
-            remote = cfg.get("rclone_remote_name", "gdrive")
-            rclone_folder = task.get("rclone_folder", "CoPanel-Backups")
+            last_sync = 0
+            # Read blocking stream
+            for _ in proc.stdout:
+                if not RealtimeSyncManager._threads.get(pid, {}).get("running"):
+                    break
+                # Debounce logic: only trigger sync max once per 60 seconds
+                now = time.time()
+                if now - last_sync > 60:
+                    last_sync = now
+                    # Delay 10s to batch rapid events
+                    time.sleep(10)
+                    BackupTaskEngine.run_sync_task(pid)
+                    
+            proc.terminate()
             
-            if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
-                token_str = cfg.get("google_drive_refresh_token") or ""
-                is_valid_json = False
-                if token_str.strip().startswith("{"):
-                    try:
-                        import json
-                        json.loads(token_str)
-                        is_valid_json = True
-                    except Exception:
-                        pass
+        t = threading.Thread(target=_watcher_loop, daemon=True)
+        t.start()
 
-                if token_str and not is_valid_json:
-                    import json
-                    token_str = json.dumps({
-                        "access_token": "",
-                        "token_type": "Bearer",
-                        "refresh_token": token_str.strip(),
-                        "expiry": "0001-01-01T00:00:00Z"
-                    })
+    @staticmethod
+    def stop_watcher(profile_id: int):
+        t_info = RealtimeSyncManager._threads.get(profile_id)
+        if t_info:
+            t_info["running"] = False
+            t_info["process"].terminate()
+            del RealtimeSyncManager._threads[profile_id]
 
-                conf_data = f"[{remote}]\ntype = drive\n"
-                if cfg.get("google_drive_client_id"):
-                    conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
-                if cfg.get("google_drive_client_secret"):
-                    conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-                if token_str:
-                    conf_data += f"token = {token_str}\n"
-                
-                rc_conf.write_text(conf_data)
-                subprocess.run(["rclone", "copy", str(zip_path), f"{remote}:{rclone_folder}"], timeout=300)
-                
-            return {"status": "success", "file": str(zip_path), "message": f"Task {task_id} backup generated and synced successfully!"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+# Initialize DB on module load
+ProfileManager.init_db()

@@ -84,7 +84,6 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         'ssl_manager': 'SSL',
         'system_monitor': 'Monitor',
         'terminal': 'Terminal',
-        'users': 'Users',
         'web_manager': 'Web'
       }
     },
@@ -114,7 +113,6 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         'ssl_manager': 'Quản lý SSL',
         'system_monitor': 'Theo dõi hệ thống',
         'terminal': 'Dòng lệnh',
-        'users': 'Người dùng',
         'web_manager': 'Quản lý Web'
       }
     }
@@ -222,9 +220,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   });
 
   return (
-    <div className={`flex h-screen transition-colors duration-200 ${
-      isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
-    }`}>
+    <div className={`flex h-screen transition-colors duration-200 ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
+      }`}>
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
@@ -272,9 +269,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             {/* Allowed Core Module links */}
             {allowedModules.length > 0 && (
               <>
-                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${
-                  isDark ? 'text-slate-400' : 'text-slate-500'
-                }`}>
+                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'
+                  }`}>
                   {tr.modules} ({allowedModules.length})
                 </div>
                 {allowedModules.map((module) => (
@@ -315,9 +311,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             {/* Installed Dynamic Packages */}
             {installedPackages.length > 0 && (
               <>
-                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${
-                  isDark ? 'text-slate-400' : 'text-slate-500'
-                }`}>
+                <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'
+                  }`}>
                   {tr.installed} ({installedPackages.length})
                 </div>
                 {installedPackages.map((pkg) => (
@@ -350,9 +345,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Bar */}
-        <header className={`px-6 py-4 flex items-center justify-between border-b transition-colors duration-200 ${
-          isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
-        }`}>
+        <header className={`px-6 py-4 flex items-center justify-between border-b transition-colors duration-200 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+          }`}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -365,18 +359,16 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             <div className="flex items-center gap-2 ml-2">
               <button
                 onClick={() => setTheme(isDark ? 'light' : 'dark')}
-                className={`p-2 rounded-xl border transition duration-150 ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'
-                }`}
+                className={`p-2 rounded-xl border transition duration-150 ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'
+                  }`}
                 title={tr.themeTitle}
               >
                 {isDark ? <Icons.Sun className="w-4 h-4" /> : <Icons.Moon className="w-4 h-4" />}
               </button>
               <button
                 onClick={() => setLanguage(language === 'en' ? 'vi' : 'en')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
               >
                 <Icons.Globe className="w-3.5 h-3.5" />
                 {language === 'en' ? 'EN' : 'VI'}
@@ -411,9 +403,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         {/* Change Password Modal */}
         {changePwdOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-fade-in select-none">
-            <div className={`p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl relative border ${
-              isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-            }`}>
+            <div className={`p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl relative border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+              }`}>
               <div className="flex items-center justify-between">
                 <h3 className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{tr.changePassword}</h3>
                 <button onClick={() => setChangePwdOpen(false)} className="text-slate-500 hover:text-slate-300">
@@ -427,11 +418,10 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                   value={oldPwdInput}
                   onChange={(e) => setOldPwdInput(e.target.value)}
                   placeholder="••••••••"
-                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${
-                    isDark
-                      ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
-                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
-                  }`}
+                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${isDark
+                    ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
+                    }`}
                 />
               </div>
               <div className="space-y-1">
@@ -441,11 +431,10 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                   value={newPwdInput}
                   onChange={(e) => setNewPwdInput(e.target.value)}
                   placeholder="••••••••"
-                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${
-                    isDark
-                      ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
-                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
-                  }`}
+                  className={`w-full rounded-xl px-3.5 py-2 text-xs focus:outline-none transition-all border ${isDark
+                    ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 focus:border-blue-500 text-slate-100'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-blue-500 text-slate-800'
+                    }`}
                 />
               </div>
               {pwdMsg && (
@@ -456,9 +445,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setChangePwdOpen(false)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                    isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
                 >
                   {tr.cancel}
                 </button>
@@ -474,16 +462,14 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         )}
 
         {/* Content */}
-        <main className={`flex-1 overflow-auto pb-20 lg:pb-0 transition-colors duration-200 ${
-          isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
-        }`}>
+        <main className={`flex-1 overflow-auto pb-20 lg:pb-0 transition-colors duration-200 ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
+          }`}>
           <Outlet context={{ theme, setTheme, language, setLanguage }} />
         </main>
 
         {/* Mobile Bottom Footer Menu */}
-        <div className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden flex justify-around items-center h-16 border-t backdrop-blur-md px-2 ${
-          isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200 shadow-lg'
-        }`}>
+        <div className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden flex justify-around items-center h-16 border-t backdrop-blur-md px-2 ${isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200 shadow-lg'
+          }`}>
           <Link
             to="/"
             className={cn(

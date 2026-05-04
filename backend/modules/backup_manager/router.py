@@ -1,222 +1,173 @@
-"""
-Backup & Sync Management Router
-FastAPI endpoints for local directory backup, scheduling cron jobs, and Rclone OAuth.
-"""
+import os
+import json
+import subprocess
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
-from typing import Dict, Any
-from .logic import BackupManager
+from fastapi.responses import StreamingResponse
+from typing import Dict, Any, List
+from .logic import ProfileManager, BackupTaskEngine, BACKUP_DIR
+from datetime import datetime
+import asyncio
 
 router = APIRouter()
 
-@router.get("/config")
-def read_config() -> Dict[str, Any]:
-    """Get Backup and Rclone configs."""
-    try:
-        cfg = BackupManager.load_config()
-        return {"status": "success", "data": cfg}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.on_event("startup")
+async def on_startup():
+    from .logic import RealtimeSyncManager
+    RealtimeSyncManager.update_watchers()
 
-@router.post("/config")
-def save_config(cfg: dict) -> Dict[str, Any]:
-    """Save Backup and Rclone configs."""
-    try:
-        ok = BackupManager.save_config(cfg)
-        if not ok:
-            raise HTTPException(status_code=400, detail="Failed to save backup config file.")
-        return {"status": "success", "message": "Configuration saved successfully!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/profiles")
+def get_profiles() -> Dict[str, Any]:
+    return {"status": "success", "data": ProfileManager.get_profiles()}
 
-@router.get("/cronjobs")
-def get_cronjobs() -> Dict[str, Any]:
-    """Fetch active backup cron jobs."""
-    try:
-        crons = BackupManager.list_cron_jobs()
-        return {"status": "success", "data": crons}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/profiles")
+def create_profile(data: dict) -> Dict[str, Any]:
+    pid = ProfileManager.create_profile(data)
+    return {"status": "success", "id": pid}
 
-@router.post("/cronjobs")
-def save_cronjob(req: dict) -> Dict[str, Any]:
-    """Create a new backup cron job timer."""
-    try:
-        cron_expr = req.get("cron_expression")
-        if not cron_expr:
-            raise HTTPException(status_code=400, detail="Cron expression is required.")
-        ok = BackupManager.setup_cron(cron_expr)
-        if not ok:
-            raise HTTPException(status_code=400, detail="Failed to append cron job.")
-        return {"status": "success", "message": f"Successfully created cron timer: {cron_expr}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.put("/profiles/{profile_id}")
+def update_profile(profile_id: int, data: dict) -> Dict[str, Any]:
+    ok = ProfileManager.update_profile(profile_id, data)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Failed to update profile")
+    return {"status": "success"}
 
-@router.post("/cronjobs/delete")
-def remove_cronjob() -> Dict[str, Any]:
-    """Remove active backup crons."""
-    try:
-        ok = BackupManager.delete_cron()
-        if not ok:
-            raise HTTPException(status_code=400, detail="Failed to clear active cron timers.")
-        return {"status": "success", "message": "All backup crons cleared."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.delete("/profiles/{profile_id}")
+def delete_profile(profile_id: int) -> Dict[str, Any]:
+    ProfileManager.delete_profile(profile_id)
+    return {"status": "success"}
 
-@router.post("/backup-now")
-def run_backup_now() -> Dict[str, Any]:
-    """Trigger an manual, real-time backup upload."""
+@router.get("/remotes")
+def list_remotes() -> Dict[str, Any]:
+    if os.name == 'nt':
+        return {"status": "success", "data": ["gdrive:", "dropbox:", "s3:"]}
     try:
-        res = BackupManager.backup_and_sync()
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        res = subprocess.run(["rclone", "listremotes"], capture_output=True, text=True, timeout=5)
+        remotes = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        return {"status": "success", "data": remotes}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "message": str(e)}
 
-@router.get("/backups")
-def get_backups() -> Dict[str, Any]:
-    """Fetch all local backup files."""
-    try:
-        backups = BackupManager.list_backups()
-        return {"status": "success", "data": backups}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/backups/delete")
-def delete_backup_file(req: dict) -> Dict[str, Any]:
-    """Remove a backup file from disk."""
-    try:
-        filename = req.get("filename")
-        if not filename:
-            raise HTTPException(status_code=400, detail="Filename is required.")
-        ok = BackupManager.delete_backup(filename)
-        if not ok:
-            raise HTTPException(status_code=400, detail="Failed to delete backup file.")
-        return {"status": "success", "message": "Backup file removed successfully."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/exchange-oauth-code")
-def exchange_oauth_code(req: dict) -> Dict[str, Any]:
-    """Exchange OAuth code from browser with Google."""
-    try:
-        import requests
-        client_id = req.get("client_id")
-        client_secret = req.get("client_secret")
-        code = req.get("code")
-        redirect_uri = req.get("redirect_uri")
+@router.get("/explore")
+def explore_files(path: str = "/") -> Dict[str, Any]:
+    """Simple file explorer for Visual File Selector"""
+    target = Path(path)
+    if not target.exists() or not target.is_dir():
+        return {"status": "success", "data": []}
         
-        if not all([client_id, client_secret, code, redirect_uri]):
-            raise HTTPException(status_code=400, detail="Missing required OAuth parameters.")
+    items = []
+    try:
+        for entry in target.iterdir():
+            if entry.is_dir():
+                items.append({"name": entry.name, "path": str(entry), "type": "folder"})
+            else:
+                items.append({"name": entry.name, "path": str(entry), "type": "file"})
+    except Exception:
+        pass
+        
+    items.sort(key=lambda x: (x["type"] == "file", x["name"].lower()))
+    return {"status": "success", "data": items, "current_path": str(target)}
+
+@router.get("/stream_task/{profile_id}")
+async def stream_task(profile_id: int):
+    """Server-Sent Events (SSE) generator for Real-time Rclone Progress"""
+    profile = ProfileManager.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    async def event_generator():
+        flags_str = profile.get("rclone_flags", "{}")
+        flags = json.loads(flags_str) if flags_str else {}
+        source_path = profile["source_path"]
+        remote_path = f"{profile['remote_name']}:{profile['remote_path']}"
+        
+        # SQL Dump if needed
+        if profile["source_type"] == "mysql":
+            yield f"data: {json.dumps({'msg': 'Starting MySQL Dump...', 'progress': 0})}\n\n"
+            await asyncio.sleep(0.5) # Give UI time to render
             
-        res = requests.post("https://oauth2.googleapis.com/token", data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code"
-        }, timeout=30)
-        
-        if res.status_code != 200:
-            raise HTTPException(status_code=400, detail=res.text)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dump_file = BACKUP_DIR / f"{source_path}_{timestamp}.sql"
+            success = BackupTaskEngine.export_mysql(source_path, dump_file)
             
-        data = res.json()
-        import json
-        import datetime
+            if not success:
+                yield f"data: {json.dumps({'error': 'MySQL Dump Failed. Aborting.', 'progress': 0})}\n\n"
+                return
+            
+            source_path = str(dump_file)
+            yield f"data: {json.dumps({'msg': 'MySQL Dump Completed.', 'progress': 10})}\n\n"
 
-        cfg = BackupManager.load_config()
-        prev_token_str = cfg.get("google_drive_refresh_token") or "{}"
-        prev_token = {}
-        if prev_token_str.strip().startswith("{"):
-            try:
-                prev_token = json.loads(prev_token_str)
-            except Exception:
-                pass
-
-        merged_token = {
-            "access_token": data.get("access_token") or prev_token.get("access_token") or "",
-            "token_type": data.get("token_type") or prev_token.get("token_type") or "Bearer",
-            "refresh_token": data.get("refresh_token") or prev_token.get("refresh_token") or "",
-            "expiry": prev_token.get("expiry") or "0001-01-01T00:00:00Z"
-        }
-        if "expires_in" in data:
-            expiry_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=data["expires_in"])
-            merged_token["expiry"] = expiry_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-        full_token_json_str = json.dumps(merged_token)
-
-        cfg["google_drive_client_id"] = client_id
-        cfg["google_drive_client_secret"] = client_secret
-        cfg["google_drive_refresh_token"] = full_token_json_str
-        BackupManager.save_config(cfg)
-
-        return {"status": "success", "refresh_token": full_token_json_str}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/test_connection")
-def test_connection() -> Dict[str, Any]:
-    """Test connection to Google Drive using Rclone."""
-    import subprocess
-    from .logic import BackupManager
-    cfg = BackupManager.load_config()
-    remote = cfg.get("rclone_remote_name", "gdrive")
-    
-    if not cfg.get("google_drive_refresh_token"):
-        raise HTTPException(status_code=400, detail="Missing Google Drive Token. Please authenticate first.")
+        cmd = ["rclone", "sync" if flags.get("sync_deletions") else "copy", source_path, remote_path]
+        if flags.get("inplace"): cmd.append("--inplace")
+        if flags.get("metadata"): cmd.append("--metadata")
+        if flags.get("size_only"): cmd.append("--size-only")
+        cmd.extend(["--transfers", str(flags.get("transfers", 4))])
         
-    try:
-        from pathlib import Path
-        rc_conf = Path("/root/.config/rclone/rclone.conf")
-        rc_conf.parent.mkdir(parents=True, exist_ok=True)
+        # Enforce JSON log format for SSE parsing
+        cmd.extend(["--use-json-log", "-v", "--stats", "1s"])
         
-        token_str = cfg.get("google_drive_refresh_token") or ""
-        is_valid_json = False
-        if token_str.strip().startswith("{"):
-            try:
-                import json
-                json.loads(token_str)
-                is_valid_json = True
-            except Exception:
-                pass
+        if os.name == 'nt':
+            # Mock SSE for Windows
+            yield f"data: {json.dumps({'msg': 'Mock sync started on Windows', 'progress': 20})}\n\n"
+            await asyncio.sleep(2)
+            yield f"data: {json.dumps({'msg': 'Syncing...', 'progress': 60})}\n\n"
+            await asyncio.sleep(2)
+            yield f"data: {json.dumps({'msg': 'Sync Complete!', 'progress': 100})}\n\n"
+            return
+            
+        try:
+            # Run rclone asynchronously and capture streaming output
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                    
+                line_str = line.decode('utf-8').strip()
+                if not line_str: continue
+                
+                try:
+                    log_data = json.loads(line_str)
+                    # Parse rclone stats block if present
+                    if "stats" in log_data:
+                        stats = log_data["stats"]
+                        bytes_total = stats.get("bytes", 0)
+                        bytes_done = stats.get("bytes", 0)
+                        checks = stats.get("checks", 0)
+                        transfers = stats.get("transfers", 0)
+                        
+                        # Rclone doesn't always give easy 0-100% in stats dict directly,
+                        # but we can send raw stats up to UI
+                        payload = {
+                            "progress": -1, # UI handles dynamic stats mapping
+                            "stats": stats,
+                            "msg": f"Transferred: {bytes_done} bytes, Checks: {checks}"
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'msg': log_data.get('msg', ''), 'level': log_data.get('level', '')})}\n\n"
+                except json.JSONDecodeError:
+                    yield f"data: {json.dumps({'msg': line_str})}\n\n"
 
-        if token_str and not is_valid_json:
-            import json
-            token_str = json.dumps({
-                "access_token": "",
-                "token_type": "Bearer",
-                "refresh_token": token_str.strip(),
-                "expiry": "0001-01-01T00:00:00Z"
-            })
+            await process.wait()
+            
+            if process.returncode == 0:
+                yield f"data: {json.dumps({'msg': 'Sync Completed Successfully!', 'progress': 100, 'done': True})}\n\n"
+            else:
+                yield f"data: {json.dumps({'error': f'Rclone exited with code {process.returncode}', 'progress': 100, 'done': True})}\n\n"
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+        finally:
+            if profile["source_type"] == "mysql" and os.path.exists(source_path):
+                try:
+                    os.remove(source_path)
+                except Exception:
+                    pass
 
-        conf_data = f"[{remote}]\ntype = drive\n"
-        if cfg.get("google_drive_client_id"):
-            conf_data += f"client_id = {cfg.get('google_drive_client_id')}\n"
-        if cfg.get("google_drive_client_secret"):
-            conf_data += f"client_secret = {cfg.get('google_drive_client_secret')}\n"
-        if token_str:
-            conf_data += f"token = {token_str}\n"
-        rc_conf.write_text(conf_data)
-        
-        res = subprocess.run(["rclone", "about", f"{remote}:"], capture_output=True, text=True, timeout=15)
-        if res.returncode == 0:
-            return {"status": "success", "message": "Connected to Google Drive successfully!"}
-        else:
-            return {"status": "error", "message": res.stderr.strip() or "Rclone test failed."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/backup-task-now")
-def run_backup_task_now(req: dict) -> Dict[str, Any]:
-    """Trigger a specific multiple backup task immediately."""
-    from .logic import BackupManager
-    try:
-        t_id = req.get("id")
-        if not t_id:
-            raise HTTPException(status_code=400, detail="Task ID is required.")
-        res = BackupManager.run_backup_task(t_id)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

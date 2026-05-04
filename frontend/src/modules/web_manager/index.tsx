@@ -1,6 +1,6 @@
 /**
- * Web Manager - Multi-Tab High-End Management Dashboard
- * Dynamic tabs: Website, Web Services, SQL Databases & Users, PHP Manager.
+ * Web Manager v1.0.1 - Multi-Tab High-End Management Dashboard
+ * Dynamic tabs: Website, Web Services (Stack Wizard), SQL Databases & Users, PHP Manager.
  */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -46,8 +46,16 @@ export default function WebManagerDashboard() {
   // Tab 2: Services States
   const [webServices, setWebServices] = useState<any[]>([]);
   const [loadingServices, setLoadingServices] = useState<boolean>(false);
+  const [installingStack, setInstallingStack] = useState<string | null>(null);
+  const [stackMsg, setStackMsg] = useState<{ msg: string; isError: boolean } | null>(null);
 
   // Tab 3: Databases & Users States
+  // Smart DB Admin engines
+  const [dbEngines, setDbEngines] = useState<any[]>([]);
+  const [loadingEngines, setLoadingEngines] = useState<boolean>(false);
+  const [installingAdminer, setInstallingAdminer] = useState<boolean>(false);
+  const [adminerMsg, setAdminerMsg] = useState<{ msg: string; isError: boolean } | null>(null);
+
   const [databases, setDatabases] = useState<any[]>([]);
   const [loadingDbs, setLoadingDbs] = useState<boolean>(false);
   const [newDbName, setNewDbName] = useState<string>('');
@@ -113,9 +121,19 @@ export default function WebManagerDashboard() {
       create: 'Create',
       cancel: 'Cancel',
 
+      // Web Services
+      wsTitle: 'Web Services & Stack Manager',
+      wsDesc: 'Select and manage your primary web server stack. Compatibility conflicts are shown automatically.',
+      wsStackTitle: 'Initialize Web Server Stack',
+      wsStackDesc: 'Choose your primary web server. Only one server can listen on port 80/443 at a time.',
+      wsConflict: 'Conflicts with',
+      wsInstallStack: 'Install This Stack',
+      wsCombo: 'Nginx + Apache Combo',
+      wsComboDesc: 'Nginx handles port 80 as a proxy; Apache processes PHP on port 8080.',
+
       // Databases
-      dbTitle: 'MySQL / MariaDB & User Management',
-      dbDesc: 'Instantly create or drop your databases and database users. Integrate with quick links for viewing.',
+      dbTitle: 'Database Services & Users',
+      dbDesc: 'Manage databases and users. Admin tools are detected automatically based on installed engines.',
       createDbBtn: 'Create Database',
       dbNameLabel: 'New Database Name',
       dbNamePlaceholder: 'e.g. blog_database',
@@ -185,8 +203,8 @@ export default function WebManagerDashboard() {
       cancel: 'Hủy',
 
       // Databases
-      dbTitle: 'Quản lý MySQL / MariaDB & Users',
-      dbDesc: 'Khởi tạo, xóa cơ sở dữ liệu SQL và tài khoản truy cập dễ dàng. Kết nối phpMyAdmin trực tiếp.',
+      dbTitle: 'Dịch vụ Database & Users',
+      dbDesc: 'Quản lý database và tài khoản. Công cụ admin được phát hiện tự động theo engine đã cài.',
       createDbBtn: 'Tạo mới Database',
       dbNameLabel: 'Tên Database',
       dbNamePlaceholder: 'VD: dulieu_blog',
@@ -205,8 +223,14 @@ export default function WebManagerDashboard() {
       noUsers: 'Chưa có tài khoản database nào được tìm thấy.',
 
       // Web Services
-      wsTitle: 'Dịch vụ Web & Reverse Proxies',
-      wsDesc: 'Kiểm tra và quản lý trạng thái của các dịch vụ Nginx, Apache2 hoặc OpenLiteSpeed.',
+      wsTitle: 'Dịch vụ Web & Quản lý Stack',
+      wsDesc: 'Chọn và quản lý web server chính. Cảnh báo xung đột được phát hiện tự động.',
+      wsStackTitle: 'Khởi tạo Web Server Stack',
+      wsStackDesc: 'Chọn web server chính. Chỉ một dịch vụ có thể lắng nghe cổng 80/443 cùng lúc.',
+      wsConflict: 'Xung đột với',
+      wsInstallStack: 'Cài đặt Stack này',
+      wsCombo: 'Combo Nginx + Apache',
+      wsComboDesc: 'Nginx xử lý cổng 80 làm proxy; Apache xử lý PHP ở cổng 8080.',
       colService: 'Tên dịch vụ',
       colServiceStatus: 'Trạng thái',
       colInstalled: 'Đã cài đặt',
@@ -254,6 +278,21 @@ export default function WebManagerDashboard() {
       console.error(err);
     } finally {
       setLoadingServices(false);
+    }
+  };
+
+  const fetchDbEngines = async () => {
+    setLoadingEngines(true);
+    try {
+      const res = await fetch('/api/web_manager/db_admin_tools');
+      if (res.ok) {
+        const d = await res.json();
+        if (d.engines) setDbEngines(d.engines);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingEngines(false);
     }
   };
 
@@ -347,9 +386,11 @@ export default function WebManagerDashboard() {
       fetchDatabases();
       fetchDbUsers();
       fetchPmaCredentials();
+      fetchDbEngines();
     }
     if (activeTab === 'php') fetchPhpIni(phpManagerVersion);
   }, [activeTab, phpManagerVersion]);
+
 
   // PHP version/module options fetching
   useEffect(() => {
@@ -478,6 +519,49 @@ export default function WebManagerDashboard() {
       console.error(err);
     }
   };
+
+  const handleInstallStack = async (stack: string) => {
+    setInstallingStack(stack);
+    setStackMsg(null);
+    try {
+      const res = await fetch('/api/web_manager/web_services/install_stack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stack })
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setStackMsg({ msg: d.message || 'Stack installed.', isError: false });
+        fetchWebServices();
+      } else {
+        setStackMsg({ msg: d.detail || 'Install failed.', isError: true });
+      }
+    } catch (err) {
+      setStackMsg({ msg: 'Network error.', isError: true });
+    } finally {
+      setInstallingStack(null);
+    }
+  };
+
+  const handleInstallAdminer = async () => {
+    setInstallingAdminer(true);
+    setAdminerMsg(null);
+    try {
+      const res = await fetch('/api/web_manager/db_admin_tools/adminer/install', { method: 'POST' });
+      const d = await res.json();
+      if (res.ok) {
+        setAdminerMsg({ msg: d.message || 'Adminer installed.', isError: false });
+        fetchDbEngines();
+      } else {
+        setAdminerMsg({ msg: d.detail || 'Install failed.', isError: true });
+      }
+    } catch {
+      setAdminerMsg({ msg: 'Network error.', isError: true });
+    } finally {
+      setInstallingAdminer(false);
+    }
+  };
+
 
   const handleCreateDatabase = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -630,7 +714,7 @@ export default function WebManagerDashboard() {
             <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.0
+              v1.0.1
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -879,214 +963,181 @@ export default function WebManagerDashboard() {
                       <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
                         {ws.name}
                       </span>
-                      <span className={`px-2 py-0.5 rounded-xl border text-[10px] font-bold uppercase tracking-wide ${
-                        ws.installed
-                          ? ws.status === 'running'
-                            ? 'bg-green-500/10 text-green-500 border-green-500/20'
-                            : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
-                          : 'bg-red-500/10 text-red-500 border-red-500/20'
-                      }`}>
-                        {ws.installed ? ws.status : 'not_installed'}
+                                               {ws.installed ? ws.status : 'not installed'}
                       </span>
+                      <p className={`text-[11px] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{ws.description}</p>
+                      {ws.conflicts_with?.length > 0 && (
+                        <div className={`flex items-center gap-1.5 text-[10px] font-semibold mt-1 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
+                          <Icons.AlertTriangle className="w-3 h-3 shrink-0" />
+                          {tr.wsConflict}: {ws.conflicts_with.join(', ')}
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 border-t pt-3 dark:border-slate-800/60">
+                  <div className="border-t pt-3 dark:border-slate-800/60">
                     {!ws.installed ? (
                       <button
-                        onClick={() => handleServiceAction(ws.id, 'install')}
-                        className={`w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-xs text-white transition-all shadow-sm`}
+                        onClick={() => handleInstallStack(ws.id)}
+                        disabled={installingStack !== null || ws.conflicts_with?.length > 0}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-bold text-xs text-white transition shadow-sm"
                       >
-                        <Icons.Download className="w-3.5 h-3.5" />
-                        Install
+                        {installingStack === ws.id ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                        {installingStack === ws.id ? (language === 'vi' ? 'Đang cài...' : 'Installing...') : tr.wsInstallStack}
                       </button>
                     ) : (
                       <div className="grid grid-cols-3 gap-1.5 w-full">
-                        <button
-                          onClick={() => handleServiceAction(ws.id, 'start')}
-                          className={`flex items-center justify-center gap-1 p-1.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold shadow-sm transition`}
-                        >
-                          <Icons.Play className="w-3 h-3 shrink-0" />
-                        </button>
-                        <button
-                          onClick={() => handleServiceAction(ws.id, 'stop')}
-                          className={`flex items-center justify-center gap-1 p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold shadow-sm transition`}
-                        >
-                          <Icons.Square className="w-3 h-3 shrink-0" />
-                        </button>
-                        <button
-                          onClick={() => handleServiceAction(ws.id, 'restart')}
-                          className={`flex items-center justify-center gap-1 p-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl text-xs font-bold shadow-sm transition`}
-                        >
-                          <Icons.RotateCcw className="w-3 h-3 shrink-0" />
-                        </button>
+                        <button onClick={() => handleServiceAction(ws.id, 'start')} className="flex items-center justify-center p-1.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold transition"><Icons.Play className="w-3 h-3" /></button>
+                        <button onClick={() => handleServiceAction(ws.id, 'stop')} className="flex items-center justify-center p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition"><Icons.Square className="w-3 h-3" /></button>
+                        <button onClick={() => handleServiceAction(ws.id, 'restart')} className="flex items-center justify-center p-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl text-xs font-bold transition"><Icons.RotateCcw className="w-3 h-3" /></button>
                       </div>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${
-              isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
-            }`}>
-              No web services status found.
+
+            {/* Nginx + Apache Combo */}
+            <div className={`border rounded-2xl p-5 space-y-3 ${isDark ? 'border-violet-800/30 bg-violet-950/10' : 'border-violet-200 bg-violet-50/40'}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
+                    <Icons.Layers className="w-4 h-4" /> {tr.wsCombo}
+                  </h4>
+                  <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.wsComboDesc}</p>
+                </div>
+                <button
+                  onClick={() => handleInstallStack('nginx_apache')}
+                  disabled={installingStack !== null}
+                  className="shrink-0 flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-violet-600 hover:bg-violet-500 text-white transition shadow-sm disabled:opacity-50"
+                >
+                  {installingStack === 'nginx_apache' ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                  {tr.wsInstallStack}
+                </button>
+              </div>
+              <div className={`text-[11px] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${isDark ? 'bg-amber-950/20 border-amber-800/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                <Icons.Info className="w-3.5 h-3.5 shrink-0" />
+                {language === 'vi' ? 'Nginx nghe cổng 80/443, Apache2 tự động cấu hình sang cổng 8080.' : 'Nginx listens on 80/443; Apache2 is auto-configured to port 8080.'}
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
 
       {activeTab === 'databases' && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
 
-          {/* phpMyAdmin Credentials Panel - full width */}
+          {/* Smart DB Admin Panel - full width */}
           <div className={`md:col-span-2 border rounded-2xl p-5 space-y-4 transition-all ${
-            isDark ? 'bg-indigo-950/20 border-indigo-800/30' : 'bg-indigo-50/50 border-indigo-200'
+            isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
-                  <Icons.Database className="w-4 h-4" /> phpMyAdmin
-                  {pmaCredentials?.installed
-                    ? <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200'}`}>Installed</span>
-                    : <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${isDark ? 'bg-red-500/15 text-red-400 border-red-500/30' : 'bg-red-100 text-red-600 border-red-200'}`}>Not installed</span>
-                  }
-                </h3>
-                <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {language === 'vi' ? 'Quản lý tài khoản truy cập phpMyAdmin' : 'Manage phpMyAdmin access credentials'}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setIsEditingPma(!isEditingPma)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition ${
-                    isDark ? 'bg-indigo-900/40 border-indigo-700 text-indigo-300 hover:bg-indigo-800/60' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100'
-                  }`}
-                >
-                  <Icons.Settings className="w-3.5 h-3.5" />
-                  {isEditingPma
-                    ? (language === 'vi' ? 'Hủy' : 'Cancel')
-                    : (language === 'vi' ? 'Quản lý / Đổi thông tin' : 'Manage / Edit Account')}
-                </button>
-                <button
-                  onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}/phpmyadmin`, '_blank')}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm"
-                >
-                  <Icons.ExternalLink className="w-3.5 h-3.5" />
-                  {language === 'vi' ? 'Mở phpMyAdmin' : 'Open phpMyAdmin'}
-                </button>
-              </div>
+            <div>
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                <Icons.Database className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                {language === 'vi' ? 'Công cụ Quản lý Database Admin' : 'Database Admin Tools'}
+              </h3>
+              <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
             </div>
 
-            {isEditingPma ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border p-4 rounded-xl dark:border-indigo-900/40">
-                <div>
-                  <label className={`text-[11px] font-bold uppercase tracking-wider mb-1 block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Username</label>
-                  <input
-                    type="text"
-                    value={pmaUserEdit}
-                    onChange={(e) => setPmaUserEdit(e.target.value)}
-                    placeholder="E.g. root"
-                    className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-indigo-500 ${
-                      isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                    }`}
-                  />
-                </div>
-                <div>
-                  <label className={`text-[11px] font-bold uppercase tracking-wider mb-1 block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Password</label>
-                  <input
-                    type="password"
-                    value={pmaPassEdit}
-                    onChange={(e) => setPmaPassEdit(e.target.value)}
-                    placeholder="Enter password"
-                    className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-indigo-500 ${
-                      isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                    }`}
-                  />
-                </div>
-                <div className="sm:col-span-2 flex justify-end">
-                  <button
-                    onClick={handleSavePmaCredentials}
-                    disabled={!pmaUserEdit || !pmaPassEdit}
-                    className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition shadow-sm"
-                  >
-                    <Icons.Save className="w-3.5 h-3.5" />
-                    {language === 'vi' ? 'Lưu tài khoản' : 'Save Account'}
-                  </button>
-                </div>
+            {adminerMsg && (
+              <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${adminerMsg.isError ? (isDark ? 'bg-red-950/20 border-red-800/40 text-red-400' : 'bg-red-50 border-red-200 text-red-600') : (isDark ? 'bg-green-950/20 border-green-800/40 text-green-400' : 'bg-green-50 border-green-200 text-green-700')}`}>
+                {adminerMsg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />}
+                <span>{adminerMsg.msg}</span>
               </div>
-            ) : pmaCredentials?.installed && (
-              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3`}>
-                {/* Username */}
-                <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${
-                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
-                }`}>
-                  <Icons.User className={`w-4 h-4 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Username</div>
-                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{pmaCredentials.user || 'N/A'}</div>
-                  </div>
-                  {pmaCredentials.user && (
-                    <button
-                      onClick={() => copyPma('user', pmaCredentials.user)}
-                      className={`p-1.5 rounded-lg border transition shrink-0 ${
-                        pmaCopied === 'user'
-                          ? 'bg-green-500/20 border-green-500/40 text-green-400'
-                          : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
-                      }`}
-                    >
-                      {pmaCopied === 'user' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
-                </div>
+            )}
 
-                {/* Password */}
-                <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${
-                  isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
-                }`}>
-                  <Icons.KeyRound className={`w-4 h-4 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Password</div>
-                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                      {pmaPassVisible ? (pmaCredentials.password || 'N/A') : '••••••••••••'}
+            {loadingEngines ? (
+              <div className="flex items-center gap-2 text-slate-400 text-xs">
+                <Icons.Loader className="w-4 h-4 animate-spin text-blue-500" />
+                <span>{language === 'vi' ? 'Đang phát hiện database engines...' : 'Detecting database engines...'}</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {dbEngines.map((engine: any, idx: number) => {
+                  const colorMap: Record<string, string> = {
+                    mysql: isDark ? 'border-blue-800/40 bg-blue-950/15' : 'border-blue-200 bg-blue-50/40',
+                    postgresql: isDark ? 'border-sky-800/40 bg-sky-950/15' : 'border-sky-200 bg-sky-50/40',
+                    adminer: isDark ? 'border-emerald-800/40 bg-emerald-950/15' : 'border-emerald-200 bg-emerald-50/40',
+                  };
+                  const iconColorMap: Record<string, string> = {
+                    mysql: isDark ? 'text-blue-400' : 'text-blue-600',
+                    postgresql: isDark ? 'text-sky-400' : 'text-sky-600',
+                    adminer: isDark ? 'text-emerald-400' : 'text-emerald-600',
+                  };
+                  return (
+                    <div key={idx} className={`border rounded-2xl p-5 flex flex-col gap-4 transition ${colorMap[engine.id] || (isDark ? 'border-slate-800/60 bg-slate-950/30' : 'border-slate-200 bg-slate-50/50')}`}>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{engine.name}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                            engine.status === 'running' ? (isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200')
+                            : engine.status === 'stopped' ? (isDark ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-200')
+                            : engine.status === 'available' ? (isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-100 text-emerald-700 border-emerald-200')
+                            : (isDark ? 'bg-slate-500/15 text-slate-400 border-slate-500/30' : 'bg-slate-100 text-slate-500 border-slate-200')
+                          }`}>
+                            {engine.status === 'not_installed' ? (language === 'vi' ? 'Chưa cài' : 'Not installed') : engine.status}
+                          </span>
+                        </div>
+                        {engine.version && <p className={`text-[11px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{engine.version}</p>}
+                        <div className="flex items-center gap-1.5">
+                          <Icons.ExternalLink className={`w-3 h-3 ${iconColorMap[engine.id] || 'text-blue-500'}`} />
+                          <span className={`text-[11px] font-semibold ${iconColorMap[engine.id] || 'text-blue-500'}`}>{engine.admin_name}</span>
+                          {engine.admin_installed
+                            ? <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700'}`}>✓</span>
+                            : <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{language === 'vi' ? 'Chưa cài' : 'Not installed'}</span>
+                          }
+                        </div>
+                      </div>
+                      <div className="border-t pt-3 dark:border-slate-800/40 flex flex-col gap-2">
+                        {engine.admin_installed ? (
+                          <button
+                            onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}${engine.admin_url}`, '_blank')}
+                            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white transition shadow-sm ${
+                              engine.id === 'mysql' ? 'bg-blue-600 hover:bg-blue-500'
+                              : engine.id === 'postgresql' ? 'bg-sky-600 hover:bg-sky-500'
+                              : 'bg-emerald-600 hover:bg-emerald-500'
+                            }`}
+                          >
+                            <Icons.ExternalLink className="w-3.5 h-3.5" />
+                            {language === 'vi' ? `Mở ${engine.admin_name}` : `Open ${engine.admin_name}`}
+                          </button>
+                        ) : engine.id === 'adminer' ? (
+                          <button
+                            onClick={handleInstallAdminer}
+                            disabled={installingAdminer}
+                            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition shadow-sm"
+                          >
+                            {installingAdminer ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                            {installingAdminer ? (language === 'vi' ? 'Đang cài...' : 'Installing...') : (language === 'vi' ? 'Cài Adminer' : 'Install Adminer')}
+                          </button>
+                        ) : (
+                          <div className={`text-[11px] text-center py-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                            {language === 'vi' ? `${engine.name} chưa được cài đặt` : `${engine.name} not installed`}
+                          </div>
+                        )}
+                        {/* phpMyAdmin credentials for MySQL */}
+                        {engine.id === 'mysql' && engine.admin_installed && (
+                          <div className="space-y-2 mt-1">
+                            <button onClick={() => setIsEditingPma(v => !v)} className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl border transition ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                              <Icons.Settings className="w-3.5 h-3.5" />
+                              {isEditingPma ? (language === 'vi' ? 'Hủy' : 'Cancel') : (language === 'vi' ? 'Quản lý tài khoản MySQL' : 'Manage MySQL Account')}
+                            </button>
+                            {isEditingPma && (
+                              <div className="space-y-2 border rounded-xl p-3 dark:border-slate-800">
+                                <input type="text" value={pmaUserEdit} onChange={e => setPmaUserEdit(e.target.value)} placeholder="Username" className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-blue-500 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`} />
+                                <input type="password" value={pmaPassEdit} onChange={e => setPmaPassEdit(e.target.value)} placeholder="Password" className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-blue-500 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`} />
+                                <button onClick={handleSavePmaCredentials} disabled={!pmaUserEdit || !pmaPassEdit} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition">
+                                  <Icons.Save className="w-3.5 h-3.5" />{language === 'vi' ? 'Lưu tài khoản' : 'Save Account'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  {pmaCredentials.password && (
-                    <>
-                      <button
-                        onClick={() => setPmaPassVisible(v => !v)}
-                        className={`p-1.5 rounded-lg border transition shrink-0 ${
-                          isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {pmaPassVisible ? <Icons.EyeOff className="w-3.5 h-3.5" /> : <Icons.Eye className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        onClick={() => copyPma('pass', pmaCredentials.password)}
-                        className={`p-1.5 rounded-lg border transition shrink-0 ${
-                          pmaCopied === 'pass'
-                            ? 'bg-green-500/20 border-green-500/40 text-green-400'
-                            : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
-                        }`}
-                      >
-                        {pmaCopied === 'pass' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </>
-                  )}
-                </div>
+                  );
+                })}
               </div>
             )}
-
-            {!pmaCredentials?.installed && (
-              <div className={`text-xs p-3 rounded-xl border ${
-                isDark ? 'bg-slate-900/40 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-500'
-              }`}>
-                ⚠ {language === 'vi'
-                  ? 'phpMyAdmin chưa được cài đặt. Chạy lại install.sh để cài MariaDB + phpMyAdmin tự động.'
-                  : 'phpMyAdmin is not installed. Re-run install.sh to install MariaDB + phpMyAdmin automatically.'}
-              </div>
-            )}
-          </div>
 
           {/* Databases Panel */}
           <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${

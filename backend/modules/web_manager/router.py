@@ -393,41 +393,100 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
 
 @router.get("/web_services")
 async def list_web_services() -> Dict[str, Any]:
-    """Retrieve status of main web server services."""
+    """Retrieve status of main web server services with conflict info."""
+    import shutil
+
+    # Conflict rules: if a service is installed/running, it conflicts with others on port 80
+    CONFLICT_MAP = {
+        "nginx": ["apache2", "litespeed"],
+        "apache2": ["nginx", "litespeed"],
+        "litespeed": ["nginx", "apache2"],
+    }
+
     services = [
-        {"id": "nginx", "name": "Nginx", "installed": False, "status": "not_installed"},
-        {"id": "apache2", "name": "Apache2", "installed": False, "status": "not_installed"},
-        {"id": "litespeed", "name": "OpenLiteSpeed", "installed": False, "status": "not_installed"},
+        {"id": "nginx",     "name": "Nginx",           "description": "High-performance HTTP & reverse proxy server.", "installed": False, "status": "not_installed", "conflicts_with": []},
+        {"id": "apache2",   "name": "Apache2",          "description": "Battle-tested web server with .htaccess support.", "installed": False, "status": "not_installed", "conflicts_with": []},
+        {"id": "litespeed", "name": "OpenLiteSpeed",    "description": "Low-RAM alternative with LSPHP & LSCache support.", "installed": False, "status": "not_installed", "conflicts_with": []},
     ]
 
-    import shutil
     if IS_WINDOWS:
-        # Mock mode on Windows
-        services[0]["installed"] = True
-        services[0]["status"] = "running"
-        services[1]["installed"] = False
-        services[1]["status"] = "not_installed"
-        services[2]["installed"] = False
-        services[2]["status"] = "not_installed"
+        services[0].update({"installed": True, "status": "running"})
+        # Populate conflicts based on installed state
+        for s in services:
+            if s["installed"]:
+                s["conflicts_with"] = CONFLICT_MAP.get(s["id"], [])
         return {"status": "success", "services": services}
 
     # Query systemctl on Linux
+    installed_ids = set()
     for s in services:
-        service_id = s["id"]
-        # Use shutil.which or systemctl to see if installed
-        bin_exists = shutil.which(service_id) or shutil.which("openlitespeed" if service_id == "litespeed" else service_id)
-        if bin_exists or os.path.exists(f"/etc/{service_id}"):
+        sid = s["id"]
+        bin_exists = shutil.which(sid) or shutil.which("openlitespeed" if sid == "litespeed" else sid)
+        if bin_exists or os.path.exists(f"/etc/{sid}"):
             s["installed"] = True
+            installed_ids.add(sid)
             try:
-                res = subprocess.run(["systemctl", "is-active", service_id], capture_output=True, text=True)
-                if res.stdout.strip() == "active":
-                    s["status"] = "running"
-                else:
-                    s["status"] = "stopped"
+                res = subprocess.run(["systemctl", "is-active", sid], capture_output=True, text=True)
+                s["status"] = "running" if res.stdout.strip() == "active" else "stopped"
             except Exception:
                 s["status"] = "stopped"
 
+    # Populate conflicts: only list conflicts that are actually installed
+    for s in services:
+        s["conflicts_with"] = [c for c in CONFLICT_MAP.get(s["id"], []) if c in installed_ids]
+
     return {"status": "success", "services": services}
+
+
+@router.post("/web_services/install_stack")
+async def install_web_stack(req: dict) -> Dict[str, Any]:
+    """Install a chosen web server stack with conflict guard."""
+    import shutil
+    stack = req.get("stack", "nginx")  # nginx | apache2 | litespeed | nginx_apache
+
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Stack '{stack}' install simulated (Windows mock)."}
+
+    pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
+    if not pkg_manager:
+        raise HTTPException(status_code=400, detail="No supported package manager found.")
+
+    install_cmds: List[List[str]] = []
+
+    if stack == "nginx":
+        install_cmds.append(["sudo", pkg_manager, "install", "-y", "nginx"])
+    elif stack == "apache2":
+        pkg = "apache2" if pkg_manager == "apt-get" else "httpd"
+        install_cmds.append(["sudo", pkg_manager, "install", "-y", pkg])
+    elif stack == "litespeed":
+        # OpenLiteSpeed repo install
+        install_cmds.append(["sudo", pkg_manager, "install", "-y", "wget"])
+        install_cmds.append(["bash", "-c",
+            "wget -O - https://repo.litespeed.sh | sudo bash && "
+            + ("sudo apt-get install -y openlitespeed" if pkg_manager == "apt-get" else "sudo yum install -y openlitespeed")
+        ])
+    elif stack == "nginx_apache":
+        pkg = "apache2" if pkg_manager == "apt-get" else "httpd"
+        install_cmds.append(["sudo", pkg_manager, "install", "-y", "nginx", pkg])
+        # Configure Apache to listen on 8080
+        apache_conf = "/etc/apache2/ports.conf" if pkg_manager == "apt-get" else "/etc/httpd/conf/httpd.conf"
+        if os.path.exists(apache_conf):
+            try:
+                with open(apache_conf, "r") as f:
+                    content = f.read()
+                content = content.replace("Listen 80", "Listen 8080")
+                with open(apache_conf, "w") as f:
+                    f.write(content)
+            except Exception:
+                pass
+
+    for cmd in install_cmds:
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"Install failed: {e.stderr or e.stdout}")
+
+    return {"status": "success", "message": f"Stack '{stack}' installed successfully."}
 
 @router.post("/web_services/{service_id}/{action}")
 async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
@@ -454,6 +513,148 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail=f"Service control failed: {e.stderr or e.stdout}")
 
     return {"status": "error", "message": "Unknown action"}
+
+
+
+@router.get("/db_admin_tools")
+async def get_db_admin_tools() -> Dict[str, Any]:
+    """Detect installed database engines and their admin tools."""
+    import shutil
+
+    def check_service_running(service: str) -> bool:
+        if IS_WINDOWS:
+            return False
+        try:
+            res = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True)
+            return res.stdout.strip() == "active"
+        except Exception:
+            return False
+
+    def get_db_version(cmd: List[str]) -> str:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            return res.stdout.strip().split("\n")[0] if res.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    engines = []
+
+    # MySQL / MariaDB
+    mysql_installed = bool(shutil.which("mysql") or shutil.which("mariadb") or os.path.exists("/var/lib/mysql"))
+    mysql_version = ""
+    if mysql_installed and not IS_WINDOWS:
+        mysql_version = get_db_version(["mysql", "--version"])
+    pma_installed = os.path.exists("/usr/share/phpmyadmin") or os.path.exists("/var/www/html/phpmyadmin")
+    engines.append({
+        "id": "mysql",
+        "name": "MySQL / MariaDB",
+        "installed": mysql_installed,
+        "version": mysql_version,
+        "status": "running" if (mysql_installed and check_service_running("mysql")) or (mysql_installed and check_service_running("mariadb")) else ("stopped" if mysql_installed else "not_installed"),
+        "admin_tool": "phpmyadmin",
+        "admin_name": "phpMyAdmin",
+        "admin_url": "/phpmyadmin",
+        "admin_installed": pma_installed,
+    })
+
+    # PostgreSQL
+    pg_installed = bool(shutil.which("psql") or os.path.exists("/var/lib/postgresql"))
+    pg_version = ""
+    if pg_installed and not IS_WINDOWS:
+        pg_version = get_db_version(["psql", "--version"])
+    pgadmin_installed = os.path.exists("/usr/lib/python3/dist-packages/pgadmin4") or os.path.exists("/etc/pgadmin")
+    engines.append({
+        "id": "postgresql",
+        "name": "PostgreSQL",
+        "installed": pg_installed,
+        "version": pg_version,
+        "status": "running" if (pg_installed and check_service_running("postgresql")) else ("stopped" if pg_installed else "not_installed"),
+        "admin_tool": "pgadmin",
+        "admin_name": "pgAdmin 4",
+        "admin_url": "/pgadmin4",
+        "admin_installed": pgadmin_installed,
+    })
+
+    # Adminer — universal lightweight fallback
+    adminer_paths = ["/usr/share/adminer/adminer.php", "/var/www/html/adminer.php"]
+    adminer_installed = any(os.path.exists(p) for p in adminer_paths)
+    engines.append({
+        "id": "adminer",
+        "name": "Adminer",
+        "installed": True,  # Always available as option
+        "version": "latest",
+        "status": "available",
+        "admin_tool": "adminer",
+        "admin_name": "Adminer (Universal)",
+        "admin_url": "/adminer",
+        "admin_installed": adminer_installed,
+    })
+
+    return {"status": "success", "engines": engines}
+
+
+@router.post("/db_admin_tools/adminer/install")
+async def install_adminer() -> Dict[str, Any]:
+    """Download and configure Adminer as a universal DB admin tool."""
+    if IS_WINDOWS:
+        return {"status": "success", "message": "Adminer install simulated (Windows mock)."}
+    import shutil
+    import urllib.request
+
+    adminer_dir = "/usr/share/adminer"
+    adminer_path = f"{adminer_dir}/adminer.php"
+    nginx_conf = "/etc/nginx/conf.d/adminer.conf"
+    apache_conf = "/etc/apache2/conf-available/adminer.conf"
+
+    try:
+        os.makedirs(adminer_dir, exist_ok=True)
+        url = "https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
+        urllib.request.urlretrieve(url, adminer_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download Adminer: {e}")
+
+    # Create Nginx config for Adminer
+    if shutil.which("nginx"):
+        nginx_config = f"""server {{
+    listen 80;
+    server_name _;
+    location /adminer {{
+        alias {adminer_dir};
+        index adminer.php;
+        location ~ \\.php$ {{
+            include fastcgi_params;
+            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+        }}
+    }}
+}}
+"""
+        try:
+            with open(nginx_conf, "w") as f:
+                f.write(nginx_config)
+            subprocess.run(["nginx", "-t"], check=True, capture_output=True)
+            subprocess.run(["systemctl", "reload", "nginx"], check=False)
+        except Exception:
+            pass
+
+    # Create Apache config for Adminer
+    if shutil.which("apache2ctl") and os.path.exists("/etc/apache2"):
+        apache_config = f"""Alias /adminer {adminer_dir}
+<Directory {adminer_dir}>
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+"""
+        try:
+            with open(apache_conf, "w") as f:
+                f.write(apache_config)
+            subprocess.run(["a2enconf", "adminer"], check=False, capture_output=True)
+            subprocess.run(["systemctl", "reload", "apache2"], check=False)
+        except Exception:
+            pass
+
+    return {"status": "success", "message": "Adminer installed successfully at /adminer"}
 
 
 class SavePhpMyAdminCredentialsRequest(BaseModel):
