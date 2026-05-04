@@ -84,6 +84,16 @@ def save_local_version(pkg_id: str, version: str):
         pass
 
 
+APT_YUM_MAPPING = {
+    "redis": {"apt": "redis-server", "yum": "redis"},
+    "nginx": {"apt": "nginx", "yum": "nginx"},
+    "mariadb": {"apt": "mariadb-server", "yum": "mariadb-server"},
+    "mysql": {"apt": "mysql-server", "yum": "mysql-community-server"},
+    "postgresql": {"apt": "postgresql", "yum": "postgresql-server"},
+    "memcached": {"apt": "memcached", "yum": "memcached"},
+}
+
+
 DEPENDENCY_PACKAGES = {
     "module_redis": {"id": "redis", "apt": "redis-server", "yum": "redis"},
     "module_cron": {"id": "memcached", "apt": "memcached", "yum": "memcached"},
@@ -150,7 +160,7 @@ class AppStoreManager:
 
 
     @staticmethod
-    def install_package(pkg_id: str, download_url: str, version: str = "1.0.0") -> dict:
+    def install_package(pkg_id: str, download_url: str, version: str = "1.0.0", system_packages: list = None) -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
         BUILD_TASKS[pkg_id] = {
@@ -165,8 +175,18 @@ class AppStoreManager:
             is_windows = platform.system() == "Windows"
             
             # Auto-install Linux package dependencies in parallel
-            dep = DEPENDENCY_PACKAGES.get(pkg_id)
-            if dep:
+            deps = []
+            if isinstance(system_packages, list) and system_packages:
+                for sp in system_packages:
+                    if isinstance(sp, str):
+                        mapping = APT_YUM_MAPPING.get(sp.lower(), {"apt": sp.lower(), "yum": sp.lower()})
+                        deps.append({"id": sp, "apt": mapping.get("apt", sp), "yum": mapping.get("yum", sp)})
+            else:
+                dep = DEPENDENCY_PACKAGES.get(pkg_id)
+                if dep:
+                    deps.append(dep)
+
+            for dep in deps:
                 import shutil
                 if not shutil.which(dep.get("apt")) and not shutil.which(dep.get("yum", dep.get("id"))):
                     BUILD_TASKS[pkg_id]["logs"].append(f"Package system dependency '{dep['id']}' not found. Installing in background...")

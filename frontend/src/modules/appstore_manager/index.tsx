@@ -17,6 +17,7 @@ interface Package {
   has_update?: boolean;
   local_version?: string;
   is_core?: boolean;
+  system_packages?: string[];
 }
 
 const requiredPackageMap: { [key: string]: { id: string; name: string } } = {
@@ -120,7 +121,12 @@ export default function AppStoreDashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: pkg.id, download_url: pkg.download_url, version: pkg.version })
+        body: JSON.stringify({ 
+          id: pkg.id, 
+          download_url: pkg.download_url, 
+          version: pkg.version,
+          system_packages: pkg.system_packages 
+        })
       });
       const d = await res.json();
       if (res.ok) {

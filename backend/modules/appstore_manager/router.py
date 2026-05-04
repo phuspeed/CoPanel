@@ -23,11 +23,12 @@ def install_package(req: dict) -> Dict[str, Any]:
     pkg_id = req.get("id")
     download_url = req.get("download_url")
     version = req.get("version", "1.0.0")
+    system_packages = req.get("system_packages", [])
     if not pkg_id or not download_url:
         raise HTTPException(status_code=400, detail="Package id and download_url are required.")
     
     try:
-        res = AppStoreManager.install_package(pkg_id, download_url, version)
+        res = AppStoreManager.install_package(pkg_id, download_url, version, system_packages)
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
         return res
