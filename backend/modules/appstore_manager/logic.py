@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-Appstore/main/packages.json"
+CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
 BUILD_TASKS = {}
 
 
@@ -98,8 +98,10 @@ class AppStoreManager:
             
         packages = []
         try:
+            import time
+            url_with_t = f"{CATALOG_URL}?t={int(time.time())}"
             req = urllib.request.Request(
-                CATALOG_URL, 
+                url_with_t, 
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
             with urllib.request.urlopen(req, timeout=5) as response:
