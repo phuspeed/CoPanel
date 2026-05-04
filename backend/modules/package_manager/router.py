@@ -20,12 +20,15 @@ class PackageResponse(BaseModel):
 
 @router.get("")
 @router.get("/")
+@router.get("/list")
+@router.get("/list/")
 def list_all_packages() -> Dict[str, Any]:
     """Retrieves all system packages."""
     return {
         "status": "success",
         "packages": logic.load_packages()
     }
+
 
 
 @router.post("/{pkg_id}/install")

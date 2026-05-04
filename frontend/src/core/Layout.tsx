@@ -169,7 +169,11 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
   useEffect(() => {
     const fetchInstalledPackages = () => {
-      fetch('/api/package_manager/')
+      fetch('/api/package_manager/list')
+        .then((r) => {
+          if (!r.ok) return fetch('/api/package_manager/');
+          return r;
+        })
         .then((r) => {
           if (!r.ok) return fetch('/api/package_manager');
           return r;
@@ -187,6 +191,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     const interval = setInterval(fetchInstalledPackages, 5000);
     return () => clearInterval(interval);
   }, []);
+
 
   const getIcon = (iconName: string) => {
     const IconComponent = iconMap[iconName] || Icons.Grid;
