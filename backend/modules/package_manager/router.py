@@ -22,12 +22,17 @@ class PackageResponse(BaseModel):
 @router.get("/")
 @router.get("/list")
 @router.get("/list/")
+@router.get("/api/package_manager")
+@router.get("/api/package_manager/")
+@router.get("/api/package_manager/list")
+@router.get("/api/package_manager/list/")
 def list_all_packages() -> Dict[str, Any]:
     """Retrieves all system packages."""
     return {
         "status": "success",
         "packages": logic.load_packages()
     }
+
 
 
 
