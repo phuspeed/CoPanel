@@ -135,6 +135,71 @@ export default function AppStoreDashboard() {
     saveConfig(updated);
   };
 
+  const handleUploadZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    if (!file.name.endsWith('.zip')) {
+      alert(language === 'vi' ? 'Chỉ hỗ trợ tệp tin .zip!' : 'Only .zip files are supported!');
+      return;
+    }
+
+    const pkgId = file.name.split('.')[0].split('-v')[0].split('_v')[0].replace('.zip', '').toLowerCase();
+    setActivePkgId(pkgId);
+    setBuildLogs([`Uploading and checking ZIP structure for ${file.name}...`]);
+    setBuildStatus("running");
+    setMsg(language === 'vi' ? 'Đang tải lên tệp zip...' : 'Uploading zip file...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const token = localStorage.getItem('copanel_token');
+      const res = await fetch('/api/appstore_manager/upload-install', {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setMsg(language === 'vi' ? `✓ Đang cài đặt ${file.name} từ tệp ZIP...` : `✓ Installing ${file.name} from uploaded ZIP...`);
+        
+        const interval = setInterval(async () => {
+          try {
+            const token = localStorage.getItem('copanel_token');
+            const r = await fetch(`/api/appstore_manager/build-status/${pkgId}`, {
+              headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            if (r.ok) {
+              const b = await r.json();
+              if (b.logs) setBuildLogs(b.logs);
+              if (b.status === 'success' || b.status === 'failed') {
+                setBuildStatus(b.status);
+                clearInterval(interval);
+                if (b.status === 'success') {
+                  setMsg(`✓ ${file.name} installed and built successfully!`);
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 2000);
+                } else {
+                  setMsg(`❌ Error building ${file.name}: ${b.error || 'Build failed.'}`);
+                }
+              }
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }, 1500);
+      } else {
+        setMsg(d.detail || (language === 'vi' ? 'Cấu trúc file ZIP không hợp lệ.' : 'Invalid ZIP file structure.'));
+        setBuildStatus("failed");
+        setBuildLogs(prev => [...prev, `❌ Error: ${d.detail || 'Extraction/validation failed.'}`]);
+      }
+    } catch {
+      setMsg(tr.commError);
+      setBuildStatus("failed");
+    }
+  };
+
   const fetchCatalog = async () => {
     setLoading(true);
     setMsg(null);
@@ -289,17 +354,30 @@ export default function AppStoreDashboard() {
         }`}>
           <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{tr.source}</span>
           <span className={`text-base md:text-lg font-mono font-bold mb-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.live}</span>
-          <button
-            onClick={() => setIsConfigOpen(true)}
-            className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs transition-all duration-200 ${
-              isDark 
-                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700 hover:border-slate-600' 
-                : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
-            }`}
-          >
-            <Icons.Settings className="w-3.5 h-3.5" />
-            {language === 'vi' ? 'Cộng đồng' : 'Community'}
-          </button>
+          <div className="flex flex-col gap-1 w-full">
+            <button
+              onClick={() => setIsConfigOpen(true)}
+              className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs transition-all duration-200 ${
+                isDark 
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700 hover:border-slate-600' 
+                  : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
+              }`}
+            >
+              <Icons.Settings className="w-3.5 h-3.5" />
+              {language === 'vi' ? 'Cộng đồng' : 'Community'}
+            </button>
+            <label
+              className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer transition-all duration-200 ${
+                isDark 
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-slate-100 hover:text-white border-indigo-500/30' 
+                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-100 shadow-sm'
+              }`}
+            >
+              <Icons.Upload className="w-3.5 h-3.5" />
+              {language === 'vi' ? 'Import Module' : 'Import Module'}
+              <input type="file" accept=".zip" className="hidden" onChange={handleUploadZip} />
+            </label>
+          </div>
         </div>
       </div>
 

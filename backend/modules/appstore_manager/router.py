@@ -78,3 +78,34 @@ def save_appstore_config(req: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from fastapi import UploadFile, File
+from pathlib import Path
+import shutil
+import secrets
+
+@router.post("/upload-install")
+async def upload_install(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Handles on-demand custom module ZIP installation via file upload."""
+    try:
+        current_file_dir = Path(__file__).parent.resolve()
+        project_root = current_file_dir.parent.parent.parent.resolve()
+        
+        tmp_dir = project_root / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        
+        filename = file.filename or "custom_module.zip"
+        pkg_id = filename.split(".")[0].split("-v")[0].split("_v")[0].replace(".zip", "").lower()
+        
+        # Safe generated filename to prevent conflicts
+        zip_path = tmp_dir / f"upload_{pkg_id}_{secrets.token_hex(3)}.zip"
+        with open(zip_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        res = AppStoreManager.install_local_zip(pkg_id, zip_path)
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res.get("message"))
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
