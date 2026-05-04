@@ -467,17 +467,44 @@ class AppStoreManager:
                     
                 BUILD_TASKS[pkg_id]["logs"].append("Extraction complete.")
                 
-                src_backend = extracted_dir / "backend"
-                src_frontend = extracted_dir / "frontend"
+                found_backend = None
+                found_frontend = None
                 
-                if not src_backend.exists() and not src_frontend.exists():
+                # Check all deep matches
+                for p in extracted_dir.rglob("*"):
+                    if p.is_dir():
+                        if p.name == pkg_id and p.parent.name == "modules" and p.parent.parent.name == "backend":
+                            found_backend = p
+                        elif p.name == pkg_id and p.parent.name == "modules" and p.parent.parent.name == "src" and p.parent.parent.parent.name == "frontend":
+                            found_frontend = p
+
+                # Fallback 1: search for any backend or frontend directories
+                if not found_backend:
+                    for p in extracted_dir.rglob("backend"):
+                        if p.is_dir():
+                            if (p / "modules" / pkg_id).exists():
+                                found_backend = p / "modules" / pkg_id
+                            else:
+                                found_backend = p
+
+                if not found_frontend:
+                    for p in extracted_dir.rglob("frontend"):
+                        if p.is_dir():
+                            if (p / "src" / "modules" / pkg_id).exists():
+                                found_frontend = p / "src" / "modules" / pkg_id
+                            else:
+                                found_frontend = p
+
+                # Fallback 2: nested parent directories
+                if not found_backend or not found_frontend:
                     subdirs = [x for x in extracted_dir.iterdir() if x.is_dir()]
                     if len(subdirs) == 1:
-                        if (subdirs[0] / "backend").exists() or (subdirs[0] / "frontend").exists():
-                            src_backend = subdirs[0] / "backend"
-                            src_frontend = subdirs[0] / "frontend"
-                
-                if not src_backend.exists() and not src_frontend.exists():
+                        if (subdirs[0] / "backend").exists():
+                            found_backend = subdirs[0] / "backend"
+                        if (subdirs[0] / "frontend").exists():
+                            found_frontend = subdirs[0] / "frontend"
+
+                if not found_backend and not found_frontend:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = "Invalid ZIP structure: 'backend' or 'frontend' folder not found."
                     BUILD_TASKS[pkg_id]["logs"].append("❌ Invalid ZIP structure: neither 'backend' nor 'frontend' folder found.")
@@ -492,13 +519,15 @@ class AppStoreManager:
                     dst_frontend = project_root / "frontend" / "src" / "modules" / pkg_id
                     frontend_cwd = project_root / "frontend"
                 
-                if src_backend.exists():
+                if found_backend and found_backend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
-                    shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
+                    dst_backend.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
                     
-                if src_frontend.exists():
+                if found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
-                    shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
+                    dst_frontend.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(found_frontend, dst_frontend, dirs_exist_ok=True)
                 
                 BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
                 
