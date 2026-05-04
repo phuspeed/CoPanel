@@ -456,6 +456,10 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
     return {"status": "error", "message": "Unknown action"}
 
 
+class SavePhpMyAdminCredentialsRequest(BaseModel):
+    user: str
+    password: str
+
 @router.get("/phpmyadmin")
 async def get_phpmyadmin_credentials() -> Dict[str, Any]:
     """Return phpMyAdmin login credentials saved by install.sh."""
@@ -481,3 +485,28 @@ async def get_phpmyadmin_credentials() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"installed": pma_installed, "user": user, "password": password}
+
+
+@router.post("/phpmyadmin/save")
+async def save_phpmyadmin_credentials(req: SavePhpMyAdminCredentialsRequest) -> Dict[str, Any]:
+    """Save or create phpMyAdmin/MySQL user."""
+    import shutil
+    import subprocess
+    
+    # Save to file
+    creds_file = "/opt/copanel/config/mysql_credentials.txt"
+    os.makedirs(os.path.dirname(creds_file), exist_ok=True)
+    with open(creds_file, "w") as f:
+        f.write(f"MYSQL_USER={req.user}\n")
+        f.write(f"MYSQL_PASS={req.password}\n")
+        
+    # On Linux, also try to create/update MySQL user directly!
+    if os.name != 'nt':
+        try:
+            cmd = f"sudo mysql -e \"CREATE USER IF NOT EXISTS '{req.user}'@'localhost' IDENTIFIED BY '{req.password}'; GRANT ALL PRIVILEGES ON *.* TO '{req.user}'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\""
+            subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        except Exception:
+            pass
+            
+    return {"status": "success", "message": "Credentials updated successfully."}
+

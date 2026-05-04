@@ -64,6 +64,10 @@ export default function WebManagerDashboard() {
   const [pmaCredentials, setPmaCredentials] = useState<{ user: string; password: string; installed: boolean } | null>(null);
   const [pmaPassVisible, setPmaPassVisible] = useState<boolean>(false);
   const [pmaCopied, setPmaCopied] = useState<'user'|'pass'|null>(null);
+  const [pmaUserEdit, setPmaUserEdit] = useState<string>('');
+  const [pmaPassEdit, setPmaPassEdit] = useState<string>('');
+  const [isEditingPma, setIsEditingPma] = useState<boolean>(false);
+
 
   // Tab 4: PHP Manager States
   const [phpManagerVersion, setPhpManagerVersion] = useState<string>('8.2');
@@ -289,6 +293,8 @@ export default function WebManagerDashboard() {
       if (res.ok) {
         const d = await res.json();
         setPmaCredentials(d);
+        if (d.user) setPmaUserEdit(d.user);
+        if (d.password) setPmaPassEdit(d.password);
       }
     } catch (err) {
       console.error(err);
@@ -300,6 +306,27 @@ export default function WebManagerDashboard() {
     setPmaCopied(type);
     setTimeout(() => setPmaCopied(null), 2000);
   };
+
+  const handleSavePmaCredentials = async () => {
+    try {
+      const res = await fetch('/api/web_manager/phpmyadmin/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: pmaUserEdit, password: pmaPassEdit })
+      });
+      if (res.ok) {
+        alert(language === 'vi' ? 'Lưu tài khoản phpMyAdmin thành công!' : 'phpMyAdmin account saved successfully!');
+        setIsEditingPma(false);
+        fetchPmaCredentials();
+      } else {
+        const d = await res.json();
+        alert(d.detail || 'Failed to save credentials');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
 
   const fetchPhpIni = async (version: string) => {
     try {
@@ -923,10 +950,21 @@ export default function WebManagerDashboard() {
                   }
                 </h3>
                 <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {language === 'vi' ? 'Thông tin đăng nhập phpMyAdmin được tạo khi cài CoPanel' : 'Login credentials created during CoPanel installation'}
+                  {language === 'vi' ? 'Quản lý tài khoản truy cập phpMyAdmin' : 'Manage phpMyAdmin access credentials'}
                 </p>
               </div>
               <div className="flex gap-2">
+                <button
+                  onClick={() => setIsEditingPma(!isEditingPma)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition ${
+                    isDark ? 'bg-indigo-900/40 border-indigo-700 text-indigo-300 hover:bg-indigo-800/60' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100'
+                  }`}
+                >
+                  <Icons.Settings className="w-3.5 h-3.5" />
+                  {isEditingPma
+                    ? (language === 'vi' ? 'Hủy' : 'Cancel')
+                    : (language === 'vi' ? 'Quản lý / Đổi thông tin' : 'Manage / Edit Account')}
+                </button>
                 <button
                   onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}/phpmyadmin`, '_blank')}
                   className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm"
@@ -934,19 +972,47 @@ export default function WebManagerDashboard() {
                   <Icons.ExternalLink className="w-3.5 h-3.5" />
                   {language === 'vi' ? 'Mở phpMyAdmin' : 'Open phpMyAdmin'}
                 </button>
-                <button
-                  onClick={() => window.open(`${window.location.protocol}//${window.location.host}/phpmyadmin`, '_blank')}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition ${
-                    isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Icons.ExternalLink className="w-3.5 h-3.5" />
-                  Port {window.location.port || '80'}
-                </button>
               </div>
             </div>
 
-            {pmaCredentials?.installed && (
+            {isEditingPma ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border p-4 rounded-xl dark:border-indigo-900/40">
+                <div>
+                  <label className={`text-[11px] font-bold uppercase tracking-wider mb-1 block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Username</label>
+                  <input
+                    type="text"
+                    value={pmaUserEdit}
+                    onChange={(e) => setPmaUserEdit(e.target.value)}
+                    placeholder="E.g. root"
+                    className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-indigo-500 ${
+                      isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`text-[11px] font-bold uppercase tracking-wider mb-1 block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Password</label>
+                  <input
+                    type="password"
+                    value={pmaPassEdit}
+                    onChange={(e) => setPmaPassEdit(e.target.value)}
+                    placeholder="Enter password"
+                    className={`w-full border px-3 py-2 rounded-xl outline-none font-mono text-xs focus:border-indigo-500 ${
+                      isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                    }`}
+                  />
+                </div>
+                <div className="sm:col-span-2 flex justify-end">
+                  <button
+                    onClick={handleSavePmaCredentials}
+                    disabled={!pmaUserEdit || !pmaPassEdit}
+                    className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition shadow-sm"
+                  >
+                    <Icons.Save className="w-3.5 h-3.5" />
+                    {language === 'vi' ? 'Lưu tài khoản' : 'Save Account'}
+                  </button>
+                </div>
+              </div>
+            ) : pmaCredentials?.installed && (
               <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3`}>
                 {/* Username */}
                 <div className={`flex items-center gap-2 px-4 py-3 rounded-xl border ${
@@ -955,18 +1021,20 @@ export default function WebManagerDashboard() {
                   <Icons.User className={`w-4 h-4 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
                   <div className="flex-1 min-w-0">
                     <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Username</div>
-                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{pmaCredentials.user}</div>
+                    <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{pmaCredentials.user || 'N/A'}</div>
                   </div>
-                  <button
-                    onClick={() => copyPma('user', pmaCredentials.user)}
-                    className={`p-1.5 rounded-lg border transition shrink-0 ${
-                      pmaCopied === 'user'
-                        ? 'bg-green-500/20 border-green-500/40 text-green-400'
-                        : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
-                    }`}
-                  >
-                    {pmaCopied === 'user' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
-                  </button>
+                  {pmaCredentials.user && (
+                    <button
+                      onClick={() => copyPma('user', pmaCredentials.user)}
+                      className={`p-1.5 rounded-lg border transition shrink-0 ${
+                        pmaCopied === 'user'
+                          ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                          : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
+                      }`}
+                    >
+                      {pmaCopied === 'user' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
 
                 {/* Password */}
@@ -977,27 +1045,31 @@ export default function WebManagerDashboard() {
                   <div className="flex-1 min-w-0">
                     <div className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Password</div>
                     <div className={`font-mono text-sm font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                      {pmaPassVisible ? pmaCredentials.password : '••••••••••••'}
+                      {pmaPassVisible ? (pmaCredentials.password || 'N/A') : '••••••••••••'}
                     </div>
                   </div>
-                  <button
-                    onClick={() => setPmaPassVisible(v => !v)}
-                    className={`p-1.5 rounded-lg border transition shrink-0 ${
-                      isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {pmaPassVisible ? <Icons.EyeOff className="w-3.5 h-3.5" /> : <Icons.Eye className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    onClick={() => copyPma('pass', pmaCredentials.password)}
-                    className={`p-1.5 rounded-lg border transition shrink-0 ${
-                      pmaCopied === 'pass'
-                        ? 'bg-green-500/20 border-green-500/40 text-green-400'
-                        : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
-                    }`}
-                  >
-                    {pmaCopied === 'pass' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
-                  </button>
+                  {pmaCredentials.password && (
+                    <>
+                      <button
+                        onClick={() => setPmaPassVisible(v => !v)}
+                        className={`p-1.5 rounded-lg border transition shrink-0 ${
+                          isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {pmaPassVisible ? <Icons.EyeOff className="w-3.5 h-3.5" /> : <Icons.Eye className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => copyPma('pass', pmaCredentials.password)}
+                        className={`p-1.5 rounded-lg border transition shrink-0 ${
+                          pmaCopied === 'pass'
+                            ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                            : (isDark ? 'border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100')
+                        }`}
+                      >
+                        {pmaCopied === 'pass' ? <Icons.Check className="w-3.5 h-3.5" /> : <Icons.Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}
