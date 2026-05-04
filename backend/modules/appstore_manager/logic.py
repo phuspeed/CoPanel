@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
+CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/contents/packages.json"
 BUILD_TASKS = {}
 
 
@@ -35,16 +36,21 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
         except Exception:
             pass
 
-    # 2. Check in global installed_packages.json
-    installed_file = modules_dir.parent / "config" / "installed_packages.json"
-    if installed_file.exists():
-        try:
-            with open(installed_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and pkg_id in data:
-                    return str(data[pkg_id])
-        except Exception:
-            pass
+    # 2. Check in all possible locations for installed_packages.json
+    possible_installed_files = [
+        Path("/opt/copanel/config/installed_packages.json"),
+        modules_dir.parent / "config" / "installed_packages.json",
+        modules_dir.parent.parent / "config" / "installed_packages.json"
+    ]
+    for installed_file in possible_installed_files:
+        if installed_file.exists():
+            try:
+                with open(installed_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and pkg_id in data:
+                        return str(data[pkg_id])
+            except Exception:
+                pass
 
     # 3. Default fallback
     return "1.0.0"
@@ -64,24 +70,30 @@ def save_local_version(pkg_id: str, version: str):
     except Exception:
         pass
         
-    try:
-        cfg_dir = modules_dir.parent / "config"
-        cfg_dir.mkdir(parents=True, exist_ok=True)
-        installed_file = cfg_dir / "installed_packages.json"
-        data = {}
-        if installed_file.exists():
-            try:
-                with open(installed_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if not isinstance(data, dict):
-                        data = {}
-            except Exception:
-                pass
-        data[pkg_id] = version
-        with open(installed_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-    except Exception:
-        pass
+    # Save to both possible paths for reliability
+    possible_cfg_dirs = [
+        Path("/opt/copanel/config"),
+        modules_dir.parent / "config",
+        modules_dir.parent.parent / "config"
+    ]
+    for cfg_dir in possible_cfg_dirs:
+        try:
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            installed_file = cfg_dir / "installed_packages.json"
+            data = {}
+            if installed_file.exists():
+                try:
+                    with open(installed_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if not isinstance(data, dict):
+                            data = {}
+                except Exception:
+                    pass
+            data[pkg_id] = version
+            with open(installed_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            pass
 
 
 APT_YUM_MAPPING = {
@@ -116,16 +128,27 @@ class AppStoreManager:
             
         packages = []
         try:
-            import time
-            url_with_t = f"{CATALOG_URL}?t={int(time.time())}"
             req = urllib.request.Request(
-                url_with_t, 
-                headers={'User-Agent': 'Mozilla/5.0'}
+                CATALOG_API_URL, 
+                headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/vnd.github.v3.raw'
+                }
             )
             with urllib.request.urlopen(req, timeout=5) as response:
-                packages = json.loads(response.read().decode())
+                packages = json.loads(response.read().decode("utf-8"))
         except Exception:
-            packages = [
+            try:
+                import time
+                url_with_t = f"{CATALOG_URL}?t={int(time.time())}"
+                req = urllib.request.Request(
+                    url_with_t, 
+                    headers={'User-Agent': 'Mozilla/5.0'}
+                )
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    packages = json.loads(response.read().decode("utf-8"))
+            except Exception:
+                packages = [
                 {
                     "id": "module_redis",
                     "name": "Redis Cache Manager",
