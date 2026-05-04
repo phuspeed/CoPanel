@@ -247,42 +247,75 @@ export default function AppStoreDashboard() {
       )}
 
       {activePkgId && buildLogs.length > 0 && (
-        <div className={`p-4 border rounded-2xl max-w-2xl backdrop-blur-md space-y-3 ${
-          isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-        }`}>
-          <div className="flex items-center justify-between border-b pb-2 select-none">
-            <div className="flex items-center gap-2">
-              <Icons.Terminal className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                Build Logs & Progress
-              </span>
-            </div>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wide border flex items-center gap-1.5 ${
-              buildStatus === 'success'
-                ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                : buildStatus === 'failed'
-                ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                : 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse'
-            }`}>
-              {buildStatus === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
-              {buildStatus || 'running'}
-            </span>
-          </div>
-
-          <div className={`font-mono text-[11px] p-4 rounded-xl h-48 overflow-y-auto space-y-1.5 border transition-all duration-200 ${
-            isDark ? 'bg-slate-950/80 border-slate-800/80 text-slate-300' : 'bg-white border-slate-100 text-slate-700'
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in">
+          <div className={`w-full max-w-2xl border rounded-2xl shadow-2xl backdrop-blur-md space-y-4 p-6 flex flex-col justify-between max-h-[85vh] transition-all duration-300 scale-in-center ${
+            isDark ? 'bg-slate-900/90 border-slate-700/80 text-slate-100' : 'bg-white/95 border-slate-200 text-slate-900 shadow-slate-500/10'
           }`}>
-            {buildLogs.map((log, i) => (
-              <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
-                {log.startsWith('❌') || log.includes('Error') || log.includes('ERR') ? (
-                  <span className="text-red-400">{log}</span>
-                ) : log.startsWith('🎉') || log.startsWith('✓') || log.includes('success') ? (
-                  <span className="text-green-400 font-bold">{log}</span>
-                ) : (
-                  <span>{log}</span>
+            <div className="flex items-center justify-between border-b pb-3 select-none">
+              <div className="flex items-center gap-2">
+                <Icons.Terminal className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+                <div>
+                  <span className={`text-sm font-bold uppercase tracking-wider ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                    Build Logs & Progress
+                  </span>
+                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Real-time status tracking and installation logs
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-[10px] px-2.5 py-1 rounded-full font-mono font-bold uppercase tracking-wide border flex items-center gap-1.5 ${
+                  buildStatus === 'success'
+                    ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                    : buildStatus === 'failed'
+                    ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                    : 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse'
+                }`}>
+                  {buildStatus === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
+                  {buildStatus || 'running'}
+                </span>
+                {(buildStatus === 'success' || buildStatus === 'failed') && (
+                  <button
+                    onClick={() => { setActivePkgId(null); setBuildLogs([]); }}
+                    className={`p-1.5 rounded-lg border transition-all duration-200 ${
+                      isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-800 border-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border-slate-200'
+                    }`}
+                  >
+                    <Icons.X className="w-4 h-4" />
+                  </button>
                 )}
               </div>
-            ))}
+            </div>
+
+            <div className={`font-mono text-xs p-4 rounded-xl flex-1 h-[45vh] overflow-y-auto space-y-1.5 border transition-all duration-200 ${
+              isDark ? 'bg-slate-950/80 border-slate-800/80 text-slate-300' : 'bg-white border-slate-100 text-slate-700'
+            }`}>
+              {buildLogs.map((log, i) => (
+                <div key={i} className="whitespace-pre-wrap break-all leading-relaxed flex items-start gap-1.5">
+                  <span className={`text-[10px] shrink-0 font-bold opacity-30 select-none ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  {log.startsWith('❌') || log.includes('Error') || log.includes('ERR') ? (
+                    <span className="text-red-400 flex-1">{log}</span>
+                  ) : log.startsWith('🎉') || log.startsWith('✓') || log.includes('success') ? (
+                    <span className="text-emerald-400 font-bold flex-1">{log}</span>
+                  ) : (
+                    <span className="flex-1">{log}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {(buildStatus === 'success' || buildStatus === 'failed') && (
+              <button
+                onClick={() => { setActivePkgId(null); setBuildLogs([]); }}
+                className={`w-full py-2.5 font-bold text-xs rounded-xl transition-all duration-200 border ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200 hover:text-white' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-sm'
+                }`}
+              >
+                {language === 'vi' ? 'Đóng' : 'Close'}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -334,6 +367,15 @@ export default function AppStoreDashboard() {
                   <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                     {pkg.description}
                   </p>
+                  {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (
+                    <div className={`text-[10px] flex flex-wrap items-center gap-1.5 leading-relaxed pt-1.5 border-t ${isDark ? 'text-slate-400 border-slate-800' : 'text-slate-500 border-slate-100'}`}>
+                      <Icons.Settings className="w-3.5 h-3.5 shrink-0" />
+                      <span>{language === 'vi' ? 'Yêu cầu dịch vụ hệ thống:' : 'Required system service:'}</span>
+                      <span className={`px-1.5 py-0.5 rounded border font-mono font-bold ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
+                        {pkg.system_packages?.[0] || requiredPackageMap[pkg.id]?.name}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {pkg.installed ? (
                   <div className="flex gap-2 w-full">
