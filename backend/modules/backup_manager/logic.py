@@ -169,7 +169,16 @@ WantedBy=multi-user.target
             if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
                 # Update/Create rclone config on the fly
                 token_str = cfg.get("google_drive_refresh_token") or ""
-                if token_str and not token_str.strip().startswith("{"):
+                is_valid_json = False
+                if token_str.strip().startswith("{"):
+                    try:
+                        import json
+                        json.loads(token_str)
+                        is_valid_json = True
+                    except Exception:
+                        pass
+
+                if token_str and not is_valid_json:
                     import json
                     token_str = json.dumps({
                         "access_token": "",
@@ -335,7 +344,16 @@ WantedBy=multi-user.target
             
             if shutil.which("rclone") and cfg.get("google_drive_refresh_token"):
                 token_str = cfg.get("google_drive_refresh_token") or ""
-                if token_str and not token_str.strip().startswith("{"):
+                is_valid_json = False
+                if token_str.strip().startswith("{"):
+                    try:
+                        import json
+                        json.loads(token_str)
+                        is_valid_json = True
+                    except Exception:
+                        pass
+
+                if token_str and not is_valid_json:
                     import json
                     token_str = json.dumps({
                         "access_token": "",
