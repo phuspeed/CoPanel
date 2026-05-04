@@ -169,7 +169,11 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
   useEffect(() => {
     const fetchInstalledPackages = () => {
-      fetch('/api/package_manager')
+      fetch('/api/package_manager/')
+        .then((r) => {
+          if (!r.ok) return fetch('/api/package_manager');
+          return r;
+        })
         .then((r) => r.json())
         .then((data) => {
           if (data && data.packages) {

@@ -75,7 +75,11 @@ export default function PackageManagerDashboard() {
 
   const fetchPackages = () => {
     setLoading(true);
-    fetch('/api/package_manager')
+    fetch('/api/package_manager/')
+      .then((r) => {
+        if (!r.ok) return fetch('/api/package_manager');
+        return r;
+      })
       .then((r) => r.json())
       .then((data) => {
         if (data && data.packages) {

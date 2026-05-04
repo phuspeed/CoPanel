@@ -63,6 +63,8 @@ class SSLManager:
 
         def clean_domain(d: str) -> str:
             d = d.strip().lower()
+            if d.endswith(".conf"):
+                d = d[:-5]
             # Strip leading *. or www.
             d = re.sub(r'^(www\.|\*\.)', '', d)
             # Strip Certbot numeric suffixes like -0001
@@ -113,12 +115,17 @@ class SSLManager:
             return None
 
         results = []
+        seen_domains = set()
         for domain in domains:
             if not domain:
                 continue
 
-            cert_path_letsencrypt = find_letsencrypt_cert(domain)
-            cert_path_custom = find_custom_cert(domain)
+            cleaned = clean_domain(domain)
+            if cleaned in seen_domains:
+                continue
+
+            cert_path_letsencrypt = find_letsencrypt_cert(cleaned)
+            cert_path_custom = find_custom_cert(cleaned)
 
             ssl_active = False
             ssl_type = "None"
@@ -136,11 +143,12 @@ class SSLManager:
                 expiry = SSLManager.get_cert_expiry(cert_path_custom)
 
             results.append({
-                "domain": domain,
+                "domain": cleaned,
                 "active": ssl_active,
                 "type": ssl_type,
                 "expiry": expiry
             })
+            seen_domains.add(cleaned)
 
         return results
 

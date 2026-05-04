@@ -19,6 +19,7 @@ class PackageResponse(BaseModel):
 
 
 @router.get("")
+@router.get("/")
 def list_all_packages() -> Dict[str, Any]:
     """Retrieves all system packages."""
     return {
