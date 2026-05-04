@@ -3,7 +3,7 @@
  * Displays available packages from GitHub, handles remote zip downloads and installation.
  */
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 interface Package {
@@ -19,6 +19,12 @@ interface Package {
   is_core?: boolean;
 }
 
+const requiredPackageMap: { [key: string]: { id: string; name: string } } = {
+  'module_redis': { id: 'redis', name: 'Redis' },
+  'module_cron': { id: 'memcached', name: 'Memcached' },
+  'web_manager': { id: 'nginx', name: 'Nginx' },
+  'database_manager': { id: 'mysql', name: 'MySQL / MariaDB' },
+};
 
 export default function AppStoreDashboard() {
   const [catalog, setCatalog] = useState<Package[]>([]);
@@ -32,6 +38,7 @@ export default function AppStoreDashboard() {
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
+  const navigate = useNavigate();
 
   const token = localStorage.getItem('copanel_token');
 
@@ -357,6 +364,17 @@ export default function AppStoreDashboard() {
                   >
                     {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Package className="w-4 h-4" />}
                     {isInstalling ? tr.btnInstalling : tr.btnInstall}
+                  </button>
+                )}
+                {requiredPackageMap[pkg.id] && (
+                  <button
+                    onClick={() => navigate('/package_manager')}
+                    className={`w-full flex items-center justify-center gap-1.5 py-2.5 border rounded-xl font-bold text-xs transition-all duration-200 ${
+                      isDark ? 'text-blue-400 border-blue-500/30 bg-blue-950/20 hover:bg-blue-900/30' : 'text-blue-600 border-blue-200 bg-blue-50/40 hover:bg-blue-50'
+                    }`}
+                  >
+                    <Icons.ExternalLink className="w-3.5 h-3.5" />
+                    {language === 'vi' ? `Đi đến Package Manager để cài ${requiredPackageMap[pkg.id].name}` : `Go to Package Manager to install ${requiredPackageMap[pkg.id].name}`}
                   </button>
                 )}
               </div>
