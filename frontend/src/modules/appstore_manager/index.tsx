@@ -2,8 +2,8 @@
  * AppStore Manager Dashboard
  * Displays available packages from GitHub, handles remote zip downloads and installation.
  */
-import { useState, useEffect } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useState, useEffect, type ComponentType } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 type UpdateStatus = 'not_installed' | 'up_to_date' | 'update_available' | 'ahead';
@@ -43,6 +43,34 @@ function pkgIdFromZipName(filename: string): string {
   return base.split('-v')[0].split('_v')[0].split('.')[0].trim().toLowerCase() || 'custom_module';
 }
 
+const CARD_ACCENT: { dark: string; light: string }[] = [
+  { dark: 'from-sky-500/25 to-indigo-600/30 ring-sky-500/20', light: 'from-sky-500 to-indigo-600 ring-sky-200/60' },
+  { dark: 'from-emerald-500/25 to-teal-600/30 ring-emerald-500/20', light: 'from-emerald-500 to-teal-600 ring-emerald-200/60' },
+  { dark: 'from-violet-500/25 to-fuchsia-600/30 ring-violet-500/20', light: 'from-violet-500 to-fuchsia-600 ring-violet-200/60' },
+  { dark: 'from-amber-500/25 to-orange-600/30 ring-amber-500/20', light: 'from-amber-500 to-orange-600 ring-amber-200/60' },
+  { dark: 'from-cyan-500/25 to-blue-600/30 ring-cyan-500/20', light: 'from-cyan-500 to-blue-600 ring-cyan-200/60' },
+];
+
+function accentForPackageId(id: string): { dark: string; light: string } {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) | 0;
+  }
+  return CARD_ACCENT[Math.abs(h) % CARD_ACCENT.length];
+}
+
+function CatalogIcon({
+  iconName,
+  className,
+}: {
+  iconName?: string;
+  className?: string;
+}) {
+  const map = Icons as unknown as Record<string, ComponentType<{ className?: string }>>;
+  const Cmp = (iconName && map[iconName] ? map[iconName] : Icons.Package) as ComponentType<{ className?: string }>;
+  return <Cmp className={className} />;
+}
+
 const requiredPackageMap: { [key: string]: { id: string; name: string } } = {
   'module_redis': { id: 'redis', name: 'Redis' },
   'module_cron': { id: 'memcached', name: 'Memcached' },
@@ -66,7 +94,6 @@ export default function AppStoreDashboard() {
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
-  const navigate = useNavigate();
 
   const token = localStorage.getItem('copanel_token');
 
@@ -86,7 +113,9 @@ export default function AppStoreDashboard() {
       btnInstalling: 'Installing...',
       btnUninstall: 'Uninstall',
       btnReinstall: 'Reinstall',
+      btnUpdate: 'Update',
       btnUninstalling: 'Uninstalling...',
+      subtitle: 'Discover extensions built for your panel',
       noApps: 'No applications currently found in AppStore.',
       statusNotInstalled: 'Not installed',
       statusUpToDate: 'Up to date',
@@ -117,7 +146,9 @@ export default function AppStoreDashboard() {
       btnInstalling: 'Đang cài đặt...',
       btnUninstall: 'Gỡ bỏ',
       btnReinstall: 'Cài lại',
+      btnUpdate: 'Cập nhật',
       btnUninstalling: 'Đang gỡ...',
+      subtitle: 'Khám phá tiện ích mở rộng cho CoPanel',
       noApps: 'Không tìm thấy ứng dụng nào trong AppStore.',
       statusNotInstalled: 'Chưa cài',
       statusUpToDate: 'Đã mới nhất',
@@ -355,7 +386,7 @@ export default function AppStoreDashboard() {
           }
         }, 1500);
       } else {
-        setMsg(tr.installError(d.detail || 'Extraction failed.'));
+        setMsg(tr.installError(formatApiDetail(d.detail) || 'Extraction failed.'));
         setBuildStatus("failed");
       }
     } catch {
@@ -411,61 +442,107 @@ export default function AppStoreDashboard() {
   }
 
   return (
-    <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
-        isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-      }`}>
-        <div className="space-y-2 max-w-2xl">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2 ${
-            isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
-          }`}>
-            {tr.title}
-            <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v{selfModuleVersion ?? '…'}
-            </span>
-          </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
-          </p>
-        </div>
-        <div className={`flex flex-col items-center md:items-end gap-1 text-right p-4 rounded-xl border backdrop-blur-sm self-stretch md:self-auto min-w-[180px] ${
-          isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50/60 border-slate-200 shadow-sm'
-        }`}>
-          <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{tr.source}</span>
-          <span className={`text-base md:text-lg font-mono font-bold mb-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.live}</span>
-          <div className="flex flex-col gap-1 w-full">
-            <button
-              onClick={() => setIsConfigOpen(true)}
-              className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs transition-all duration-200 ${
-                isDark 
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700 hover:border-slate-600' 
-                  : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
+    <div className={`min-h-[calc(100vh-6rem)] p-4 md:p-8 max-w-7xl mx-auto space-y-6 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+      {/* Hero */}
+      <header
+        className={`relative overflow-hidden rounded-3xl border shadow-lg ${
+          isDark
+            ? 'border-slate-800/80 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900'
+            : 'border-slate-200/90 bg-gradient-to-br from-white via-slate-50/95 to-white'
+        }`}
+      >
+        <div
+          className={`pointer-events-none absolute inset-0 opacity-40 ${isDark ? 'bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(59,130,246,0.35),transparent)]' : 'bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(59,130,246,0.18),transparent)]'}`}
+        />
+        <div className="relative flex flex-col gap-6 p-6 md:p-8 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4 md:gap-5">
+            <div
+              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl shadow-lg ring-2 md:h-16 md:w-16 ${
+                isDark
+                  ? 'bg-gradient-to-br from-blue-500 to-indigo-600 ring-blue-500/30'
+                  : 'bg-gradient-to-br from-blue-500 to-indigo-600 ring-blue-300/50'
               }`}
             >
-              <Icons.Settings className="w-3.5 h-3.5" />
-              {language === 'vi' ? 'Cộng đồng' : 'Community'}
+              <Icons.ShoppingBag className="h-7 w-7 text-white md:h-8 md:w-8" strokeWidth={1.75} />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className={`text-2xl font-bold tracking-tight md:text-3xl ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  {tr.title}
+                </h1>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold ${
+                    isDark ? 'bg-white/10 text-slate-200 ring-1 ring-white/10' : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200/80'
+                  }`}
+                >
+                  v{selfModuleVersion ?? '…'}
+                </span>
+              </div>
+              <p className={`max-w-xl text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.subtitle}</p>
+              <p className={`max-w-2xl text-xs leading-relaxed ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.desc}</p>
+            </div>
+          </div>
+          <div className="flex flex-shrink-0 flex-col gap-2 sm:flex-row lg:flex-col xl:flex-row">
+            <button
+              type="button"
+              onClick={() => fetchCatalog()}
+              disabled={loading}
+              className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                isDark
+                  ? 'border border-slate-700 bg-slate-800/80 text-slate-200 hover:border-slate-600 hover:bg-slate-800'
+                  : 'border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50'
+              } ${loading ? 'opacity-60' : ''}`}
+            >
+              <Icons.RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {language === 'vi' ? 'Làm mới danh sách' : 'Refresh catalog'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsConfigOpen(true)}
+              className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                isDark
+                  ? 'border border-slate-700 bg-slate-800/80 text-slate-200 hover:border-slate-600 hover:bg-slate-800'
+                  : 'border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50'
+              }`}
+            >
+              <Icons.Store className="h-4 w-4" />
+              {language === 'vi' ? 'Kho cộng đồng' : 'Community'}
             </button>
             <label
-              className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer transition-all duration-200 ${
-                isDark 
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-slate-100 hover:text-white border-indigo-500/30' 
-                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-100 shadow-sm'
+              className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                isDark
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30 hover:bg-blue-500'
+                  : 'bg-blue-600 text-white shadow-md shadow-blue-600/25 hover:bg-blue-500'
               }`}
             >
-              <Icons.Upload className="w-3.5 h-3.5" />
-              {language === 'vi' ? 'Import Module' : 'Import Module'}
+              <Icons.FileArchive className="h-4 w-4" />
+              {language === 'vi' ? 'Nhập từ ZIP' : 'Import ZIP'}
               <input type="file" accept=".zip" className="hidden" onChange={handleUploadZip} />
             </label>
           </div>
         </div>
-      </div>
+        <div
+          className={`flex flex-wrap items-center gap-3 border-t px-6 py-3 text-[11px] font-medium md:px-8 ${
+            isDark ? 'border-slate-800/80 text-slate-500' : 'border-slate-100 text-slate-500'
+          }`}
+        >
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 ${isDark ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700'}`}>
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+            {tr.live}
+          </span>
+          <span className="hidden sm:inline opacity-60">·</span>
+          <span>{tr.source}</span>
+        </div>
+      </header>
 
       {msg && (
-        <div className={`p-3.5 border rounded-xl text-xs flex items-center gap-2 max-w-xl animate-pulse backdrop-blur-md ${
-          isDark ? 'bg-indigo-950/20 border-indigo-600/30 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-600'
-        }`}>
-          <Icons.Info className="w-4 h-4 shrink-0" />
-          <span>{msg}</span>
+        <div
+          className={`flex max-w-2xl items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
+            isDark ? 'border-slate-700 bg-slate-900/60 text-slate-200' : 'border-slate-200 bg-white text-slate-700 shadow-sm'
+          }`}
+        >
+          <Icons.Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
+          <span className="leading-relaxed">{msg}</span>
         </div>
       )}
 
@@ -545,157 +622,265 @@ export default function AppStoreDashboard() {
 
 
       {catalog.length === 0 ? (
-        <div className={`p-12 text-center text-xs border rounded-2xl ${isDark ? 'border-slate-800 text-slate-400 bg-slate-900/20' : 'border-slate-200 text-slate-500 bg-white shadow-sm'}`}>
-          {tr.noApps}
+        <div
+          className={`flex flex-col items-center justify-center rounded-3xl border py-16 text-center ${
+            isDark ? 'border-slate-800 bg-slate-900/40 text-slate-400' : 'border-slate-200 bg-white text-slate-500 shadow-sm'
+          }`}
+        >
+          <div
+            className={`mb-4 flex h-16 w-16 items-center justify-center rounded-2xl ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}
+          >
+            <Icons.LayoutGrid className="h-8 w-8 opacity-50" />
+          </div>
+          <p className="max-w-xs text-sm">{tr.noApps}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 xl:gap-5">
           {catalog.map((pkg) => {
             const isInstalling = installingId === pkg.id;
+            const accent = accentForPackageId(pkg.id);
+            const showChangelog = !!(pkg.changelog_en || pkg.changelog_vi);
             return (
-              <div key={pkg.id} className={`p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 flex flex-col justify-between gap-4 ${
-                isDark ? 'bg-slate-900/40 border-slate-800 hover:border-blue-500/30' : 'bg-white border-slate-200 hover:border-blue-500/30 shadow-sm'
-              }`}>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-3 border rounded-xl ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                      <Icons.Download className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className={`text-sm md:text-base font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+              <article
+                key={pkg.id}
+                className={`flex flex-col overflow-hidden rounded-3xl border transition-all duration-300 ${
+                  isDark
+                    ? 'border-slate-800/90 bg-slate-900/50 hover:border-slate-700 hover:shadow-xl hover:shadow-black/20'
+                    : 'border-slate-200/90 bg-white shadow-sm hover:border-slate-300 hover:shadow-xl hover:shadow-slate-300/30'
+                }`}
+              >
+                <div className="flex gap-4 p-5">
+                  <div
+                    className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br shadow-inner ring-2 ${
+                      isDark ? accent.dark : accent.light
+                    }`}
+                  >
+                    <CatalogIcon iconName={pkg.icon} className="h-7 w-7 text-white drop-shadow-md" />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className={`truncate text-base font-semibold leading-snug ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
                         {pkg.name}
-                      </h4>
-                      <div className="flex flex-wrap items-center gap-1 mt-1">
-                        <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                          {tr.versionOnServer(pkg.remote_version || pkg.version)}
+                      </h3>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span
+                        className={`rounded-lg px-2 py-0.5 font-mono text-[10px] font-medium ${
+                          isDark ? 'bg-slate-800 text-slate-400 ring-1 ring-slate-700' : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'
+                        }`}
+                      >
+                        {tr.versionOnServer(pkg.remote_version || pkg.version)}
+                      </span>
+                      {pkg.installed && !!pkg.local_version && (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 font-mono text-[10px] font-medium ${
+                            isDark ? 'bg-blue-950/50 text-blue-300 ring-1 ring-blue-900/60' : 'bg-blue-50 text-blue-700 ring-1 ring-blue-100'
+                          }`}
+                        >
+                          {tr.versionInstalled(pkg.local_version)}
                         </span>
-                        {pkg.installed && !!pkg.local_version && (
-                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-                            {tr.versionInstalled(pkg.local_version)}
-                          </span>
-                        )}
-                        {pkg.update_status && (
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded border font-mono font-bold ${
-                              pkg.update_status === 'update_available'
-                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/35 animate-pulse'
-                                : pkg.update_status === 'up_to_date'
-                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
-                                  : pkg.update_status === 'ahead'
-                                    ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
-                                    : isDark
-                                      ? 'text-slate-400 bg-slate-800/60 border-slate-700/60'
-                                      : 'text-slate-600 bg-slate-100 border-slate-200'
-                            }`}
-                          >
-                            {pkg.update_status === 'not_installed' && tr.statusNotInstalled}
-                            {pkg.update_status === 'up_to_date' && tr.statusUpToDate}
-                            {pkg.update_status === 'update_available' && tr.statusUpdateAvailable}
-                            {pkg.update_status === 'ahead' && tr.statusAhead}
-                          </span>
-                        )}
-                        {pkg.is_core && (
-                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-emerald-400 bg-emerald-950/20 border-emerald-800/40' : 'text-emerald-600 bg-emerald-50 border-emerald-200'}`}>
-                            {language === 'vi' ? 'Mặc định' : 'Core'}
-                          </span>
-                        )}
-                        {pkg.is_community && (
-                          <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-cyan-400 bg-cyan-950/20 border-cyan-800/40' : 'text-cyan-600 bg-cyan-50 border-cyan-200'}`}>
-                            {language === 'vi' ? 'Cộng đồng' : 'Community'}
-                          </span>
-                        )}
-                      </div>
+                      )}
+                      {pkg.update_status && (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold ${
+                            pkg.update_status === 'update_available'
+                              ? isDark
+                                ? 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40'
+                                : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+                              : pkg.update_status === 'up_to_date'
+                                ? isDark
+                                  ? 'bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-600/30'
+                                  : 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200'
+                                : pkg.update_status === 'ahead'
+                                  ? isDark
+                                    ? 'bg-violet-500/10 text-violet-300 ring-1 ring-violet-600/30'
+                                    : 'bg-violet-50 text-violet-800 ring-1 ring-violet-200'
+                                  : isDark
+                                    ? 'bg-slate-800 text-slate-400 ring-1 ring-slate-700'
+                                    : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
+                          }`}
+                        >
+                          {pkg.update_status === 'not_installed' && tr.statusNotInstalled}
+                          {pkg.update_status === 'up_to_date' && tr.statusUpToDate}
+                          {pkg.update_status === 'update_available' && tr.statusUpdateAvailable}
+                          {pkg.update_status === 'ahead' && tr.statusAhead}
+                        </span>
+                      )}
+                      {pkg.is_core && (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold ${
+                            isDark ? 'bg-emerald-950/40 text-emerald-400 ring-1 ring-emerald-900/50' : 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200'
+                          }`}
+                        >
+                          {language === 'vi' ? 'Mặc định' : 'Core'}
+                        </span>
+                      )}
+                      {pkg.is_community && (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold ${
+                            isDark ? 'bg-cyan-950/40 text-cyan-400 ring-1 ring-cyan-900/50' : 'bg-cyan-50 text-cyan-800 ring-1 ring-cyan-200'
+                          }`}
+                        >
+                          {language === 'vi' ? 'Cộng đồng' : 'Community'}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                    {pkg.description}
-                  </p>
-                  {(pkg.changelog_en || pkg.changelog_vi) && (
-                    <div
-                      className={`text-[10px] p-3 rounded-xl border space-y-2 leading-relaxed ${
-                        pkg.update_status === 'update_available'
-                          ? isDark
-                            ? 'bg-amber-950/35 border-amber-600/45 text-slate-300'
-                            : 'bg-amber-50 border-amber-200 text-slate-700'
-                          : isDark
-                            ? 'bg-slate-800/40 border-slate-700/60 text-slate-400'
-                            : 'bg-slate-50 border-slate-200/80 text-slate-500'
+                </div>
+
+                <p className={`line-clamp-3 px-5 text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{pkg.description}</p>
+
+                {showChangelog && (
+                  <details
+                    className={`mx-5 mt-3 rounded-2xl border text-left ${
+                      pkg.update_status === 'update_available'
+                        ? isDark
+                          ? 'border-amber-700/40 bg-amber-950/20'
+                          : 'border-amber-200 bg-amber-50/50'
+                        : isDark
+                          ? 'border-slate-700/80 bg-slate-950/40'
+                          : 'border-slate-200 bg-slate-50/80'
+                    }`}
+                  >
+                    <summary
+                      className={`flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-xs font-semibold marker:content-none [&::-webkit-details-marker]:hidden ${
+                        isDark ? 'text-slate-200' : 'text-slate-800'
                       }`}
                     >
-                      <div className="flex flex-col gap-1">
-                        {pkg.update_status === 'update_available' && pkg.local_version ? (
-                          <>
-                            <span className={`font-bold ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>{tr.changelogForUpdate}</span>
-                            <span className={`font-mono text-[11px] ${isDark ? 'text-amber-200/95' : 'text-amber-900'}`}>
-                              {tr.updateFlow(pkg.local_version, pkg.remote_version || pkg.version)}
-                            </span>
-                          </>
-                        ) : (
-                          <div className="space-y-1">
-                            <span className={`font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-                              {tr.changelogReleaseNotes} · v{pkg.remote_version || pkg.version}
-                            </span>
-                            {pkg.update_status === 'ahead' && pkg.local_version && (
-                              <span className={`block text-[10px] font-normal ${isDark ? 'text-violet-300/95' : 'text-violet-700'}`}>
-                                {tr.installedVsCatalog(pkg.local_version, pkg.remote_version || pkg.version)} — {tr.aheadOfCatalog}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <p className="italic whitespace-pre-wrap">
+                      <span className="flex items-center gap-2">
+                        <Icons.ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                        {tr.changelogReleaseNotes}
+                      </span>
+                      <span className="font-mono text-[10px] font-normal opacity-70">v{pkg.remote_version || pkg.version}</span>
+                    </summary>
+                    <div className={`space-y-2 border-t px-3 py-3 text-xs leading-relaxed ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      {pkg.update_status === 'update_available' && pkg.local_version && (
+                        <p className={`font-mono text-[11px] ${isDark ? 'text-amber-200/90' : 'text-amber-900'}`}>
+                          {tr.updateFlow(pkg.local_version, pkg.remote_version || pkg.version)}
+                        </p>
+                      )}
+                      {pkg.update_status === 'ahead' && pkg.local_version && (
+                        <p className={`text-[11px] ${isDark ? 'text-violet-300/90' : 'text-violet-800'}`}>
+                          {tr.installedVsCatalog(pkg.local_version, pkg.remote_version || pkg.version)} — {tr.aheadOfCatalog}
+                        </p>
+                      )}
+                      <p className="whitespace-pre-wrap italic">
                         {language === 'vi' ? pkg.changelog_vi || pkg.changelog_en : pkg.changelog_en || pkg.changelog_vi}
                       </p>
                     </div>
-                  )}
-                  {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (
-                    <div className={`text-[10px] flex flex-wrap items-center gap-1.5 leading-relaxed pt-1.5 border-t ${isDark ? 'text-slate-400 border-slate-800' : 'text-slate-500 border-slate-100'}`}>
-                      <Icons.Settings className="w-3.5 h-3.5 shrink-0" />
-                      <span>{language === 'vi' ? 'Yêu cầu dịch vụ hệ thống:' : 'Required system service:'}</span>
-                      <span className={`px-1.5 py-0.5 rounded border font-mono font-bold ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-                        {pkg.system_packages?.[0] || requiredPackageMap[pkg.id]?.name}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                {pkg.installed ? (
-                  <div className="flex gap-2 w-full">
-                    <button
-                      onClick={() => handleInstall(pkg)}
-                      disabled={isInstalling || installingId !== null || uninstallingId !== null}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg transition-all duration-200 ${
-                        pkg.has_update
-                          ? 'bg-amber-600 hover:bg-amber-500 hover:shadow-amber-500/20'
-                          : 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20'
+                  </details>
+                )}
+
+                {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (
+                  <div
+                    className={`mx-5 mt-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[11px] ${
+                      isDark ? 'bg-slate-950/50 text-slate-400' : 'bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <Icons.Server className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                    <span>{language === 'vi' ? 'Hệ thống:' : 'Requires:'}</span>
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 font-mono font-semibold ${
+                        isDark ? 'bg-slate-800 text-blue-300' : 'bg-white text-blue-700 ring-1 ring-slate-200'
                       }`}
                     >
-                      {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RotateCw className="w-4 h-4" />}
-                      {isInstalling ? tr.btnInstalling : (pkg.has_update ? (language === 'vi' ? 'Cập nhật' : 'Update') : tr.btnReinstall)}
-                    </button>
-                    {!pkg.is_core && (
-                      <button
-                        onClick={() => handleUninstall(pkg)}
-                        disabled={uninstallingId !== null || installingId !== null}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 border hover:bg-red-500/10 disabled:opacity-50 rounded-xl font-bold text-xs transition-all duration-200 ${
-                          isDark ? 'text-red-400 border-red-500/30 bg-red-950/20' : 'text-red-600 border-red-200 bg-red-50/40 hover:bg-red-50'
-                        }`}
-                      >
-                        {uninstallingId === pkg.id ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Trash2 className="w-4 h-4" />}
-                        {uninstallingId === pkg.id ? tr.btnUninstalling : tr.btnUninstall}
-                      </button>
-                    )}
+                      {pkg.system_packages?.[0] || requiredPackageMap[pkg.id]?.name}
+                    </span>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => handleInstall(pkg)}
-                    disabled={isInstalling || installingId !== null || uninstallingId !== null}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-lg hover:shadow-blue-500/20 transition-all duration-200"
-                  >
-                    {isInstalling ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Package className="w-4 h-4" />}
-                    {isInstalling ? tr.btnInstalling : tr.btnInstall}
-                  </button>
                 )}
-              </div>
+
+                <div className={`mt-auto flex flex-col gap-2 p-5 pt-4 ${isDark ? 'border-t border-slate-800/80' : 'border-t border-slate-100'}`}>
+                  {!pkg.installed ? (
+                    <button
+                      type="button"
+                      onClick={() => handleInstall(pkg)}
+                      disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                      className={`flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white shadow-lg transition-all disabled:opacity-50 ${
+                        isDark
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500'
+                          : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/20'
+                      }`}
+                    >
+                      {isInstalling ? <Icons.Loader className="h-4 w-4 animate-spin" /> : <Icons.Download className="h-4 w-4" />}
+                      {isInstalling ? tr.btnInstalling : tr.btnInstall}
+                    </button>
+                  ) : (
+                    <>
+                      {pkg.has_update && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstall(pkg)}
+                          disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                          className={`flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white shadow-lg transition-all disabled:opacity-50 ${
+                            isDark
+                              ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500'
+                              : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-600/25'
+                          }`}
+                        >
+                          {isInstalling ? <Icons.Loader className="h-4 w-4 animate-spin" /> : <Icons.ArrowUpCircle className="h-4 w-4" />}
+                          {isInstalling ? tr.btnInstalling : tr.btnUpdate}
+                        </button>
+                      )}
+                      {pkg.is_core ? (
+                        <button
+                          type="button"
+                          onClick={() => handleInstall(pkg)}
+                          disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                          className={`flex w-full items-center justify-center gap-2 rounded-2xl py-2.5 text-xs font-semibold transition-all disabled:opacity-50 ${
+                            isDark
+                              ? 'border border-slate-600 bg-slate-800/80 text-slate-200 hover:bg-slate-800'
+                              : 'border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50'
+                          }`}
+                        >
+                          {isInstalling && !pkg.has_update ? (
+                            <Icons.Loader className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Icons.RotateCw className="h-3.5 w-3.5" />
+                          )}
+                          {isInstalling && !pkg.has_update ? tr.btnInstalling : tr.btnReinstall}
+                        </button>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleInstall(pkg)}
+                            disabled={isInstalling || installingId !== null || uninstallingId !== null}
+                            className={`flex items-center justify-center gap-1.5 rounded-2xl py-2.5 text-xs font-semibold transition-all disabled:opacity-50 ${
+                              isDark
+                                ? 'border border-slate-600 bg-slate-800/80 text-slate-200 hover:bg-slate-800'
+                                : 'border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50'
+                            }`}
+                          >
+                            {isInstalling && !pkg.has_update ? (
+                              <Icons.Loader className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Icons.RotateCw className="h-3.5 w-3.5" />
+                            )}
+                            {isInstalling && !pkg.has_update ? tr.btnInstalling : tr.btnReinstall}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUninstall(pkg)}
+                            disabled={uninstallingId !== null || installingId !== null}
+                            className={`flex items-center justify-center gap-1.5 rounded-2xl py-2.5 text-xs font-semibold transition-all disabled:opacity-50 ${
+                              isDark
+                                ? 'border border-red-900/50 bg-red-950/30 text-red-300 hover:bg-red-950/50'
+                                : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                            }`}
+                          >
+                            {uninstallingId === pkg.id ? (
+                              <Icons.Loader className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Icons.Trash2 className="h-3.5 w-3.5" />
+                            )}
+                            {uninstallingId === pkg.id ? tr.btnUninstalling : tr.btnUninstall}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </article>
             );
           })}
         </div>
