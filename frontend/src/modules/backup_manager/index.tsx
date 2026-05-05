@@ -82,6 +82,7 @@ export default function BackupManagerDashboard() {
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthStatus, setOauthStatus] = useState('');
   const [oauthStatusList, setOauthStatusList] = useState<OAuthStatusItem[]>([]);
+  const oauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -223,6 +224,10 @@ export default function BackupManagerDashboard() {
       const data = event.data;
       if (!data || data.type !== 'copanel_google_oauth') return;
       if (data.ok && data.remote_name) {
+        if (oauthPollRef.current) {
+          clearInterval(oauthPollRef.current);
+          oauthPollRef.current = null;
+        }
         setOauthStatus(`Authorization completed for ${data.remote_name}`);
         fetchOAuthStatus(data.remote_name);
         showMsg(`Google Drive connected for remote ${data.remote_name}`);
@@ -239,6 +244,15 @@ export default function BackupManagerDashboard() {
       fetchOAuthStatusList();
     }
   }, [showRcloneConfig]);
+
+  useEffect(() => {
+    return () => {
+      if (oauthPollRef.current) {
+        clearInterval(oauthPollRef.current);
+        oauthPollRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-scroll logs to bottom
   useEffect(() => {
@@ -354,8 +368,22 @@ export default function BackupManagerDashboard() {
         showMsg('Google OAuth URL was not returned by server', true);
         return;
       }
-      window.open(authUrl, '_blank', 'noopener,noreferrer,width=640,height=760');
+      // Keep opener available so callback can postMessage to this window.
+      window.open(authUrl, '_blank', 'width=640,height=760');
       setOauthStatus('OAuth window opened. Complete consent to finish setup.');
+      if (oauthPollRef.current) clearInterval(oauthPollRef.current);
+      let tries = 0;
+      const remoteName = oauthForm.remote_name;
+      oauthPollRef.current = setInterval(async () => {
+        tries += 1;
+        await fetchOAuthStatus(remoteName);
+        if (tries >= 30) {
+          if (oauthPollRef.current) {
+            clearInterval(oauthPollRef.current);
+            oauthPollRef.current = null;
+          }
+        }
+      }, 2000);
     } catch (e) {
       showMsg('Failed to start Google OAuth', true);
     } finally {
