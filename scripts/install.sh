@@ -285,7 +285,8 @@ setup_backend() {
         log_success "Virtual environment exists"
     fi
     
-    # Activate venv and install dependencies
+    # CoPanel's Python stack runs only inside this venv ($VENV_PATH). system-site-packages is not used;
+    # all `pip` commands below install into the venv, and systemd runs uvicorn with $VENV_PATH/bin/python.
     source "$VENV_PATH/bin/activate"
     
     pip install --upgrade pip setuptools wheel >/dev/null 2>&1
@@ -293,7 +294,7 @@ setup_backend() {
     if [[ -f "$CoPanel_HOME/backend/requirements.txt" ]]; then
         pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
     fi
-    # AppStore Manager compares catalog vs installed versions via PEP 440 (also listed in requirements.txt)
+    # AppStore Manager (same venv) compares catalog vs installed versions via PEP 440; also in requirements.txt
     pip install -q "packaging>=23.2" >/dev/null 2>&1 || true
     log_success "Python dependencies installed"
 
