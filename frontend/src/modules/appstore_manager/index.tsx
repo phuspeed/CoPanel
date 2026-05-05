@@ -6,18 +6,25 @@ import { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
+type UpdateStatus = 'not_installed' | 'up_to_date' | 'update_available' | 'ahead';
+
 interface Package {
   id: string;
   name: string;
   description: string;
   version: string;
+  remote_version?: string;
   icon: string;
   download_url: string;
   installed?: boolean;
   has_update?: boolean;
   local_version?: string;
+  update_status?: UpdateStatus;
   is_core?: boolean;
   system_packages?: string[];
+  changelog_en?: string;
+  changelog_vi?: string;
+  is_community?: boolean;
 }
 
 const requiredPackageMap: { [key: string]: { id: string; name: string } } = {
@@ -64,7 +71,18 @@ export default function AppStoreDashboard() {
       btnUninstall: 'Uninstall',
       btnReinstall: 'Reinstall',
       btnUninstalling: 'Uninstalling...',
-      noApps: 'No applications currently found in AppStore.'
+      noApps: 'No applications currently found in AppStore.',
+      statusNotInstalled: 'Not installed',
+      statusUpToDate: 'Up to date',
+      statusUpdateAvailable: 'Update available',
+      statusAhead: 'Newer than catalog',
+      versionOnServer: (v: string) => `Catalog: v${v}`,
+      versionInstalled: (v: string) => `Installed: v${v}`,
+      updateFlow: (from: string, to: string) => `v${from} → v${to}`,
+      changelogForUpdate: 'Changes in this update',
+      changelogReleaseNotes: 'Release notes',
+      aheadOfCatalog: 'Installed build is newer than this catalog entry.',
+      installedVsCatalog: (inst: string, cat: string) => `Installed v${inst} · catalog v${cat}`,
     },
     vi: {
       title: 'Cửa hàng ứng dụng AppStore',
@@ -82,11 +100,24 @@ export default function AppStoreDashboard() {
       btnUninstall: 'Gỡ bỏ',
       btnReinstall: 'Cài lại',
       btnUninstalling: 'Đang gỡ...',
-      noApps: 'Không tìm thấy ứng dụng nào trong AppStore.'
+      noApps: 'Không tìm thấy ứng dụng nào trong AppStore.',
+      statusNotInstalled: 'Chưa cài',
+      statusUpToDate: 'Đã mới nhất',
+      statusUpdateAvailable: 'Có bản cập nhật',
+      statusAhead: 'Mới hơn bản trên kho',
+      versionOnServer: (v: string) => `Trên kho: v${v}`,
+      versionInstalled: (v: string) => `Đang cài: v${v}`,
+      updateFlow: (from: string, to: string) => `v${from} → v${to}`,
+      changelogForUpdate: 'Nội dung bản cập nhật',
+      changelogReleaseNotes: 'Ghi chú phát hành',
+      aheadOfCatalog: 'Bản đã cài mới hơn mục trên kho (có thể từ ZIP hoặc bản dev).',
+      installedVsCatalog: (inst: string, cat: string) => `Đã cài v${inst} · trên kho v${cat}`,
     }
   };
 
   const tr = t[language || 'en'];
+
+  const selfModuleVersion = catalog.find((p) => p.id === 'appstore_manager')?.version;
 
   const fetchConfig = async () => {
     try {
@@ -342,7 +373,7 @@ export default function AppStoreDashboard() {
           }`}>
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.4
+              v{selfModuleVersion ?? '…'}
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -488,11 +519,31 @@ export default function AppStoreDashboard() {
                       </h4>
                       <div className="flex flex-wrap items-center gap-1 mt-1">
                         <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                          {language === 'vi' ? 'Mới nhất: ' : 'Latest: '}v{pkg.version}
+                          {tr.versionOnServer(pkg.remote_version || pkg.version)}
                         </span>
-                        {pkg.installed && pkg.local_version && (
+                        {pkg.installed && !!pkg.local_version && (
                           <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-                            {language === 'vi' ? 'Đang cài: ' : 'Installed: '}v{pkg.local_version}
+                            {tr.versionInstalled(pkg.local_version)}
+                          </span>
+                        )}
+                        {pkg.update_status && (
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded border font-mono font-bold ${
+                              pkg.update_status === 'update_available'
+                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/35 animate-pulse'
+                                : pkg.update_status === 'up_to_date'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                                  : pkg.update_status === 'ahead'
+                                    ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
+                                    : isDark
+                                      ? 'text-slate-400 bg-slate-800/60 border-slate-700/60'
+                                      : 'text-slate-600 bg-slate-100 border-slate-200'
+                            }`}
+                          >
+                            {pkg.update_status === 'not_installed' && tr.statusNotInstalled}
+                            {pkg.update_status === 'up_to_date' && tr.statusUpToDate}
+                            {pkg.update_status === 'update_available' && tr.statusUpdateAvailable}
+                            {pkg.update_status === 'ahead' && tr.statusAhead}
                           </span>
                         )}
                         {pkg.is_core && (
@@ -500,14 +551,9 @@ export default function AppStoreDashboard() {
                             {language === 'vi' ? 'Mặc định' : 'Core'}
                           </span>
                         )}
-                        {(pkg as any).is_community && (
+                        {pkg.is_community && (
                           <span className={`text-[10px] px-2 py-0.5 rounded border font-mono ${isDark ? 'text-cyan-400 bg-cyan-950/20 border-cyan-800/40' : 'text-cyan-600 bg-cyan-50 border-cyan-200'}`}>
                             {language === 'vi' ? 'Cộng đồng' : 'Community'}
-                          </span>
-                        )}
-                        {pkg.has_update && (
-                          <span className="text-[10px] px-2 py-0.5 rounded border font-mono bg-amber-500/10 text-amber-500 border-amber-500/30 animate-pulse font-bold">
-                            {language === 'vi' ? 'Có bản cập nhật' : 'Update Available'}
                           </span>
                         )}
                       </div>
@@ -516,10 +562,42 @@ export default function AppStoreDashboard() {
                   <p className={`text-xs line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                     {pkg.description}
                   </p>
-                  {((pkg as any).changelog_vi || (pkg as any).changelog_en) && (
-                    <div className={`text-[10px] p-2 rounded-xl border leading-relaxed ${isDark ? 'bg-slate-800/40 border-slate-700/60 text-slate-400' : 'bg-slate-50 border-slate-200/80 text-slate-500'}`}>
-                      <span className="font-bold block mb-0.5 text-blue-400">{language === 'vi' ? 'Nội dung cập nhật:' : 'Changelog / Release Notes:'}</span>
-                      <span className="italic">{language === 'vi' ? ((pkg as any).changelog_vi || (pkg as any).changelog_en) : ((pkg as any).changelog_en || (pkg as any).changelog_vi)}</span>
+                  {(pkg.changelog_en || pkg.changelog_vi) && (
+                    <div
+                      className={`text-[10px] p-3 rounded-xl border space-y-2 leading-relaxed ${
+                        pkg.update_status === 'update_available'
+                          ? isDark
+                            ? 'bg-amber-950/35 border-amber-600/45 text-slate-300'
+                            : 'bg-amber-50 border-amber-200 text-slate-700'
+                          : isDark
+                            ? 'bg-slate-800/40 border-slate-700/60 text-slate-400'
+                            : 'bg-slate-50 border-slate-200/80 text-slate-500'
+                      }`}
+                    >
+                      <div className="flex flex-col gap-1">
+                        {pkg.update_status === 'update_available' && pkg.local_version ? (
+                          <>
+                            <span className={`font-bold ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>{tr.changelogForUpdate}</span>
+                            <span className={`font-mono text-[11px] ${isDark ? 'text-amber-200/95' : 'text-amber-900'}`}>
+                              {tr.updateFlow(pkg.local_version, pkg.remote_version || pkg.version)}
+                            </span>
+                          </>
+                        ) : (
+                          <div className="space-y-1">
+                            <span className={`font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                              {tr.changelogReleaseNotes} · v{pkg.remote_version || pkg.version}
+                            </span>
+                            {pkg.update_status === 'ahead' && pkg.local_version && (
+                              <span className={`block text-[10px] font-normal ${isDark ? 'text-violet-300/95' : 'text-violet-700'}`}>
+                                {tr.installedVsCatalog(pkg.local_version, pkg.remote_version || pkg.version)} — {tr.aheadOfCatalog}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <p className="italic whitespace-pre-wrap">
+                        {language === 'vi' ? pkg.changelog_vi || pkg.changelog_en : pkg.changelog_en || pkg.changelog_vi}
+                      </p>
                     </div>
                   )}
                   {((pkg.system_packages && pkg.system_packages.length > 0) || requiredPackageMap[pkg.id]) && (

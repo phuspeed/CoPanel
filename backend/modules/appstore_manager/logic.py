@@ -14,21 +14,62 @@ CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/conten
 BUILD_TASKS = {}
 
 
-def is_update_available(remote_version: str, local_version: str) -> bool:
+def normalize_version(v: str) -> str:
+    if not v or not isinstance(v, str):
+        return "0.0.0"
+    s = v.strip()
+    if s.lower().startswith("v"):
+        s = s[1:].strip()
+    return s or "0.0.0"
+
+
+def compare_versions(a: str, b: str) -> int:
+    """
+    Semver-aware comparison. Returns negative if a < b, 0 if equal, positive if a > b.
+    Falls back to numeric tuple compare when PEP 440 parsing fails.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    na, nb = normalize_version(a), normalize_version(b)
     try:
-        r = [int(x) for x in remote_version.split(".")]
-        l = [int(x) for x in local_version.split(".")]
-        return r > l
+        va, vb = Version(na), Version(nb)
+        if va < vb:
+            return -1
+        if va > vb:
+            return 1
+        return 0
+    except InvalidVersion:
+        pass
+    try:
+        def numeric_tuple(s: str) -> tuple:
+            parts = []
+            for segment in s.replace("-", ".").split("."):
+                segment = "".join(c for c in segment if c.isdigit())
+                if segment:
+                    parts.append(int(segment))
+            return tuple(parts) if parts else (0,)
+
+        ta, tb = numeric_tuple(na), numeric_tuple(nb)
+        maxlen = max(len(ta), len(tb))
+        ta = ta + (0,) * (maxlen - len(ta))
+        tb = tb + (0,) * (maxlen - len(tb))
+        if ta < tb:
+            return -1
+        if ta > tb:
+            return 1
+        return 0
     except Exception:
-        try:
-            from packaging.version import parse
-            return parse(remote_version) > parse(local_version)
-        except Exception:
-            return remote_version != local_version and remote_version > local_version
+        if na == nb:
+            return 0
+        return 1 if na > nb else -1
+
+
+def is_update_available(remote_version: str, local_version: str) -> bool:
+    return compare_versions(remote_version, local_version) > 0
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.3",
+    "appstore_manager": "1.0.6",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -39,7 +80,9 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
     version_file = modules_dir / pkg_id / "version.txt"
     if version_file.exists():
         try:
-            return version_file.read_text(encoding="utf-8").strip()
+            raw = version_file.read_text(encoding="utf-8").strip()
+            if raw:
+                return normalize_version(raw)
         except Exception:
             pass
 
@@ -55,19 +98,23 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
                 with open(installed_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, dict) and pkg_id in data:
-                        return str(data[pkg_id])
+                        val = data[pkg_id]
+                        if isinstance(val, dict) and val.get("version") is not None:
+                            return normalize_version(str(val["version"]))
+                        return normalize_version(str(val))
             except Exception:
                 pass
 
     # 3. Fall back to core package hardcoded version
     if pkg_id in CORE_PACKAGE_VERSIONS:
-        return CORE_PACKAGE_VERSIONS[pkg_id]
+        return normalize_version(CORE_PACKAGE_VERSIONS[pkg_id])
 
     # 4. Default fallback
-    return "1.0.0"
+    return normalize_version("1.0.0")
 
 
 def save_local_version(pkg_id: str, version: str):
+    ver = normalize_version(version)
     if Path("/opt/copanel").exists():
         modules_dir = Path("/opt/copanel/backend/modules")
     else:
@@ -77,7 +124,7 @@ def save_local_version(pkg_id: str, version: str):
     try:
         vfile = modules_dir / pkg_id / "version.txt"
         vfile.parent.mkdir(parents=True, exist_ok=True)
-        vfile.write_text(version, encoding="utf-8")
+        vfile.write_text(ver, encoding="utf-8")
     except Exception:
         pass
         
@@ -100,7 +147,7 @@ def save_local_version(pkg_id: str, version: str):
                             data = {}
                 except Exception:
                     pass
-            data[pkg_id] = version
+            data[pkg_id] = ver
             with open(installed_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except Exception:
@@ -234,15 +281,30 @@ class AppStoreManager:
         packages = merged_packages
 
         for p in packages:
+            if not isinstance(p, dict) or "id" not in p:
+                continue
+            remote_ver = normalize_version(p.get("version", "1.0.0"))
+            p["version"] = remote_ver
+            p["remote_version"] = remote_ver
             installed = (modules_dir / p["id"]).exists()
             p["installed"] = installed
             if installed:
                 local_ver = get_local_version(p["id"], modules_dir)
                 p["local_version"] = local_ver
-                p["has_update"] = is_update_available(p.get("version", "1.0.0"), local_ver)
+                cmpv = compare_versions(remote_ver, local_ver)
+                if cmpv > 0:
+                    p["has_update"] = True
+                    p["update_status"] = "update_available"
+                elif cmpv < 0:
+                    p["has_update"] = False
+                    p["update_status"] = "ahead"
+                else:
+                    p["has_update"] = False
+                    p["update_status"] = "up_to_date"
             else:
                 p["local_version"] = ""
                 p["has_update"] = False
+                p["update_status"] = "not_installed"
             
         return packages
 
@@ -555,6 +617,16 @@ class AppStoreManager:
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
+                    try:
+                        if Path("/opt/copanel").exists():
+                            mod_dir = Path(f"/opt/copanel/backend/modules/{pkg_id}")
+                        else:
+                            mod_dir = project_root / "backend" / "modules" / pkg_id
+                        vf = mod_dir / "version.txt"
+                        if vf.exists():
+                            save_local_version(pkg_id, vf.read_text(encoding="utf-8").strip())
+                    except Exception:
+                        pass
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"

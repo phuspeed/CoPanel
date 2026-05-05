@@ -7,5 +7,6 @@ psutil==5.9.6
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-multipart==0.0.6
+packaging==23.2
 sqlalchemy==2.0.23
 docker==6.1.3
