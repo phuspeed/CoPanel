@@ -101,6 +101,20 @@ def run_cmd(cmd: List[str]) -> str:
         return ""
 
 
+def _run_with_optional_sudo(cmd: List[str]) -> subprocess.CompletedProcess:
+    """Run command directly first, then fallback to non-interactive sudo."""
+    res = subprocess.run(cmd, shell=False, capture_output=True, text=True, check=False)
+    if res.returncode == 0:
+        return res
+    sudo_bin = shutil.which("sudo")
+    if sudo_bin:
+        sudo_res = subprocess.run([sudo_bin, "-n", *cmd], shell=False, capture_output=True, text=True, check=False)
+        if sudo_res.returncode == 0:
+            return sudo_res
+        return sudo_res
+    return res
+
+
 @router.get("/status")
 async def get_firewall_status() -> Dict[str, Any]:
     """Get status and rules list from ufw."""
@@ -169,7 +183,7 @@ def run_ufw_cmd(action: str, port: str) -> bool:
     """Helper to run UFW commands natively."""
     ufw_path = find_ufw_path()
     try:
-        res = subprocess.run([ufw_path, action, port], shell=False, capture_output=True, text=True)
+        res = _run_with_optional_sudo([ufw_path, action, port])
         if res.returncode == 0:
             return True
     except Exception:
@@ -181,7 +195,7 @@ def run_ufw_delete_cmd(action: str, port: str) -> bool:
     """Helper to run UFW delete commands."""
     ufw_path = find_ufw_path()
     try:
-        res = subprocess.run([ufw_path, "delete", action, port], input="y\n", shell=False, capture_output=True, text=True)
+        res = _run_with_optional_sudo([ufw_path, "--force", "delete", action, port])
         if res.returncode == 0:
             return True
     except Exception:
@@ -198,11 +212,11 @@ async def enable_firewall() -> Dict[str, Any]:
         return {"status": "success", "message": "Firewall enabled successfully (Mock Mode)."}
     ufw_path = find_ufw_path()
     try:
-        subprocess.run([ufw_path, "allow", "22"], shell=False, check=False)
-        res = subprocess.run([ufw_path, "enable"], input="y\n", shell=False, capture_output=True, text=True)
+        _run_with_optional_sudo([ufw_path, "allow", "22"])
+        res = _run_with_optional_sudo([ufw_path, "--force", "enable"])
         if res.returncode == 0:
             return {"status": "success", "message": "Firewall enabled successfully."}
-        raise HTTPException(status_code=500, detail=res.stderr or "Failed to enable firewall.")
+        raise HTTPException(status_code=500, detail=(res.stderr or res.stdout or "Failed to enable firewall.").strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -216,10 +230,10 @@ async def disable_firewall() -> Dict[str, Any]:
         return {"status": "success", "message": "Firewall disabled successfully (Mock Mode)."}
     ufw_path = find_ufw_path()
     try:
-        res = subprocess.run([ufw_path, "disable"], shell=False, capture_output=True, text=True)
+        res = _run_with_optional_sudo([ufw_path, "disable"])
         if res.returncode == 0:
             return {"status": "success", "message": "Firewall disabled successfully."}
-        raise HTTPException(status_code=500, detail=res.stderr or "Failed to disable firewall.")
+        raise HTTPException(status_code=500, detail=(res.stderr or res.stdout or "Failed to disable firewall.").strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -251,7 +265,12 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
 
     try:
         if not run_ufw_cmd(req.action.lower(), req.port):
-            raise HTTPException(status_code=500, detail="Failed to apply firewall rule via ufw CLI.")
+            ufw_path = find_ufw_path()
+            dbg = _run_with_optional_sudo([ufw_path, req.action.lower(), req.port])
+            detail = (dbg.stderr or dbg.stdout or "").strip()
+            if "password is required" in detail.lower() or "a password is required" in detail.lower():
+                detail = "Permission denied to run UFW non-interactively. Configure sudoers for the CoPanel service user."
+            raise HTTPException(status_code=500, detail=detail or "Failed to apply firewall rule via ufw CLI.")
 
         return {
             "status": "success",
@@ -286,7 +305,12 @@ async def delete_firewall_rule(req: DeleteRuleRequest) -> Dict[str, Any]:
 
     try:
         if not run_ufw_delete_cmd(req.action.lower(), req.port):
-            raise HTTPException(status_code=500, detail="Failed to delete firewall rule via ufw CLI.")
+            ufw_path = find_ufw_path()
+            dbg = _run_with_optional_sudo([ufw_path, "--force", "delete", req.action.lower(), req.port])
+            detail = (dbg.stderr or dbg.stdout or "").strip()
+            if "password is required" in detail.lower() or "a password is required" in detail.lower():
+                detail = "Permission denied to run UFW non-interactively. Configure sudoers for the CoPanel service user."
+            raise HTTPException(status_code=500, detail=detail or "Failed to delete firewall rule via ufw CLI.")
 
         return {
             "status": "success",
@@ -327,11 +351,11 @@ async def get_fail2ban_status() -> Dict[str, Any]:
     f2b_path = find_fail2ban_path()
     try:
         # Check if fail2ban systemd service is active or fail2ban-client is responding
-        ping_res = subprocess.run([f2b_path, "ping"], shell=False, capture_output=True, text=True)
+        ping_res = _run_with_optional_sudo([f2b_path, "ping"])
         is_active = "Server echoed pong" in ping_res.stdout
         
         # Get all Jails
-        res = subprocess.run([f2b_path, "status"], shell=False, capture_output=True, text=True)
+        res = _run_with_optional_sudo([f2b_path, "status"])
         jails = []
         if res.returncode == 0:
             match = re.search(r'Jail list:\s+(.+)', res.stdout)
@@ -341,7 +365,7 @@ async def get_fail2ban_status() -> Dict[str, Any]:
         # Get banned IPs for each jail
         banned = []
         for jail in jails:
-            jres = subprocess.run([f2b_path, "status", jail], shell=False, capture_output=True, text=True)
+            jres = _run_with_optional_sudo([f2b_path, "status", jail])
             if jres.returncode == 0:
                 ip_match = re.search(r'Banned IP list:\s+(.+)', jres.stdout)
                 if ip_match:
@@ -406,9 +430,9 @@ async def unban_ip(req: UnbanRequest) -> Dict[str, Any]:
 
     f2b_path = find_fail2ban_path()
     try:
-        res = subprocess.run([f2b_path, "set", req.jail, "unbanip", req.ip], shell=False, capture_output=True, text=True)
+        res = _run_with_optional_sudo([f2b_path, "set", req.jail, "unbanip", req.ip])
         if res.returncode == 0:
             return {"status": "success", "message": f"Successfully unbanned IP {req.ip} from {req.jail}."}
-        raise HTTPException(status_code=500, detail=res.stderr or f"Failed to unban IP {req.ip}.")
+        raise HTTPException(status_code=500, detail=(res.stderr or res.stdout or f"Failed to unban IP {req.ip}.").strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
