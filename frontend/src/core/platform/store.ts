@@ -5,7 +5,7 @@
  * single source of truth for cross-cutting UI state - notifications, jobs,
  * launcher visibility, etc.
  */
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState } from 'react';
 
 export type Listener = () => void;
 
@@ -33,5 +33,9 @@ export function createStore<T extends object>(initial: T): Store<T> {
 }
 
 export function useStore<T extends object, R>(store: Store<T>, selector: (s: T) => R): R {
-  return useSyncExternalStore(store.subscribe, () => selector(store.getState()), () => selector(store.getState()));
+  // Safer than useSyncExternalStore for this simple custom store in production
+  // bundles: we keep one subscribed state snapshot and derive from it.
+  const [state, setState] = useState<T>(() => store.getState());
+  useEffect(() => store.subscribe(() => setState(store.getState())), [store]);
+  return selector(state);
 }
