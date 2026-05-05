@@ -22,6 +22,13 @@ BACKUP_DIR = Path("/opt/copanel/backups")
 
 class ProfileManager:
     @staticmethod
+    def normalize_remote_name(name: str) -> str:
+        raw = (name or "").strip()
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", raw)
+        safe = re.sub(r"_+", "_", safe).strip("_")
+        return safe
+
+    @staticmethod
     def _get_db():
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH))
@@ -339,7 +346,14 @@ class ProfileManager:
         refresh_token = token_data.get("refresh_token", "")
         token_type = token_data.get("token_type", "Bearer")
         expiry = token_data.get("expiry", "")
+        if not expiry and token_data.get("expires_in"):
+            try:
+                expiry = datetime.utcfromtimestamp(time.time() + int(token_data.get("expires_in"))).isoformat()
+            except Exception:
+                expiry = ""
         scope = token_data.get("scope", "")
+        if isinstance(scope, list):
+            scope = " ".join(scope)
         encrypted_blob = json.dumps(
             {
                 "access_token": access_token,
@@ -610,13 +624,14 @@ class GoogleOAuthService:
 
     @staticmethod
     def start_oauth(remote_name: str, client_id: str, client_secret: str, redirect_uri: str):
-        if not remote_name.strip():
+        normalized_remote = ProfileManager.normalize_remote_name(remote_name)
+        if not normalized_remote:
             raise ValueError("remote_name is required")
         if not client_id.strip() or not client_secret.strip() or not redirect_uri.strip():
             raise ValueError("client_id, client_secret, redirect_uri are required")
 
         ProfileManager.save_oauth_client("google", client_id.strip(), client_secret.strip(), redirect_uri.strip())
-        state = ProfileManager.create_oauth_state("google", remote_name.strip())
+        state = ProfileManager.create_oauth_state("google", normalized_remote)
 
         query = urlencode(
             {
@@ -629,10 +644,14 @@ class GoogleOAuthService:
                 "state": state,
             }
         )
-        return {"state": state, "auth_url": f"{GoogleOAuthService.AUTH_URL}?{query}"}
+        return {"state": state, "auth_url": f"{GoogleOAuthService.AUTH_URL}?{query}", "remote_name": normalized_remote}
 
     @staticmethod
     def exchange_code(code: str, state: str):
+        if not code:
+            raise ValueError("Missing OAuth authorization code")
+        if not state:
+            raise ValueError("Missing OAuth state")
         state_row = ProfileManager.consume_oauth_state("google", state)
         if not state_row:
             raise ValueError("Invalid or expired OAuth state")
@@ -661,6 +680,8 @@ class GoogleOAuthService:
         except HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             raise ValueError(f"Google token exchange failed: {detail}") from e
+        except Exception as e:
+            raise ValueError(f"Google token exchange failed: {e}") from e
 
         if "access_token" not in token_data:
             raise ValueError("Google token response did not include access_token")

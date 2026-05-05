@@ -157,7 +157,7 @@ def oauth_google_status(remote_name: str = "") -> Dict[str, Any]:
 
 @router.post("/remotes/google")
 def create_or_update_google_remote(data: dict) -> Dict[str, Any]:
-    remote_name = (data.get("remote_name") or "").strip()
+    remote_name = ProfileManager.normalize_remote_name((data.get("remote_name") or "").strip())
     if not remote_name:
         raise HTTPException(status_code=400, detail="remote_name is required")
     try:

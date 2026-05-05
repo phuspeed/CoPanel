@@ -208,7 +208,7 @@ export default function BackupManagerDashboard() {
   }, []);
 
   const authHeaders = useCallback(
-    () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    () => ({ ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }),
     [token]
   );
 
@@ -364,16 +364,22 @@ export default function BackupManagerDashboard() {
         return;
       }
       const authUrl = data?.data?.auth_url;
+      const normalizedRemote = data?.data?.remote_name || oauthForm.remote_name;
       if (!authUrl) {
         showMsg('Google OAuth URL was not returned by server', true);
         return;
       }
       // Keep opener available so callback can postMessage to this window.
-      window.open(authUrl, '_blank', 'width=640,height=760');
+      const popup = window.open(authUrl, '_blank', 'width=640,height=760');
+      if (!popup) {
+        showMsg('Popup blocked. Please allow popups and retry Google OAuth.', true);
+        return;
+      }
       setOauthStatus('OAuth window opened. Complete consent to finish setup.');
       if (oauthPollRef.current) clearInterval(oauthPollRef.current);
       let tries = 0;
-      const remoteName = oauthForm.remote_name;
+      const remoteName = normalizedRemote;
+      setOauthForm((prev) => ({ ...prev, remote_name: normalizedRemote }));
       oauthPollRef.current = setInterval(async () => {
         tries += 1;
         await fetchOAuthStatus(remoteName);
