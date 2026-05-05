@@ -20,6 +20,8 @@ export default function PackageManagerDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<{ msg: string; isError: boolean } | null>(null);
+  const [mysqlCreds, setMysqlCreds] = useState<{ user: string; password: string; url?: string } | null>(null);
 
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
@@ -27,6 +29,8 @@ export default function PackageManagerDashboard() {
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
+  const token = localStorage.getItem('copanel_token');
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   const t = {
     en: {
@@ -46,7 +50,9 @@ export default function PackageManagerDashboard() {
       restart: 'Restart',
       start: 'Start',
       remove: 'Remove',
-      noPackages: 'No packages found in this category.'
+      noPackages: 'No packages found in this category.',
+      openPhpMyAdmin: 'Open phpMyAdmin',
+      phpmyadminPath: 'Access path'
     },
     vi: {
       title: 'Dịch vụ & Gói Ubuntu',
@@ -65,7 +71,9 @@ export default function PackageManagerDashboard() {
       restart: 'Khởi động lại',
       start: 'Bắt đầu',
       remove: 'Gỡ bỏ',
-      noPackages: 'Không tìm thấy gói nào trong danh mục này.'
+      noPackages: 'Không tìm thấy gói nào trong danh mục này.',
+      openPhpMyAdmin: 'Mở phpMyAdmin',
+      phpmyadminPath: 'Đường dẫn truy cập'
     }
   };
 
@@ -75,13 +83,13 @@ export default function PackageManagerDashboard() {
 
   const fetchPackages = () => {
     setLoading(true);
-    fetch('/api/package_manager/list')
+    fetch('/api/package_manager/list', { headers: authHeaders })
       .then((r) => {
-        if (!r.ok) return fetch('/api/package_manager/');
+        if (!r.ok) return fetch('/api/package_manager/', { headers: authHeaders });
         return r;
       })
       .then((r) => {
-        if (!r.ok) return fetch('/api/package_manager');
+        if (!r.ok) return fetch('/api/package_manager', { headers: authHeaders });
         return r;
       })
       .then((r) => r.json())
@@ -98,25 +106,44 @@ export default function PackageManagerDashboard() {
       });
   };
 
+  const fetchMysqlCreds = async () => {
+    try {
+      const res = await fetch('/api/package_manager/credentials/mysql', { headers: authHeaders });
+      if (res.ok) {
+        const d = await res.json();
+        if (d) setMysqlCreds({ user: d.user || '', password: d.password || '', url: d.url || '/phpmyadmin/index.php' });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchPackages();
+    fetchMysqlCreds();
     const interval = setInterval(fetchPackages, 5000);
     return () => clearInterval(interval);
   }, []);
 
   const handleAction = async (id: string, action: 'install' | 'restart' | 'stop' | 'remove') => {
     setActionLoading(`${id}-${action}`);
+    setActionMsg(null);
     try {
-      const token = localStorage.getItem('copanel_token');
       const res = await fetch(`/api/package_manager/${id}/${action}`, {
         method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: authHeaders
       });
       if (res.ok) {
+        setActionMsg({ msg: `${id}: ${action} success`, isError: false });
         fetchPackages();
+        if (id === 'phpmyadmin') fetchMysqlCreds();
+      } else {
+        const d = await res.json();
+        setActionMsg({ msg: d.detail || `${id}: ${action} failed`, isError: true });
       }
     } catch (err) {
       console.error(err);
+      setActionMsg({ msg: `${id}: ${action} failed`, isError: true });
     } finally {
       setActionLoading(null);
     }
@@ -215,6 +242,15 @@ export default function PackageManagerDashboard() {
         </div>
       )}
 
+      {actionMsg && (
+        <div className={`text-xs border rounded-xl px-3 py-2 ${actionMsg.isError
+          ? (isDark ? 'bg-red-950/30 border-red-900/40 text-red-300' : 'bg-red-50 border-red-200 text-red-700')
+          : (isDark ? 'bg-emerald-950/30 border-emerald-900/40 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700')
+        }`}>
+          {actionMsg.msg}
+        </div>
+      )}
+
       {loading && packages.length === 0 ? (
         <div className={`flex flex-col items-center justify-center p-12 border rounded-xl ${isDark ? 'border-slate-800 bg-slate-900/20' : 'border-slate-200 bg-white'}`}>
           <Icons.Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
@@ -267,6 +303,17 @@ export default function PackageManagerDashboard() {
                 <p className={`text-xs min-h-[38px] line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                   {pkg.description}
                 </p>
+                {pkg.id === 'phpmyadmin' && pkg.status !== 'not_installed' && (
+                  <div className={`text-[11px] border rounded-xl px-2.5 py-2 ${isDark ? 'border-slate-700 bg-slate-800/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+                    <div className="font-semibold">{tr.phpmyadminPath}: `{mysqlCreds?.url || '/phpmyadmin/index.php'}`</div>
+                    <button
+                      onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}${mysqlCreds?.url || '/phpmyadmin/index.php'}`, '_blank')}
+                      className="mt-2 text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white"
+                    >
+                      {tr.openPhpMyAdmin}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className={`mt-6 pt-4 border-t flex flex-wrap items-center gap-2 ${isDark ? 'border-slate-800/80' : 'border-slate-100'}`}>

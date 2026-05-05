@@ -289,6 +289,38 @@ def load_packages() -> List[Dict[str, Any]]:
     return merged
 
 
+def _pkg_manager() -> Optional[str]:
+    if shutil.which("apt-get"):
+        return "apt-get"
+    if shutil.which("yum"):
+        return "yum"
+    return None
+
+
+def _run_with_optional_sudo(cmd: List[str], check: bool = True) -> subprocess.CompletedProcess:
+    if IS_WINDOWS:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    try:
+        return subprocess.run(cmd, check=check, capture_output=True, text=True)
+    except Exception:
+        return subprocess.run(["sudo", "-n"] + cmd, check=check, capture_output=True, text=True)
+
+
+def _service_name(pkg: Dict[str, Any]) -> Optional[str]:
+    if not pkg:
+        return None
+    return pkg.get("service")
+
+
+def _packages_for_current_os(pkg: Dict[str, Any]) -> List[str]:
+    pm = _pkg_manager()
+    if pm == "apt-get":
+        return list(pkg.get("apt") or [])
+    if pm == "yum":
+        return list(pkg.get("yum") or [])
+    return []
+
+
 def save_packages(packages: List[Dict[str, Any]]):
     """Saves packages to disk."""
     if not CONFIG_DIR.exists():
@@ -312,21 +344,47 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
     target_pkg = None
     for p in packages:
         if p["id"] == pkg_id:
-            p["status"] = "running"
             target_pkg = p
             break
 
     if target_pkg:
+        if IS_WINDOWS:
+            target_pkg["status"] = "running"
+            save_packages(packages)
+            return target_pkg
+
+        # Special install flow for phpMyAdmin
+        if pkg_id == "phpmyadmin":
+            pm = _pkg_manager()
+            if not pm:
+                raise RuntimeError("No supported package manager found.")
+            if pm == "apt-get":
+                _run_with_optional_sudo([pm, "update", "-y"], check=False)
+                _run_with_optional_sudo([pm, "install", "-y", "phpmyadmin"], check=True)
+            else:
+                try:
+                    _run_with_optional_sudo([pm, "install", "-y", "phpMyAdmin"], check=True)
+                except Exception:
+                    _run_with_optional_sudo([pm, "install", "-y", "phpmyadmin"], check=True)
+            target_pkg["status"] = "running"
+            save_packages(packages)
+            return target_pkg
+
+        os_pkgs = _packages_for_current_os(target_pkg)
+        if os_pkgs:
+            pm = _pkg_manager()
+            if not pm:
+                raise RuntimeError("No supported package manager found.")
+            if pm == "apt-get":
+                _run_with_optional_sudo([pm, "update", "-y"], check=False)
+            _run_with_optional_sudo([pm, "install", "-y"] + os_pkgs, check=True)
+
+        svc = _service_name(target_pkg)
+        if svc:
+            _run_with_optional_sudo(["systemctl", "enable", "--now", svc], check=False)
+
+        target_pkg["status"] = "running"
         save_packages(packages)
-        pkg_module_dir = MODULES_DIR / pkg_id
-        if not pkg_module_dir.exists():
-            pkg_module_dir.mkdir(parents=True, exist_ok=True)
-            with open(pkg_module_dir / "__init__.py", 'w', encoding='utf-8') as f:
-                f.write("# Module initialization\n")
-            with open(pkg_module_dir / "logic.py", 'w', encoding='utf-8') as f:
-                f.write(f'"""\nLogic layer for {target_pkg["name"]}\n"""\ndef get_status():\n    return {{"status": "active", "service": "{target_pkg["name"]}"}}\n')
-            with open(pkg_module_dir / "router.py", 'w', encoding='utf-8') as f:
-                f.write(f'"""\nRouter for {target_pkg["name"]}\n"""\nfrom fastapi import APIRouter\nfrom . import logic\nrouter = APIRouter()\n@router.get("/status")\ndef read_status():\n    return logic.get_status()\n')
     return target_pkg
 
 
@@ -336,11 +394,15 @@ def restart_package(pkg_id: str) -> Dict[str, Any]:
     target_pkg = None
     for p in packages:
         if p["id"] == pkg_id:
-            p["status"] = "running"
             target_pkg = p
             break
     if target_pkg:
+        if not IS_WINDOWS:
+            svc = _service_name(target_pkg)
+            if svc:
+                _run_with_optional_sudo(["systemctl", "restart", svc], check=False)
         save_packages(packages)
+        target_pkg["status"] = "running"
     return target_pkg
 
 
@@ -350,10 +412,14 @@ def stop_package(pkg_id: str) -> Dict[str, Any]:
     target_pkg = None
     for p in packages:
         if p["id"] == pkg_id:
-            p["status"] = "stopped"
             target_pkg = p
             break
     if target_pkg:
+        if not IS_WINDOWS:
+            svc = _service_name(target_pkg)
+            if svc:
+                _run_with_optional_sudo(["systemctl", "stop", svc], check=False)
+        target_pkg["status"] = "stopped"
         save_packages(packages)
     return target_pkg
 
@@ -364,15 +430,30 @@ def remove_package(pkg_id: str) -> Dict[str, Any]:
     target_pkg = None
     for p in packages:
         if p["id"] == pkg_id:
-            p["status"] = "not_installed"
             target_pkg = p
             break
 
     if target_pkg:
+        if not IS_WINDOWS:
+            svc = _service_name(target_pkg)
+            if svc:
+                _run_with_optional_sudo(["systemctl", "disable", "--now", svc], check=False)
+
+            if pkg_id == "phpmyadmin":
+                pm = _pkg_manager()
+                if pm == "apt-get":
+                    _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
+                elif pm == "yum":
+                    _run_with_optional_sudo([pm, "remove", "-y", "phpMyAdmin"], check=False)
+                    _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
+            else:
+                os_pkgs = _packages_for_current_os(target_pkg)
+                pm = _pkg_manager()
+                if pm and os_pkgs:
+                    _run_with_optional_sudo([pm, "remove", "-y"] + os_pkgs, check=False)
+
+        target_pkg["status"] = "not_installed"
         save_packages(packages)
-        pkg_module_dir = MODULES_DIR / pkg_id
-        if pkg_module_dir.exists():
-            shutil.rmtree(pkg_module_dir)
     return target_pkg
 
 
@@ -389,10 +470,10 @@ def get_mysql_credentials() -> Dict[str, Any]:
                         user = line.split("=", 1)[1]
                     elif line.startswith("MYSQL_PASS="):
                         password = line.split("=", 1)[1]
-            return {"status": "success", "user": user, "password": password}
+            return {"status": "success", "user": user, "password": password, "url": "/phpmyadmin/index.php"}
         except Exception:
             pass
-    return {"status": "success", "user": "root", "password": ""}
+    return {"status": "success", "user": "root", "password": "", "url": "/phpmyadmin/index.php"}
 
 
 def get_postgres_credentials() -> Dict[str, Any]:

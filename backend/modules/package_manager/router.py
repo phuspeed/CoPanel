@@ -43,7 +43,10 @@ def install_pkg(pkg_id: str) -> Dict[str, Any]:
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
     
-    updated_pkg = logic.install_package(pkg_id)
+    try:
+        updated_pkg = logic.install_package(pkg_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "status": "success",
         "message": f"Successfully installed package {pkg_id}",
@@ -58,7 +61,10 @@ def restart_pkg(pkg_id: str) -> Dict[str, Any]:
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
     
-    updated_pkg = logic.restart_package(pkg_id)
+    try:
+        updated_pkg = logic.restart_package(pkg_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "status": "success",
         "message": f"Successfully restarted package {pkg_id}",
@@ -73,7 +79,10 @@ def stop_pkg(pkg_id: str) -> Dict[str, Any]:
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
     
-    updated_pkg = logic.stop_package(pkg_id)
+    try:
+        updated_pkg = logic.stop_package(pkg_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "status": "success",
         "message": f"Successfully stopped package {pkg_id}",
@@ -88,7 +97,10 @@ def remove_pkg(pkg_id: str) -> Dict[str, Any]:
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
     
-    updated_pkg = logic.remove_package(pkg_id)
+    try:
+        updated_pkg = logic.remove_package(pkg_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "status": "success",
         "message": f"Successfully removed package {pkg_id}",
