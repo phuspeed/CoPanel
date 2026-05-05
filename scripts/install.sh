@@ -292,8 +292,10 @@ setup_backend() {
     
     if [[ -f "$CoPanel_HOME/backend/requirements.txt" ]]; then
         pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
-        log_success "Python dependencies installed"
     fi
+    # AppStore Manager compares catalog vs installed versions via PEP 440 (also listed in requirements.txt)
+    pip install -q "packaging>=23.2" >/dev/null 2>&1 || true
+    log_success "Python dependencies installed"
 
      # Pre-initialize database to immediately create initial admin user & password file
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
