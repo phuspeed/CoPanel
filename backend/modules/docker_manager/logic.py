@@ -121,6 +121,10 @@ class DockerService:
                     }
                 )
             return containers, False
+        if result.returncode == 0:
+            # Docker is reachable, but there are currently no containers.
+            # Do not treat this as daemon failure.
+            return [], False
 
         if self.allow_mock:
             return MOCK_CONTAINERS, True

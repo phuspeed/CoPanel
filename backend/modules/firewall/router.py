@@ -68,7 +68,28 @@ def check_fail2ban_installed() -> bool:
     p = find_fail2ban_path()
     if p and p != "fail2ban-client":
         return True
-    return bool(shutil.which("fail2ban-client"))
+    if shutil.which("fail2ban-client"):
+        return True
+    # Fallback: package/service may exist before PATH is refreshed.
+    if Path("/etc/fail2ban").exists() or Path("/lib/systemd/system/fail2ban.service").exists():
+        return True
+    try:
+        if shutil.which("dpkg-query"):
+            res = subprocess.run(
+                ["dpkg-query", "-W", "-f=${Status}", "fail2ban"],
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            if "install ok installed" in (res.stdout or ""):
+                return True
+        if shutil.which("rpm"):
+            res = subprocess.run(["rpm", "-q", "fail2ban"], shell=False, capture_output=True, text=True)
+            if res.returncode == 0:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def run_cmd(cmd: List[str]) -> str:
@@ -365,6 +386,10 @@ async def install_fail2ban() -> Dict[str, Any]:
 
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if res.returncode == 0:
+            # Start and enable service right after install so status endpoint
+            # immediately reports active state.
+            subprocess.run(["systemctl", "enable", "fail2ban"], shell=False, capture_output=True, text=True)
+            subprocess.run(["systemctl", "restart", "fail2ban"], shell=False, capture_output=True, text=True)
             return {"status": "success", "message": "Fail2Ban installed successfully!"}
         raise HTTPException(status_code=500, detail=res.stderr or "Installation failed.")
     except Exception as e:
