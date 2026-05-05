@@ -18,6 +18,41 @@ interface JailItem {
   total_banned: number;
 }
 
+/** Backend returns `jails: string[]` and `banned: { ip, jail }[]`; normalize to UI model. */
+function normalizeFail2BanJails(data: {
+  jails?: unknown;
+  banned?: Array<{ ip?: string; jail?: string }>;
+}): JailItem[] {
+  const bannedFlat = Array.isArray(data.banned) ? data.banned : [];
+  const raw = data.jails;
+
+  if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'object' && raw[0] !== null && 'banned_ips' in (raw[0] as object)) {
+    return (raw as Array<Partial<JailItem> & { name?: string }>).map((j) => {
+      const ips = Array.isArray(j.banned_ips) ? j.banned_ips : [];
+      return {
+        name: String(j.name ?? ''),
+        banned_ips: ips,
+        total_banned: typeof j.total_banned === 'number' ? j.total_banned : ips.length,
+      };
+    });
+  }
+
+  const names: string[] = Array.isArray(raw)
+    ? raw.map((j) => (typeof j === 'string' ? j : String((j as { name?: string })?.name ?? ''))).filter(Boolean)
+    : [];
+
+  return names.map((name) => {
+    const banned_ips = bannedFlat
+      .filter((b) => b && b.jail === name && b.ip)
+      .map((b) => String(b.ip));
+    return {
+      name,
+      banned_ips,
+      total_banned: banned_ips.length,
+    };
+  });
+}
+
 export default function FirewallDashboard() {
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
@@ -190,7 +225,7 @@ export default function FirewallDashboard() {
       if (data.error_message) setError(data.error_message);
       setF2bInstalled(data.installed || false);
       setF2bActive(data.active || false);
-      setJails(data.jails || []);
+      setJails(normalizeFail2BanJails(data));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -450,13 +485,13 @@ export default function FirewallDashboard() {
                       </div>
                       
                       <div className="flex-1">
-                        {jail.banned_ips.length === 0 ? (
+                        {(jail.banned_ips ?? []).length === 0 ? (
                           <div className={`text-xs text-center py-6 italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                             {tr.noBans}
                           </div>
                         ) : (
                           <ul className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                            {jail.banned_ips.map(ip => (
+                            {(jail.banned_ips ?? []).map(ip => (
                               <li key={ip} className={`flex items-center justify-between p-2 rounded-lg border ${isDark ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
                                 <span className={`font-mono text-xs font-bold ${isDark ? 'text-red-400' : 'text-red-600'}`}>{ip}</span>
                                 <button onClick={() => handleUnban(jail.name, ip)} className="px-3 py-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded transition">
