@@ -7,6 +7,6 @@ export default {
   name: 'Web Manager',
   icon: 'Globe',
   path: '/web-manager',
-  description: 'Nginx sites management dashboard',
+  description: 'Nginx & Apache vhosts, LEMP/LAMP stack, PHP-FPM and database services',
   component: WebManagerDashboard,
 };

@@ -1,68 +1,43 @@
 """
 Web Manager Module Router
-Manages Nginx sites-available and sites-enabled.
+Nginx + Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM and DB service overview.
 """
 import os
 import re
 import shutil
 import subprocess
 import urllib.request
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from . import logic
 
 router = APIRouter()
 
-IS_WINDOWS = os.name == 'nt'
-
-# Directories for Nginx configuration files
-if IS_WINDOWS:
-    SITES_AVAILABLE = os.path.abspath("./test_nginx/sites-available")
-    SITES_ENABLED = os.path.abspath("./test_nginx/sites-enabled")
-else:
-    SITES_AVAILABLE = "/etc/nginx/sites-available"
-    SITES_ENABLED = "/etc/nginx/sites-enabled"
-
-# Create directories on development (and ensure available in testing)
-os.makedirs(SITES_AVAILABLE, exist_ok=True)
-os.makedirs(SITES_ENABLED, exist_ok=True)
-
-# Helper: Parse domain names and root paths from Nginx config text
-def parse_nginx_config(content: str) -> Dict[str, str]:
-    """Parse domain name and root path from nginx config content."""
-    server_names = re.findall(r'server_name\s+([^;]+);', content)
-    roots = re.findall(r'root\s+([^;]+);', content)
-    
-    server_name = server_names[0].strip() if server_names else "unknown"
-    root_path = roots[0].strip() if roots else "unknown"
-    
-    return {
-        "domain": server_name,
-        "root": root_path
-    }
+IS_WINDOWS = logic.IS_WINDOWS
+ensure_nginx_dirs = logic.ensure_nginx_dirs
+parse_nginx_config = logic.parse_nginx_config
+parse_apache_vhost = logic.parse_apache_vhost
+sanitize_filename = logic.sanitize_filename
+run_with_optional_sudo = logic.run_with_optional_sudo
+detect_php_fpm_socket = logic.detect_php_fpm_socket
+detect_apache_layout = logic.detect_apache_layout
+list_apache_site_files = logic.list_apache_site_files
+read_apache_site = logic.read_apache_site
+is_apache_vhost_enabled = logic.is_apache_vhost_enabled
+nginx_reload_test = logic.nginx_reload_test
+apache_reload_test = logic.apache_reload_test
+pkg_manager = logic.pkg_manager
 
 
-def sanitize_filename(value: str) -> str:
-    return re.sub(r'[^a-zA-Z0-9_.-]', '', value)
-
-
-def _run_with_optional_sudo(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
-    """Run command directly, then fallback to non-interactive sudo on Linux."""
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
-    except Exception:
-        pass
-    if IS_WINDOWS:
-        raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="Command failed on Windows mode.")
-    return subprocess.run(["sudo", "-n"] + cmd, capture_output=True, text=True, timeout=timeout, check=True)
+def _nginx_paths():
+    return ensure_nginx_dirs()
 
 
 def _pkg_manager() -> Optional[str]:
-    if shutil.which("apt-get"):
-        return "apt-get"
-    if shutil.which("yum"):
-        return "yum"
-    return None
+    return pkg_manager()
 
 
 def _pkg_installed(pkg_name: str) -> bool:
@@ -87,79 +62,232 @@ class CreateSiteRequest(BaseModel):
     proxy_port: Optional[int] = None
     php_version: Optional[str] = None
     php_modules: Optional[List[str]] = None
+    engine: Literal["nginx", "apache"] = "nginx"
 
 class ToggleSiteRequest(BaseModel):
     filename: str
     active: bool
+    engine: Literal["nginx", "apache"] = "nginx"
 
 class DeleteSiteRequest(BaseModel):
     filename: str
+    engine: Literal["nginx", "apache"] = "nginx"
 
 class UpdateSiteRequest(BaseModel):
     filename: str
     content: str
+    engine: Literal["nginx", "apache"] = "nginx"
+
+
+class StackBootstrapRequest(BaseModel):
+    preset: Literal["lemp", "lamp", "nginx_only", "apache_only", "php_mysql"] = Field(
+        ..., description="lemp=nginx+php-fpm+mysql; lamp=apache+php+mysql; php_mysql=PHP-FPM variants + DB client libs"
+    )
+    php_version: Optional[str] = "8.2"
 
 
 
 @router.get("/list")
 async def list_sites() -> Dict[str, Any]:
-    """List all available sites and their status."""
+    """List Nginx and Apache vhosts (unified list with engine field)."""
     try:
-        sites = []
-        for filename in os.listdir(SITES_AVAILABLE):
-            file_path = os.path.join(SITES_AVAILABLE, filename)
+        sites: List[Dict[str, Any]] = []
+        np = _nginx_paths()
+        for filename in os.listdir(np.sites_available):
+            file_path = os.path.join(np.sites_available, filename)
             if not os.path.isfile(file_path):
                 continue
-            
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-
             parsed = parse_nginx_config(content)
-            
-            # Check if active (symlink exists in sites-enabled or file copy in Windows)
-            enabled_path = os.path.join(SITES_ENABLED, filename)
+            enabled_path = os.path.join(np.sites_enabled, filename)
             is_active = os.path.exists(enabled_path)
+            sites.append(
+                {
+                    "filename": filename,
+                    "domain": parsed["domain"],
+                    "root": parsed["root"],
+                    "active": is_active,
+                    "content": content,
+                    "engine": "nginx",
+                }
+            )
 
-            sites.append({
-                "filename": filename,
-                "domain": parsed["domain"],
-                "root": parsed["root"],
-                "active": is_active,
-                "content": content
-            })
+        layout = detect_apache_layout()
+        if layout:
+            for filename in list_apache_site_files(layout):
+                try:
+                    _, content = read_apache_site(layout, filename)
+                except Exception:
+                    continue
+                parsed = parse_apache_vhost(content)
+                sites.append(
+                    {
+                        "filename": filename,
+                        "domain": parsed["domain"],
+                        "root": parsed["root"],
+                        "active": is_apache_vhost_enabled(layout, filename),
+                        "content": content,
+                        "engine": "apache",
+                    }
+                )
 
-        return {
-            "status": "success",
-            "sites": sites
-        }
+        return {"status": "success", "sites": sites}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _apache_vhost_template(
+    port: int,
+    server_name_str: str,
+    docroot: str,
+    php_version: Optional[str],
+    proxy_port: Optional[int],
+    php_socket: Optional[str],
+) -> str:
+    parts = server_name_str.split()
+    primary = parts[0] if parts else server_name_str
+    aliases = parts[1:] if len(parts) > 1 else []
+    alias_line = f"    ServerAlias {' '.join(aliases)}\n" if aliases else ""
+
+    if proxy_port:
+        return f"""<VirtualHost *:{port}>
+    ServerName {primary}
+{alias_line}    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:{proxy_port}/
+    ProxyPassReverse / http://127.0.0.1:{proxy_port}/
+</VirtualHost>
+"""
+    if php_version and php_socket:
+        return f"""<VirtualHost *:{port}>
+    ServerName {primary}
+{alias_line}    DocumentRoot {docroot}
+    <Directory {docroot}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <FilesMatch \\.php$>
+        SetHandler "proxy:unix:{php_socket}|fcgi://localhost"
+    </FilesMatch>
+</VirtualHost>
+"""
+    return f"""<VirtualHost *:{port}>
+    ServerName {primary}
+{alias_line}    DocumentRoot {docroot}
+    <Directory {docroot}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+"""
+
+
 @router.post("/create")
 async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
-    """Create a new Nginx site from a basic template."""
+    """Create a new Nginx or Apache vhost from a basic template."""
     try:
-        # Auto-generate filename if not provided
         fname = req.filename
         if not fname or fname.strip() == "":
             domain_name = req.domain.strip().lower()
-            domain_name = re.sub(r'^(https?://)?(www\.)?', '', domain_name)
+            domain_name = re.sub(r"^(https?://)?(www\.)?", "", domain_name)
             fname = f"{domain_name}.conf"
 
         safe_filename = sanitize_filename(fname)
-        file_path = os.path.join(SITES_AVAILABLE, safe_filename)
-        enabled_path = os.path.join(SITES_ENABLED, safe_filename)
+
+        server_name_str = req.domain.strip()
+        if not req.domain.startswith("www.") and "." in req.domain and not req.domain.replace(".", "").isdigit():
+            server_name_str += f" www.{req.domain}"
+
+        if req.root and req.root.strip() != "":
+            try:
+                os.makedirs(req.root.strip(), exist_ok=True)
+            except Exception:
+                pass
+
+        if req.engine == "apache":
+            layout = detect_apache_layout()
+            if not layout:
+                raise HTTPException(status_code=400, detail="Apache layout not detected on this system.")
+
+            if layout.style == "debian" and layout.sites_available and layout.sites_enabled:
+                file_path = os.path.join(layout.sites_available, safe_filename)
+                enabled_path = os.path.join(layout.sites_enabled, safe_filename)
+            elif layout.style == "rhel" and layout.conf_d:
+                rhel_name = safe_filename if safe_filename.endswith(".conf") else f"{safe_filename}.conf"
+                file_path = os.path.join(layout.conf_d, rhel_name)
+                enabled_path = file_path
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported Apache layout.")
+
+            if os.path.exists(file_path):
+                raise HTTPException(status_code=400, detail="Apache vhost file already exists.")
+
+            php_sock = None
+            if req.php_version:
+                php_sock = detect_php_fpm_socket(req.php_version) or f"/run/php/php{req.php_version}-fpm.sock"
+
+            template = _apache_vhost_template(
+                req.port or 80,
+                server_name_str,
+                req.root.strip() if req.root else "/var/www/html",
+                req.php_version,
+                req.proxy_port,
+                php_sock,
+            )
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(template)
+
+            if not IS_WINDOWS and layout.style == "debian":
+                try:
+                    if req.proxy_port:
+                        subprocess.run(["sudo", "a2enmod", "proxy", "proxy_http", "headers"], capture_output=True, text=True)
+                    elif req.php_version:
+                        subprocess.run(["sudo", "a2enmod", "proxy", "proxy_fcgi", "setenvif"], capture_output=True, text=True)
+                except Exception:
+                    pass
+
+            if layout.style == "debian" and layout.sites_enabled:
+                if not os.path.exists(enabled_path):
+                    try:
+                        if IS_WINDOWS:
+                            shutil.copy2(file_path, enabled_path)
+                        else:
+                            subprocess.run(["sudo", "a2ensite", safe_filename], check=True, capture_output=True, text=True)
+                    except subprocess.CalledProcessError:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        raise HTTPException(status_code=400, detail="a2ensite failed; check site name and apache config.")
+
+            if not IS_WINDOWS:
+                try:
+                    apache_reload_test(layout)
+                except subprocess.CalledProcessError as e:
+                    if layout.style == "debian":
+                        try:
+                            subprocess.run(["sudo", "a2dissite", safe_filename], capture_output=True, text=True)
+                        except Exception:
+                            pass
+                    if os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                        except Exception:
+                            pass
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Apache configuration invalid: {e.stderr or e.stdout}",
+                    )
+
+            return {"status": "success", "message": "Apache vhost created and activated successfully.", "engine": "apache"}
+
+        # ---- Nginx ----
+        np = _nginx_paths()
+        file_path = os.path.join(np.sites_available, safe_filename)
+        enabled_path = os.path.join(np.sites_enabled, safe_filename)
 
         if os.path.exists(file_path):
             raise HTTPException(status_code=400, detail="Site configuration file already exists.")
 
-        # Generate server_name string: include www alias for domain names
-        server_name_str = req.domain
-        if not req.domain.startswith("www.") and "." in req.domain and not req.domain.replace(".", "").isdigit():
-            server_name_str += f" www.{req.domain}"
-
-        # Create basic template
         if req.proxy_port:
             template = f"""server {{
     listen {req.port};
@@ -184,7 +312,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 }}
 """
         elif req.php_version:
-            # PHP Template
+            sock = detect_php_fpm_socket(req.php_version) or f"/run/php/php{req.php_version}-fpm.sock"
             template = f"""server {{
     listen {req.port};
     server_name {server_name_str};
@@ -197,13 +325,13 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
-    location ~ \.php$ {{
+    location ~ \\.php$ {{
         include fastcgi_params;
-        fastcgi_pass unix:/run/php/php{req.php_version}-fpm.sock;
+        fastcgi_pass unix:{sock};
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }}
 
-    location ~ /\.ht {{
+    location ~ /\\.ht {{
         deny all;
     }}
 }}
@@ -223,44 +351,31 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 }}
 """
 
-
-        # Ensure that document root directory exists
-        if req.root and req.root.strip() != "":
-            try:
-                os.makedirs(req.root.strip(), exist_ok=True)
-            except Exception:
-                pass
-
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(template)
 
-        # On Linux, if PHP is selected and modules are requested, install them
         if not IS_WINDOWS and req.php_version and req.php_modules:
             try:
-                pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
-                if pkg_manager == "apt-get":
+                pm = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
+                if pm == "apt-get":
                     pkgs = [f"php{req.php_version}-{m}" for m in req.php_modules]
                     subprocess.run(["sudo", "apt-get", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                elif pkg_manager == "yum":
+                elif pm == "yum":
                     pkgs = [f"php-{m}" for m in req.php_modules]
                     subprocess.run(["sudo", "yum", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
 
-        # Automatically activate the new site
         if not os.path.exists(enabled_path):
             if IS_WINDOWS:
                 shutil.copy2(file_path, enabled_path)
             else:
                 os.symlink(file_path, enabled_path)
 
-        # Test and reload on Linux
         if not IS_WINDOWS:
             try:
-                subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-                subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
+                nginx_reload_test()
             except subprocess.CalledProcessError as e:
-                # Revert if nginx -t fails
                 if os.path.exists(enabled_path):
                     if os.path.islink(enabled_path):
                         os.unlink(enabled_path)
@@ -270,13 +385,10 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
                     os.remove(file_path)
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Nginx configuration invalid: {e.stderr}"
+                    detail=f"Nginx configuration invalid: {e.stderr}",
                 )
 
-        return {
-            "status": "success",
-            "message": "Nginx site created and activated successfully."
-        }
+        return {"status": "success", "message": "Nginx site created and activated successfully.", "engine": "nginx"}
 
     except HTTPException:
         raise
@@ -286,38 +398,78 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 
 @router.post("/toggle")
 async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
-    """Enable or disable an Nginx site by creating or deleting its link."""
+    """Enable or disable a Nginx site (symlink) or Apache vhost (a2ensite / rename)."""
     try:
         safe_filename = sanitize_filename(req.filename)
-        available_path = os.path.join(SITES_AVAILABLE, safe_filename)
-        enabled_path = os.path.join(SITES_ENABLED, safe_filename)
+
+        if req.engine == "apache":
+            layout = detect_apache_layout()
+            if not layout:
+                raise HTTPException(status_code=404, detail="Apache not available.")
+            try:
+                read_apache_site(layout, safe_filename)
+            except Exception:
+                raise HTTPException(status_code=404, detail="Apache vhost not found.")
+
+            if layout.style == "debian":
+                try:
+                    if req.active:
+                        subprocess.run(["sudo", "a2ensite", safe_filename], check=True, capture_output=True, text=True)
+                    else:
+                        subprocess.run(["sudo", "a2dissite", safe_filename], check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as e:
+                    raise HTTPException(status_code=400, detail=(e.stderr or e.stdout or "a2en/a2dis failed.").strip())
+            elif layout.style == "rhel" and layout.conf_d:
+                base = os.path.join(layout.conf_d, safe_filename if safe_filename.endswith(".conf") else f"{safe_filename}.conf")
+                off = base + ".off"
+                try:
+                    if req.active:
+                        if os.path.isfile(off):
+                            os.rename(off, base)
+                        elif not os.path.isfile(base):
+                            raise HTTPException(status_code=404, detail="Vhost conf missing.")
+                    else:
+                        if os.path.isfile(base):
+                            os.rename(base, off)
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+            if not IS_WINDOWS:
+                try:
+                    apache_reload_test(layout)
+                except subprocess.CalledProcessError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Apache configuration invalid: {e.stderr or e.stdout}",
+                    )
+            return {"status": "success", "message": f"Apache site {'enabled' if req.active else 'disabled'} successfully."}
+
+        np = _nginx_paths()
+        available_path = os.path.join(np.sites_available, safe_filename)
+        enabled_path = os.path.join(np.sites_enabled, safe_filename)
 
         if not os.path.exists(available_path):
             raise HTTPException(status_code=404, detail="Site configuration not found in sites-available.")
 
         if req.active:
-            # Activate site
             if not os.path.exists(enabled_path):
                 if IS_WINDOWS:
-                    # Windows symlink fallback: file copy
                     shutil.copy2(available_path, enabled_path)
                 else:
                     os.symlink(available_path, enabled_path)
         else:
-            # Deactivate site
             if os.path.exists(enabled_path):
                 if os.path.islink(enabled_path):
                     os.unlink(enabled_path)
                 else:
                     os.remove(enabled_path)
 
-        # Test and reload on Linux
         if not IS_WINDOWS:
             try:
-                subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-                subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
+                nginx_reload_test()
             except subprocess.CalledProcessError as e:
-                # Revert if nginx -t fails
                 if req.active and os.path.exists(enabled_path):
                     if os.path.islink(enabled_path):
                         os.unlink(enabled_path)
@@ -325,13 +477,10 @@ async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
                         os.remove(enabled_path)
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Nginx configuration invalid: {e.stderr}"
+                    detail=f"Nginx configuration invalid: {e.stderr}",
                 )
 
-        return {
-            "status": "success",
-            "message": f"Site {'enabled' if req.active else 'disabled'} successfully."
-        }
+        return {"status": "success", "message": f"Site {'enabled' if req.active else 'disabled'} successfully."}
     except HTTPException:
         raise
     except Exception as e:
@@ -340,87 +489,121 @@ async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
 
 @router.post("/delete")
 async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
-    """Delete site configuration from sites-available and sites-enabled."""
+    """Delete Nginx or Apache vhost configuration."""
     try:
         safe_filename = sanitize_filename(req.filename)
-        available_path = os.path.join(SITES_AVAILABLE, safe_filename)
-        enabled_path = os.path.join(SITES_ENABLED, safe_filename)
 
-        # Remove from sites-enabled first
+        if req.engine == "apache":
+            layout = detect_apache_layout()
+            if not layout:
+                raise HTTPException(status_code=404, detail="Apache not available.")
+            if layout.style == "debian" and layout.sites_available and layout.sites_enabled:
+                enabled_path = os.path.join(layout.sites_enabled, safe_filename)
+                available_path = os.path.join(layout.sites_available, safe_filename)
+                if os.path.exists(enabled_path):
+                    if os.path.islink(enabled_path):
+                        os.unlink(enabled_path)
+                    else:
+                        os.remove(enabled_path)
+                try:
+                    subprocess.run(["sudo", "a2dissite", safe_filename], capture_output=True, text=True)
+                except Exception:
+                    pass
+                if os.path.exists(available_path):
+                    os.remove(available_path)
+            elif layout.style == "rhel" and layout.conf_d:
+                base = os.path.join(
+                    layout.conf_d,
+                    safe_filename if safe_filename.endswith(".conf") else f"{safe_filename}.conf",
+                )
+                for path in (base, base + ".off"):
+                    if os.path.isfile(path):
+                        os.remove(path)
+            if not IS_WINDOWS:
+                try:
+                    apache_reload_test(layout)
+                except Exception:
+                    pass
+            return {"status": "success", "message": "Apache vhost removed."}
+
+        np = _nginx_paths()
+        available_path = os.path.join(np.sites_available, safe_filename)
+        enabled_path = os.path.join(np.sites_enabled, safe_filename)
+
         if os.path.exists(enabled_path):
             if os.path.islink(enabled_path):
                 os.unlink(enabled_path)
             else:
                 os.remove(enabled_path)
 
-        # Remove from sites-available
         if os.path.exists(available_path):
             os.remove(available_path)
 
-        # Reload Nginx on Linux
         if not IS_WINDOWS:
             subprocess.run(["nginx", "-t"], check=False)
             subprocess.run(["systemctl", "reload", "nginx"], check=False)
 
-        return {
-            "status": "success",
-            "message": "Nginx site removed completely."
-        }
+        return {"status": "success", "message": "Nginx site removed completely."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/update")
 async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
-    """Update Nginx or Apache site configuration, test syntax, and reload."""
+    """Update Nginx or Apache vhost content, test syntax, and reload."""
     try:
         safe_filename = sanitize_filename(req.filename)
-        available_path = os.path.join(SITES_AVAILABLE, safe_filename)
+
+        if req.engine == "apache":
+            layout = detect_apache_layout()
+            if not layout:
+                raise HTTPException(status_code=404, detail="Apache not available.")
+            try:
+                available_path, backup_content = read_apache_site(layout, safe_filename)
+            except Exception:
+                raise HTTPException(status_code=404, detail="Apache vhost not found.")
+
+            with open(available_path, "w", encoding="utf-8") as f:
+                f.write(req.content)
+
+            if not IS_WINDOWS:
+                try:
+                    apache_reload_test(layout)
+                except subprocess.CalledProcessError as e:
+                    with open(available_path, "w", encoding="utf-8") as f:
+                        f.write(backup_content)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Apache configuration syntax error:\n{e.stderr or e.stdout}",
+                    )
+            return {"status": "success", "message": "Apache configuration saved and reloaded successfully."}
+
+        np = _nginx_paths()
+        available_path = os.path.join(np.sites_available, safe_filename)
 
         if not os.path.exists(available_path):
             raise HTTPException(status_code=404, detail="Site configuration not found.")
 
-        # Read original backup
         with open(available_path, "r", encoding="utf-8", errors="ignore") as f:
             backup_content = f.read()
 
-        # Write new content
         with open(available_path, "w", encoding="utf-8") as f:
             f.write(req.content)
 
-        # Test configuration syntax and reload on Linux
         if not IS_WINDOWS:
-            # Check Nginx
-            if os.path.exists("/etc/nginx") or shutil.which("nginx"):
-                try:
-                    subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-                    subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
-                except subprocess.CalledProcessError as e:
-                    # Restore backup
-                    with open(available_path, "w", encoding="utf-8") as f:
-                        f.write(backup_content)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Nginx configuration syntax error:\n{e.stderr or e.stdout}"
-                    )
-            # Fallback to Apache if applicable
-            elif os.path.exists("/etc/apache2") or shutil.which("apache2ctl"):
-                try:
-                    subprocess.run(["apache2ctl", "configtest"], check=True, capture_output=True, text=True)
-                    subprocess.run(["systemctl", "reload", "apache2"], check=True, capture_output=True, text=True)
-                except subprocess.CalledProcessError as e:
-                    # Restore backup
-                    with open(available_path, "w", encoding="utf-8") as f:
-                        f.write(backup_content)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Apache configuration syntax error:\n{e.stderr or e.stdout}"
-                    )
+            try:
+                nginx_reload_test()
+            except subprocess.CalledProcessError as e:
+                with open(available_path, "w", encoding="utf-8") as f:
+                    f.write(backup_content)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Nginx configuration syntax error:\n{e.stderr or e.stdout}",
+                )
 
-        return {
-            "status": "success",
-            "message": "Configuration saved and reloaded successfully."
-        }
+        return {"status": "success", "message": "Configuration saved and reloaded successfully."}
     except HTTPException:
         raise
     except Exception as e:
@@ -456,12 +639,20 @@ async def list_web_services() -> Dict[str, Any]:
     for s in services:
         sid = s["id"]
         bin_exists = shutil.which(sid) or shutil.which("openlitespeed" if sid == "litespeed" else sid)
+        if sid == "apache2":
+            bin_exists = bin_exists or shutil.which("apache2") or shutil.which("httpd")
+            bin_exists = bin_exists or os.path.isdir("/etc/apache2") or os.path.isdir("/etc/httpd")
         if bin_exists or os.path.exists(f"/etc/{sid}"):
             s["installed"] = True
             installed_ids.add(sid)
             try:
-                res = subprocess.run(["systemctl", "is-active", sid], capture_output=True, text=True)
-                s["status"] = "running" if res.stdout.strip() == "active" else "stopped"
+                active = False
+                for unit in (sid, "httpd") if sid == "apache2" else (sid,):
+                    res = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
+                    if res.stdout.strip() == "active":
+                        active = True
+                        break
+                s["status"] = "running" if active else "stopped"
             except Exception:
                 s["status"] = "stopped"
 
@@ -470,6 +661,93 @@ async def list_web_services() -> Dict[str, Any]:
         s["conflicts_with"] = [c for c in CONFLICT_MAP.get(s["id"], []) if c in installed_ids]
 
     return {"status": "success", "services": services}
+
+
+@router.get("/stack")
+async def stack_overview() -> Dict[str, Any]:
+    """Unified LEMP/LAMP-style overview: web servers, PHP-FPM, SQL services."""
+    ws = await list_web_services()
+    return {
+        "status": "success",
+        "web_servers": ws.get("services", []),
+        "php_fpm": logic.list_php_fpm_versions(),
+        "database_services": logic.database_service_rows(),
+        "apache_detected": detect_apache_layout() is not None,
+    }
+
+
+@router.post("/stack/bootstrap")
+async def stack_bootstrap(req: StackBootstrapRequest) -> Dict[str, Any]:
+    """Install common presets: LEMP (nginx + php-fpm + mariadb), LAMP, or PHP+DB libs only."""
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Bootstrap '{req.preset}' simulated (Windows)."}
+
+    pm = pkg_manager()
+    if not pm:
+        raise HTTPException(status_code=400, detail="No supported package manager (apt-get/yum).")
+
+    ver = (req.php_version or "8.2").strip()
+    cmds: List[List[str]] = []
+
+    if req.preset == "nginx_only":
+        cmds.append(["sudo", pm, "install", "-y", "nginx"])
+    elif req.preset == "apache_only":
+        pkg = "apache2" if pm == "apt-get" else "httpd"
+        cmds.append(["sudo", pm, "install", "-y", pkg])
+    elif req.preset == "lemp":
+        cmds.append(["sudo", pm, "install", "-y", "nginx"])
+        if pm == "apt-get":
+            cmds.append(["sudo", pm, "install", "-y", f"php{ver}-fpm", f"php{ver}-cli", f"php{ver}-mysql", "mariadb-server"])
+        else:
+            cmds.append(
+                ["sudo", pm, "install", "-y", "php-fpm", "php-mysqlnd", "mariadb-server"]
+            )
+    elif req.preset == "lamp":
+        if pm == "apt-get":
+            cmds.append(
+                [
+                    "sudo",
+                    pm,
+                    "install",
+                    "-y",
+                    "apache2",
+                    f"php{ver}",
+                    f"libapache2-mod-php{ver}",
+                    f"php{ver}-mysql",
+                    "mariadb-server",
+                ]
+            )
+        else:
+            cmds.append(["sudo", pm, "install", "-y", "httpd", "php", "php-mysqlnd", "mariadb-server"])
+    elif req.preset == "php_mysql":
+        if pm == "apt-get":
+            cmds.append(
+                [
+                    "sudo",
+                    pm,
+                    "install",
+                    "-y",
+                    f"php{ver}-fpm",
+                    f"php{ver}-cli",
+                    f"php{ver}-mysql",
+                    f"php{ver}-curl",
+                    f"php{ver}-mbstring",
+                    f"php{ver}-xml",
+                ]
+            )
+        else:
+            cmds.append(["sudo", pm, "install", "-y", "php-fpm", "php-mysqlnd", "php-cli"])
+
+    for cmd in cmds:
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=(e.stderr or e.stdout or "Bootstrap install failed.").strip(),
+            )
+
+    return {"status": "success", "message": f"Stack bootstrap '{req.preset}' completed."}
 
 
 @router.post("/web_services/install_stack")
@@ -538,9 +816,14 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
         return {"status": "success", "message": f"{service_id} installed successfully."}
 
     if action in ["start", "stop", "restart"]:
+        unit = service_id
+        if service_id == "apache2":
+            r_a = subprocess.run(["systemctl", "cat", "apache2"], capture_output=True, text=True)
+            r_h = subprocess.run(["systemctl", "cat", "httpd"], capture_output=True, text=True)
+            unit = "apache2" if r_a.returncode == 0 else ("httpd" if r_h.returncode == 0 else "apache2")
         try:
-            subprocess.run(["sudo", "systemctl", action, service_id], check=True, capture_output=True, text=True)
-            return {"status": "success", "message": f"Service {service_id} {action}ed successfully."}
+            subprocess.run(["sudo", "systemctl", action, unit], check=True, capture_output=True, text=True)
+            return {"status": "success", "message": f"Service {unit} {action}ed successfully."}
         except subprocess.CalledProcessError as e:
             raise HTTPException(status_code=400, detail=f"Service control failed: {e.stderr or e.stdout}")
 
@@ -654,29 +937,29 @@ async def install_db_admin_tool(tool_id: str) -> Dict[str, Any]:
         if tool_id == "mysql":
             if pkg == "apt-get":
                 try:
-                    _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                    run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
                 except Exception:
-                    _run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
-                _run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
+                    run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
+                run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
             else:
                 try:
-                    _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                    run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
                 except Exception:
-                    _run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
+                    run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
                 # phpMyAdmin package name differs by distro; try best-effort
                 try:
-                    _run_with_optional_sudo([pkg, "install", "-y", "phpMyAdmin"])
+                    run_with_optional_sudo([pkg, "install", "-y", "phpMyAdmin"])
                 except Exception:
-                    _run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
+                    run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
             return {"status": "success", "message": "MySQL/MariaDB and phpMyAdmin installation completed."}
 
         if tool_id == "postgresql":
             if pkg == "apt-get":
-                _run_with_optional_sudo([pkg, "install", "-y", "postgresql"])
-                _run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
+                run_with_optional_sudo([pkg, "install", "-y", "postgresql"])
+                run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
             else:
-                _run_with_optional_sudo([pkg, "install", "-y", "postgresql-server"])
-                _run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
+                run_with_optional_sudo([pkg, "install", "-y", "postgresql-server"])
+                run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
             return {"status": "success", "message": "PostgreSQL and pgAdmin installation completed."}
 
         if tool_id == "adminer":
@@ -713,6 +996,13 @@ async def install_adminer() -> Dict[str, Any]:
 
     # Create Nginx config for Adminer
     if shutil.which("nginx"):
+        adminer_sock = None
+        for v in ("8.3", "8.2", "8.1", "8.0", "7.4"):
+            adminer_sock = detect_php_fpm_socket(v)
+            if adminer_sock:
+                break
+        if not adminer_sock:
+            adminer_sock = "/run/php/php8.2-fpm.sock"
         nginx_config = f"""server {{
     listen 80;
     server_name _;
@@ -721,7 +1011,7 @@ async def install_adminer() -> Dict[str, Any]:
         index adminer.php;
         location ~ \\.php$ {{
             include fastcgi_params;
-            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+            fastcgi_pass unix:{adminer_sock};
             fastcgi_param SCRIPT_FILENAME $request_filename;
         }}
     }}

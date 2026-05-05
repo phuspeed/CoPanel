@@ -1,6 +1,5 @@
 /**
- * Web Manager v1.0.1 - Multi-Tab High-End Management Dashboard
- * Dynamic tabs: Website, Web Services (Stack Wizard), SQL Databases & Users, PHP Manager.
+ * Web Manager — Nginx & Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM, databases.
  */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -12,6 +11,7 @@ interface SiteItem {
   root: string;
   active: boolean;
   content: string;
+  engine?: 'nginx' | 'apache';
 }
 
 export default function WebManagerDashboard() {
@@ -33,6 +33,7 @@ export default function WebManagerDashboard() {
   const [port, setPort] = useState<number>(80);
   const [proxyPort, setProxyPort] = useState<number | ''>('');
   const [siteType, setSiteType] = useState<'static' | 'proxy' | 'php'>('static');
+  const [siteEngine, setSiteEngine] = useState<'nginx' | 'apache'>('nginx');
 
   // PHP specific states
   const [phpVersion, setPhpVersion] = useState<string>('8.2');
@@ -50,6 +51,13 @@ export default function WebManagerDashboard() {
   const [loadingServices, setLoadingServices] = useState<boolean>(false);
   const [installingStack, setInstallingStack] = useState<string | null>(null);
   const [stackMsg, setStackMsg] = useState<{ msg: string; isError: boolean } | null>(null);
+  const [stackOverview, setStackOverview] = useState<{
+    php_fpm: Array<{ version: string; status: string; socket?: string | null }>;
+    database_services: Array<{ id: string; name: string; status: string; installed: boolean }>;
+    apache_detected: boolean;
+  } | null>(null);
+  const [bootstrapping, setBootstrapping] = useState<string | null>(null);
+  const [bootstrapPhpVer, setBootstrapPhpVer] = useState<string>('8.2');
 
   // Tab 3: Databases & Users States
   // Smart DB Admin engines
@@ -133,6 +141,19 @@ export default function WebManagerDashboard() {
       wsInstallStack: 'Install This Stack',
       wsCombo: 'Nginx + Apache Combo',
       wsComboDesc: 'Nginx handles port 80 as a proxy; Apache processes PHP on port 8080.',
+      stackSummary: 'Stack overview',
+      stackSummaryDesc: 'PHP-FPM pools and SQL services detected on this host.',
+      bootstrapTitle: 'Quick stack bootstrap',
+      bootstrapDesc: 'Install LEMP (Nginx + PHP-FPM + MariaDB), LAMP, or web server only.',
+      colEngine: 'Engine',
+      engineNginx: 'Nginx',
+      engineApache: 'Apache',
+      siteBackend: 'Web server',
+      lempBtn: 'LEMP',
+      lampBtn: 'LAMP',
+      nginxOnlyBtn: 'Nginx only',
+      apacheOnlyBtn: 'Apache only',
+      phpMysqlBtn: 'PHP + MySQL extensions',
 
       // Databases
       dbTitle: 'Database Services & Users',
@@ -231,6 +252,19 @@ export default function WebManagerDashboard() {
       wsInstallStack: 'Cài đặt Stack này',
       wsCombo: 'Combo Nginx + Apache',
       wsComboDesc: 'Nginx xử lý cổng 80 làm proxy; Apache xử lý PHP ở cổng 8080.',
+      stackSummary: 'Tổng quan stack',
+      stackSummaryDesc: 'PHP-FPM và dịch vụ SQL trên máy chủ.',
+      bootstrapTitle: 'Khởi tạo stack nhanh',
+      bootstrapDesc: 'Cài LEMP, LAMP hoặc chỉ web server.',
+      colEngine: 'Engine',
+      engineNginx: 'Nginx',
+      engineApache: 'Apache',
+      siteBackend: 'Web server',
+      lempBtn: 'LEMP',
+      lampBtn: 'LAMP',
+      nginxOnlyBtn: 'Chỉ Nginx',
+      apacheOnlyBtn: 'Chỉ Apache',
+      phpMysqlBtn: 'PHP + mở rộng MySQL',
       colService: 'Tên dịch vụ',
       colServiceStatus: 'Trạng thái',
       colInstalled: 'Đã cài đặt',
@@ -273,6 +307,15 @@ export default function WebManagerDashboard() {
       if (response.ok) {
         const d = await response.json();
         if (d.services) setWebServices(d.services);
+      }
+      const stackRes = await fetch('/api/web_manager/stack', { headers: authHeaders });
+      if (stackRes.ok) {
+        const s = await stackRes.json();
+        setStackOverview({
+          php_fpm: s.php_fpm || [],
+          database_services: s.database_services || [],
+          apache_detected: !!s.apache_detected,
+        });
       }
     } catch (err) {
       console.error(err);
@@ -407,6 +450,26 @@ export default function WebManagerDashboard() {
 
   // PHP version/module options fetching
   useEffect(() => {
+    if (!showCreateModal) return;
+    const loadStack = async () => {
+      try {
+        const stackRes = await fetch('/api/web_manager/stack', { headers: authHeaders });
+        if (stackRes.ok) {
+          const s = await stackRes.json();
+          setStackOverview({
+            php_fpm: s.php_fpm || [],
+            database_services: s.database_services || [],
+            apache_detected: !!s.apache_detected,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    loadStack();
+  }, [showCreateModal]);
+
+  useEffect(() => {
     const fetchPhpOptions = async () => {
       try {
         const resV = await fetch('/api/php_manager/versions', { headers: authHeaders });
@@ -432,7 +495,11 @@ export default function WebManagerDashboard() {
       const response = await fetch('/api/web_manager/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ filename: item.filename, active: !item.active }),
+        body: JSON.stringify({
+          filename: item.filename,
+          active: !item.active,
+          engine: item.engine || 'nginx',
+        }),
       });
       if (!response.ok) {
         const data = await response.json();
@@ -450,7 +517,7 @@ export default function WebManagerDashboard() {
       const response = await fetch('/api/web_manager/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ filename: item.filename }),
+        body: JSON.stringify({ filename: item.filename, engine: item.engine || 'nginx' }),
       });
       if (!response.ok) {
         const data = await response.json();
@@ -475,6 +542,7 @@ export default function WebManagerDashboard() {
           proxy_port: siteType === 'proxy' ? (proxyPort || null) : null,
           php_version: siteType === 'php' ? phpVersion : null,
           php_modules: siteType === 'php' ? phpModules : null,
+          engine: siteEngine,
         }),
       });
       if (!response.ok) {
@@ -501,7 +569,11 @@ export default function WebManagerDashboard() {
       const response = await fetch('/api/web_manager/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ filename: viewingSite.filename, content: editedContent }),
+        body: JSON.stringify({
+          filename: viewingSite.filename,
+          content: editedContent,
+          engine: viewingSite.engine || 'nginx',
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -554,6 +626,29 @@ export default function WebManagerDashboard() {
       setStackMsg({ msg: 'Network error.', isError: true });
     } finally {
       setInstallingStack(null);
+    }
+  };
+
+  const handleStackBootstrap = async (preset: string) => {
+    setBootstrapping(preset);
+    setStackMsg(null);
+    try {
+      const res = await fetch('/api/web_manager/stack/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ preset, php_version: bootstrapPhpVer }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setStackMsg({ msg: d.message || 'Bootstrap OK.', isError: false });
+        fetchWebServices();
+      } else {
+        setStackMsg({ msg: d.detail || 'Bootstrap failed.', isError: true });
+      }
+    } catch {
+      setStackMsg({ msg: 'Network error.', isError: true });
+    } finally {
+      setBootstrapping(null);
     }
   };
 
@@ -747,7 +842,7 @@ export default function WebManagerDashboard() {
             <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.5
+              v1.1.0
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -763,6 +858,7 @@ export default function WebManagerDashboard() {
               setRoot('/var/www/');
               setPort(80);
               setProxyPort('');
+              setSiteEngine('nginx');
               setShowCreateModal(true);
             }}
             className={`w-full md:w-auto flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-bold text-xs text-white transition-all shadow-md ${
@@ -847,6 +943,7 @@ export default function WebManagerDashboard() {
                       isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
                     }`}>
                       <th className="p-4">{tr.colFilename}</th>
+                      <th className="p-4">{tr.colEngine}</th>
                       <th className="p-4">{tr.colDomain}</th>
                       <th className="p-4">{tr.colRoot}</th>
                       <th className="p-4">{tr.colStatus}</th>
@@ -857,6 +954,15 @@ export default function WebManagerDashboard() {
                     {sites.map((item, idx) => (
                       <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
                         <td className="p-4">{item.filename}</td>
+                        <td className="p-4">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                            item.engine === 'apache'
+                              ? (isDark ? 'border-amber-700/50 text-amber-400 bg-amber-950/30' : 'border-amber-200 text-amber-800 bg-amber-50')
+                              : (isDark ? 'border-cyan-800/50 text-cyan-400 bg-cyan-950/20' : 'border-cyan-200 text-cyan-800 bg-cyan-50')
+                          }`}>
+                            {item.engine === 'apache' ? tr.engineApache : tr.engineNginx}
+                          </span>
+                        </td>
                         <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[200px]" title={item.domain}>
                           {item.domain}
                         </td>
@@ -929,6 +1035,9 @@ export default function WebManagerDashboard() {
                       </div>
                       <div className="flex flex-col gap-1 text-xs">
                         <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                          <strong>{tr.colEngine}:</strong> {item.engine === 'apache' ? tr.engineApache : tr.engineNginx}
+                        </span>
+                        <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                           <strong>{tr.colFilename}:</strong> {item.filename}
                         </span>
                         <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -979,6 +1088,91 @@ export default function WebManagerDashboard() {
             </h3>
             <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.wsDesc}</p>
           </div>
+
+          {stackMsg && (
+            <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${
+              stackMsg.isError
+                ? (isDark ? 'bg-red-950/20 border-red-800/40 text-red-400' : 'bg-red-50 border-red-200 text-red-600')
+                : (isDark ? 'bg-green-950/20 border-green-800/40 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
+            }`}>
+              {stackMsg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />}
+              <span>{stackMsg.msg}</span>
+            </div>
+          )}
+
+          {stackOverview && (
+            <div className={`border rounded-2xl p-5 space-y-4 ${isDark ? 'border-slate-800/60 bg-slate-950/30' : 'border-slate-200 bg-slate-50/40'}`}>
+              <div>
+                <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                  <Icons.Layers className={`w-4 h-4 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
+                  {tr.stackSummary}
+                </h4>
+                <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.stackSummaryDesc}</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`rounded-xl border p-4 space-y-2 ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white'}`}>
+                  <span className={`text-[11px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>PHP-FPM</span>
+                  {stackOverview.php_fpm.length === 0 ? (
+                    <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{language === 'vi' ? 'Chưa phát hiện pool PHP-FPM.' : 'No PHP-FPM pools detected.'}</p>
+                  ) : (
+                    <ul className="space-y-1.5 text-xs font-mono">
+                      {stackOverview.php_fpm.map((p) => (
+                        <li key={p.version} className={`flex justify-between gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                          <span>PHP {p.version}</span>
+                          <span className={p.status === 'running' ? 'text-green-500' : ''}>{p.status}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className={`rounded-xl border p-4 space-y-2 ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white'}`}>
+                  <span className={`text-[11px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Database</span>
+                  <ul className="space-y-1.5 text-xs">
+                    {stackOverview.database_services.map((db) => (
+                      <li key={db.id} className={`flex justify-between gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                        <span>{db.name}</span>
+                        <span className="font-mono text-[10px]">{db.installed ? db.status : '—'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className={`border-t pt-4 space-y-3 dark:border-slate-800`}>
+                <p className={`text-xs font-bold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{tr.bootstrapTitle}</p>
+                <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.bootstrapDesc}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={bootstrapPhpVer}
+                    onChange={(e) => setBootstrapPhpVer(e.target.value)}
+                    className={`border px-2 py-1.5 rounded-lg text-xs font-mono outline-none ${isDark ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-white border-slate-200'}`}
+                  >
+                    {['8.3', '8.2', '8.1', '8.0', '7.4'].map((v) => (
+                      <option key={v} value={v}>PHP {v}</option>
+                    ))}
+                  </select>
+                  {[
+                    { id: 'lemp', label: tr.lempBtn },
+                    { id: 'lamp', label: tr.lampBtn },
+                    { id: 'nginx_only', label: tr.nginxOnlyBtn },
+                    { id: 'apache_only', label: tr.apacheOnlyBtn },
+                    { id: 'php_mysql', label: tr.phpMysqlBtn },
+                  ].map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      disabled={bootstrapping !== null}
+                      onClick={() => handleStackBootstrap(b.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition disabled:opacity-50 ${
+                        isDark ? 'bg-teal-700 hover:bg-teal-600' : 'bg-teal-600 hover:bg-teal-500'
+                      }`}
+                    >
+                      {bootstrapping === b.id ? <Icons.Loader className="w-3.5 h-3.5 animate-spin inline" /> : b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {loadingServices ? (
             <div className="flex items-center gap-2 text-slate-400 text-xs py-4">
@@ -1610,6 +1804,42 @@ export default function WebManagerDashboard() {
                     }`}
                   >
                     <Icons.Shield className="w-4 h-4" /> {tr.proxyService}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className={`text-[10px] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {tr.siteBackend}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSiteEngine('nginx')}
+                    className={`p-2.5 rounded-xl border font-bold text-[11px] transition ${
+                      siteEngine === 'nginx'
+                        ? 'bg-blue-600/10 border-blue-500 text-blue-500'
+                        : isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {tr.engineNginx}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={stackOverview ? !stackOverview.apache_detected : false}
+                    onClick={() => setSiteEngine('apache')}
+                    title={
+                      stackOverview && !stackOverview.apache_detected
+                        ? (language === 'vi' ? 'Cài Apache (tab Dịch vụ Web) trước' : 'Install Apache from Web Services tab first')
+                        : undefined
+                    }
+                    className={`p-2.5 rounded-xl border font-bold text-[11px] transition disabled:opacity-40 ${
+                      siteEngine === 'apache'
+                        ? 'bg-amber-600/10 border-amber-500 text-amber-500'
+                        : isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {tr.engineApache}
                   </button>
                 </div>
               </div>
