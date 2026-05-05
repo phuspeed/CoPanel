@@ -90,8 +90,40 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
     return compare_versions(remote_version, local_version) > 0
 
 
+def restart_backend_service(delay: float = 2.0):
+    """
+    Restart the copanel systemd service so newly-installed Python modules
+    are picked up without requiring manual VPS access.
+    Runs in a daemon thread with a short delay so the caller's HTTP response
+    can be flushed before the process is replaced.
+    Only acts on Linux when systemctl is available.
+    """
+    import platform
+    import threading
+
+    if platform.system() == "Windows":
+        return
+
+    def _do_restart():
+        import time
+        import shutil
+        time.sleep(delay)
+        if shutil.which("systemctl"):
+            try:
+                subprocess.run(
+                    ["systemctl", "restart", "copanel"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_do_restart, daemon=True)
+    t.start()
+
+
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.8",
+    "appstore_manager": "1.0.9",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -458,6 +490,8 @@ class AppStoreManager:
                         save_local_version(pkg_id, version)
                     except Exception:
                         pass
+                    BUILD_TASKS[pkg_id]["logs"].append("♻️ Restarting backend service to load new modules...")
+                    restart_backend_service(delay=2.0)
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
@@ -642,6 +676,8 @@ class AppStoreManager:
                             save_local_version(pkg_id, vf.read_text(encoding="utf-8").strip())
                     except Exception:
                         pass
+                    BUILD_TASKS[pkg_id]["logs"].append("♻️ Restarting backend service to load new modules...")
+                    restart_backend_service(delay=2.0)
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
