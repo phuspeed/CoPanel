@@ -7,6 +7,10 @@ import shutil
 import threading
 import time
 import configparser
+import secrets
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime
 
@@ -45,6 +49,39 @@ class ProfileManager:
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_clients (
+                    provider TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    client_secret TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_tokens (
+                    remote_name TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_type TEXT,
+                    expiry TEXT,
+                    scope TEXT,
+                    encrypted_blob TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_states (
+                    state TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    remote_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
                 )
             """)
 
@@ -244,6 +281,150 @@ class ProfileManager:
         return remotes
 
     @staticmethod
+    def save_oauth_client(provider: str, client_id: str, client_secret: str, redirect_uri: str):
+        now = datetime.utcnow().isoformat()
+        with ProfileManager._get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO oauth_clients (provider, client_id, client_secret, redirect_uri, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    client_id = excluded.client_id,
+                    client_secret = excluded.client_secret,
+                    redirect_uri = excluded.redirect_uri,
+                    updated_at = excluded.updated_at
+                """,
+                (provider, client_id, client_secret, redirect_uri, now, now),
+            )
+
+    @staticmethod
+    def get_oauth_client(provider: str):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("SELECT * FROM oauth_clients WHERE provider = ?", (provider,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def create_oauth_state(provider: str, remote_name: str, ttl_seconds: int = 600) -> str:
+        state = secrets.token_urlsafe(24)
+        now = datetime.utcnow()
+        expires = now.timestamp() + ttl_seconds
+        with ProfileManager._get_db() as conn:
+            conn.execute(
+                "INSERT INTO oauth_states (state, provider, remote_name, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                (state, provider, remote_name, now.isoformat(), str(expires)),
+            )
+        return state
+
+    @staticmethod
+    def consume_oauth_state(provider: str, state: str):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute("SELECT * FROM oauth_states WHERE state = ? AND provider = ?", (state, provider))
+            row = cursor.fetchone()
+            conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+        if not row:
+            return None
+        data = dict(row)
+        try:
+            if time.time() > float(data.get("expires_at", "0")):
+                return None
+        except Exception:
+            return None
+        return data
+
+    @staticmethod
+    def save_oauth_token(remote_name: str, provider: str, token_data: dict):
+        now = datetime.utcnow().isoformat()
+        access_token = token_data.get("access_token", "")
+        refresh_token = token_data.get("refresh_token", "")
+        token_type = token_data.get("token_type", "Bearer")
+        expiry = token_data.get("expiry", "")
+        scope = token_data.get("scope", "")
+        encrypted_blob = json.dumps(
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expiry": expiry,
+            },
+            ensure_ascii=False,
+        )
+        with ProfileManager._get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO oauth_tokens (
+                    remote_name, provider, access_token, refresh_token, token_type,
+                    expiry, scope, encrypted_blob, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(remote_name) DO UPDATE SET
+                    provider = excluded.provider,
+                    access_token = excluded.access_token,
+                    refresh_token = excluded.refresh_token,
+                    token_type = excluded.token_type,
+                    expiry = excluded.expiry,
+                    scope = excluded.scope,
+                    encrypted_blob = excluded.encrypted_blob,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    remote_name, provider, access_token, refresh_token, token_type,
+                    expiry, scope, encrypted_blob, now, now,
+                ),
+            )
+
+    @staticmethod
+    def get_oauth_token(remote_name: str, provider: str = "google"):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM oauth_tokens WHERE remote_name = ? AND provider = ?",
+                (remote_name, provider),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def list_oauth_status(provider: str = "google"):
+        with ProfileManager._get_db() as conn:
+            cursor = conn.execute(
+                "SELECT remote_name, provider, expiry, updated_at FROM oauth_tokens WHERE provider = ? ORDER BY updated_at DESC",
+                (provider,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    @staticmethod
+    def sync_google_remote_to_rclone(remote_name: str):
+        token = ProfileManager.get_oauth_token(remote_name, "google")
+        client = ProfileManager.get_oauth_client("google")
+        if not token or not client:
+            raise ValueError("Missing OAuth token or Google OAuth client settings")
+
+        config_path = ProfileManager.get_rclone_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg = configparser.ConfigParser()
+        if config_path.exists():
+            cfg.read(str(config_path), encoding="utf-8")
+
+        if not cfg.has_section(remote_name):
+            cfg.add_section(remote_name)
+        cfg.set(remote_name, "type", "drive")
+        cfg.set(remote_name, "scope", "drive")
+        cfg.set(remote_name, "client_id", client["client_id"])
+        cfg.set(remote_name, "client_secret", client["client_secret"])
+        token_json = json.dumps(
+            {
+                "access_token": token.get("access_token", ""),
+                "token_type": token.get("token_type", "Bearer"),
+                "refresh_token": token.get("refresh_token", ""),
+                "expiry": token.get("expiry", ""),
+            },
+            separators=(",", ":"),
+        )
+        cfg.set(remote_name, "token", token_json)
+
+        with config_path.open("w", encoding="utf-8") as f:
+            cfg.write(f)
+        return str(config_path)
+
+    @staticmethod
     def get_rclone_remotes() -> list:
         """Returns list of remote names (strings) for backward compat."""
         return [r["name"] for r in ProfileManager.get_rclone_remotes_detail()]
@@ -421,6 +602,72 @@ class RealtimeSyncManager:
             t_info["running"] = False
             t_info["process"].terminate()
             del RealtimeSyncManager._threads[profile_id]
+
+
+class GoogleOAuthService:
+    AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+    TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+    @staticmethod
+    def start_oauth(remote_name: str, client_id: str, client_secret: str, redirect_uri: str):
+        if not remote_name.strip():
+            raise ValueError("remote_name is required")
+        if not client_id.strip() or not client_secret.strip() or not redirect_uri.strip():
+            raise ValueError("client_id, client_secret, redirect_uri are required")
+
+        ProfileManager.save_oauth_client("google", client_id.strip(), client_secret.strip(), redirect_uri.strip())
+        state = ProfileManager.create_oauth_state("google", remote_name.strip())
+
+        query = urlencode(
+            {
+                "client_id": client_id.strip(),
+                "redirect_uri": redirect_uri.strip(),
+                "response_type": "code",
+                "scope": "https://www.googleapis.com/auth/drive",
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state,
+            }
+        )
+        return {"state": state, "auth_url": f"{GoogleOAuthService.AUTH_URL}?{query}"}
+
+    @staticmethod
+    def exchange_code(code: str, state: str):
+        state_row = ProfileManager.consume_oauth_state("google", state)
+        if not state_row:
+            raise ValueError("Invalid or expired OAuth state")
+        client = ProfileManager.get_oauth_client("google")
+        if not client:
+            raise ValueError("Google OAuth client is not configured")
+
+        body = urlencode(
+            {
+                "code": code,
+                "client_id": client["client_id"],
+                "client_secret": client["client_secret"],
+                "redirect_uri": client["redirect_uri"],
+                "grant_type": "authorization_code",
+            }
+        ).encode("utf-8")
+        req = Request(
+            GoogleOAuthService.TOKEN_URL,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=20) as resp:
+                token_data = json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Google token exchange failed: {detail}") from e
+
+        if "access_token" not in token_data:
+            raise ValueError("Google token response did not include access_token")
+
+        ProfileManager.save_oauth_token(state_row["remote_name"], "google", token_data)
+        config_path = ProfileManager.sync_google_remote_to_rclone(state_row["remote_name"])
+        return {"remote_name": state_row["remote_name"], "config_path": config_path}
 
 
 # Initialize DB on module load

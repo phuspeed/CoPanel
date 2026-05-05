@@ -3,9 +3,9 @@ import json
 import subprocess
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from typing import Dict, Any
-from .logic import ProfileManager, BackupTaskEngine, BACKUP_DIR
+from .logic import ProfileManager, BackupTaskEngine, BACKUP_DIR, GoogleOAuthService
 from datetime import datetime
 import asyncio
 
@@ -107,6 +107,68 @@ def save_rclone_config(data: dict) -> Dict[str, Any]:
     return {"status": "success"}
 
 
+@router.post("/oauth/google/start")
+def oauth_google_start(data: dict) -> Dict[str, Any]:
+    try:
+        result = GoogleOAuthService.start_oauth(
+            remote_name=data.get("remote_name", "").strip(),
+            client_id=data.get("client_id", "").strip(),
+            client_secret=data.get("client_secret", "").strip(),
+            redirect_uri=data.get("redirect_uri", "").strip(),
+        )
+        return {"status": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start OAuth flow: {e}")
+
+
+@router.get("/oauth/google/callback")
+def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return HTMLResponse(
+            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': error})}, '*');window.close();</script>Authorization failed: {error}</body></html>"
+        )
+    try:
+        result = GoogleOAuthService.exchange_code(code=code, state=state)
+        payload = {"type": "copanel_google_oauth", "ok": True, "remote_name": result["remote_name"]}
+        return HTMLResponse(
+            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps(payload)}, '*');window.close();</script>Authorization completed. You can close this window.</body></html>"
+        )
+    except ValueError as e:
+        return HTMLResponse(
+            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': str(e)})}, '*');window.close();</script>{str(e)}</body></html>",
+            status_code=400,
+        )
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': str(e)})}, '*');window.close();</script>OAuth callback failed.</body></html>",
+            status_code=500,
+        )
+
+
+@router.get("/oauth/google/status")
+def oauth_google_status(remote_name: str = "") -> Dict[str, Any]:
+    if remote_name:
+        row = ProfileManager.get_oauth_token(remote_name=remote_name, provider="google")
+        return {"status": "success", "data": {"remote_name": remote_name, "connected": bool(row), "token": row}}
+    return {"status": "success", "data": ProfileManager.list_oauth_status(provider="google")}
+
+
+@router.post("/remotes/google")
+def create_or_update_google_remote(data: dict) -> Dict[str, Any]:
+    remote_name = (data.get("remote_name") or "").strip()
+    if not remote_name:
+        raise HTTPException(status_code=400, detail="remote_name is required")
+    try:
+        config_path = ProfileManager.sync_google_remote_to_rclone(remote_name)
+        return {"status": "success", "data": {"remote_name": remote_name, "config_path": config_path}}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create/update remote: {e}")
+
+
 @router.get("/explore")
 def explore_files(path: str = "/") -> Dict[str, Any]:
     """Simple file explorer for Visual File Selector."""
@@ -185,7 +247,8 @@ async def stream_task(profile_id: int):
         cmd.extend(["--use-json-log", "-v", "--stats", "1s"])
 
         if os.name == 'nt':
-            yield f"data: {json.dumps({'msg': f'[Mock] rclone {\" \".join(cmd[1:3])} started', 'progress': 20})}\n\n"
+            mock_action = " ".join(cmd[1:3])
+            yield f"data: {json.dumps({'msg': f'[Mock] rclone {mock_action} started', 'progress': 20})}\n\n"
             await asyncio.sleep(1)
             yield f"data: {json.dumps({'msg': 'Syncing files...', 'progress': 60})}\n\n"
             await asyncio.sleep(1)

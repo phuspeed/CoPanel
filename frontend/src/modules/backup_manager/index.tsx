@@ -29,6 +29,13 @@ interface RcloneFlags {
   transfers: number;
 }
 
+interface OAuthStatusItem {
+  remote_name: string;
+  provider: string;
+  expiry?: string;
+  updated_at?: string;
+}
+
 // Map rclone type -> display label + color class
 const REMOTE_TYPE_META: Record<string, { label: string; color: string }> = {
   drive:      { label: 'Google Drive',  color: 'text-blue-400' },
@@ -65,8 +72,16 @@ export default function BackupManagerDashboard() {
   // System & rclone config states
   const [systemFolders, setSystemFolders] = useState<{ name: string; path: string }[]>([]);
   const [showRcloneConfig, setShowRcloneConfig] = useState(false);
-  const [rcloneConfigContent, setRcloneConfigContent] = useState('');
   const [rcloneConfigPath, setRcloneConfigPath] = useState('');
+  const [oauthForm, setOauthForm] = useState({
+    remote_name: '',
+    client_id: '',
+    client_secret: '',
+    redirect_uri: `${window.location.origin}/api/backup_manager/oauth/google/callback`,
+  });
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthStatus, setOauthStatus] = useState('');
+  const [oauthStatusList, setOauthStatusList] = useState<OAuthStatusItem[]>([]);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -137,6 +152,12 @@ export default function BackupManagerDashboard() {
       dbName: 'MySQL Database Name',
       remotePath: 'Remote Directory Path',
       configFile: 'Detected config file',
+      cloudSetup: 'Cloud Remote Setup',
+      oauthClientId: 'Google OAuth Client ID',
+      oauthClientSecret: 'Google OAuth Client Secret',
+      oauthRedirectUri: 'Authorized Redirect URI',
+      oauthRemoteName: 'Remote Name',
+      startGoogleOAuth: 'Connect Google Drive',
     },
     vi: {
       title: 'Quản trị Sao lưu Đám mây',
@@ -169,6 +190,12 @@ export default function BackupManagerDashboard() {
       dbName: 'Tên cơ sở dữ liệu MySQL',
       remotePath: 'Đường dẫn trên Remote',
       configFile: 'File cấu hình phát hiện',
+      cloudSetup: 'Cloud Remote Setup',
+      oauthClientId: 'Google OAuth Client ID',
+      oauthClientSecret: 'Google OAuth Client Secret',
+      oauthRedirectUri: 'Authorized Redirect URI',
+      oauthRemoteName: 'Remote Name',
+      startGoogleOAuth: 'Connect Google Drive',
     },
   };
   const tr = t[language || 'en'];
@@ -190,6 +217,28 @@ export default function BackupManagerDashboard() {
     fetchSystemFolders();
     return () => { if (msgTimerRef.current) clearTimeout(msgTimerRef.current); };
   }, []);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== 'copanel_google_oauth') return;
+      if (data.ok && data.remote_name) {
+        setOauthStatus(`Authorization completed for ${data.remote_name}`);
+        fetchOAuthStatus(data.remote_name);
+        showMsg(`Google Drive connected for remote ${data.remote_name}`);
+      } else {
+        showMsg(data.error || 'Google OAuth failed', true);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [showMsg]);
+
+  useEffect(() => {
+    if (showRcloneConfig) {
+      fetchOAuthStatusList();
+    }
+  }, [showRcloneConfig]);
 
   // Auto-scroll logs to bottom
   useEffect(() => {
@@ -239,7 +288,6 @@ export default function BackupManagerDashboard() {
       const res = await fetch('/api/backup_manager/rclone-config', { headers: authHeaders() });
       const data = await res.json();
       if (res.ok) {
-        setRcloneConfigContent(data.content || '');
         setRcloneConfigPath(data.path || '');
       }
     } catch (e) {
@@ -247,24 +295,90 @@ export default function BackupManagerDashboard() {
     }
   };
 
-  const saveRcloneConfig = async () => {
+  const fetchOAuthStatus = async (remoteName: string) => {
+    if (!remoteName) return;
     try {
-      const res = await fetch('/api/backup_manager/rclone-config', {
-        method: 'POST',
+      const res = await fetch(`/api/backup_manager/oauth/google/status?remote_name=${encodeURIComponent(remoteName)}`, {
         headers: authHeaders(),
-        body: JSON.stringify({ content: rcloneConfigContent }),
       });
-      if (res.ok) {
-        showMsg('Rclone configuration saved successfully!');
-        setShowRcloneConfig(false);
+      const data = await res.json();
+      if (res.ok && data?.data?.connected) {
+        setOauthStatus(`Connected: ${remoteName}`);
+        await fetch('/api/backup_manager/remotes/google', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ remote_name: remoteName }),
+        });
         fetchRemotes();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        showMsg(err.detail || 'Failed to save rclone configuration', true);
+        fetchOAuthStatusList();
       }
     } catch (e) {
-      showMsg('Error saving rclone configuration', true);
+      console.error(e);
     }
+  };
+
+  const fetchOAuthStatusList = async () => {
+    try {
+      const res = await fetch('/api/backup_manager/oauth/google/status', {
+        headers: authHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setOauthStatusList(Array.isArray(data?.data) ? data.data : []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const startGoogleOAuth = async () => {
+    if (!oauthForm.remote_name || !oauthForm.client_id || !oauthForm.client_secret || !oauthForm.redirect_uri) {
+      showMsg('Please fill all Google OAuth fields', true);
+      return;
+    }
+    setOauthLoading(true);
+    setOauthStatus('');
+    try {
+      const res = await fetch('/api/backup_manager/oauth/google/start', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(oauthForm),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showMsg(data.detail || 'Failed to start Google OAuth', true);
+        return;
+      }
+      const authUrl = data?.data?.auth_url;
+      if (!authUrl) {
+        showMsg('Google OAuth URL was not returned by server', true);
+        return;
+      }
+      window.open(authUrl, '_blank', 'noopener,noreferrer,width=640,height=760');
+      setOauthStatus('OAuth window opened. Complete consent to finish setup.');
+    } catch (e) {
+      showMsg('Failed to start Google OAuth', true);
+    } finally {
+      setOauthLoading(false);
+    }
+  };
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+  };
+
+  const getExpiryVisualState = (value?: string): 'normal' | 'warning' | 'expired' => {
+    if (!value) return 'normal';
+    const expiry = new Date(value);
+    if (Number.isNaN(expiry.getTime())) return 'normal';
+    const diffMs = expiry.getTime() - Date.now();
+    if (diffMs <= 0) return 'expired';
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    if (diffMs < threeDaysMs) return 'warning';
+    return 'normal';
   };
 
   const loadExplorer = async (path: string) => {
@@ -886,7 +1000,7 @@ export default function BackupManagerDashboard() {
             className="px-5 py-3 bg-slate-600 hover:bg-slate-500 text-white font-bold text-sm rounded-xl shadow-lg flex items-center gap-2 transition"
           >
             <Icons.Settings className="w-5 h-5" />
-            Rclone Profiles
+            Cloud Setup
           </button>
           <button
             onClick={() => {
@@ -1019,14 +1133,14 @@ export default function BackupManagerDashboard() {
       {showExplorer && renderExplorer()}
       {renderStreamModal()}
 
-      {/* Rclone Config Modal */}
+      {/* Cloud Remote Setup Modal */}
       {showRcloneConfig && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
           <div className={`${modalBox} max-w-2xl`}>
             <div className={modalHeader}>
               <div className="space-y-0.5">
-                <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>Rclone Profiles Configuration</h3>
-                <p className={`text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{rcloneConfigPath}</p>
+                <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.cloudSetup}</h3>
+                <p className={`text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
               </div>
               <button onClick={() => setShowRcloneConfig(false)} className="text-slate-400 hover:text-red-500">
                 <Icons.X className="w-5 h-5" />
@@ -1035,17 +1149,100 @@ export default function BackupManagerDashboard() {
 
             <div className="p-6 space-y-4">
               <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                Edit the rclone INI config file. Each remote is defined as a{' '}
-                <code className={`text-xs px-1 py-0.5 rounded ${isDark ? 'bg-slate-800 text-indigo-300' : 'bg-slate-100 text-indigo-600'}`}>[section]</code>{' '}
-                block with a <code className={`text-xs px-1 py-0.5 rounded ${isDark ? 'bg-slate-800 text-indigo-300' : 'bg-slate-100 text-indigo-600'}`}>type = ...</code> field.
-                After saving, the remote list will be refreshed automatically.
+                Zero-CLI mode: enter Google OAuth app information and complete consent.
+                The backend will exchange token and update `rclone.conf` automatically.
               </p>
-              <textarea
-                value={rcloneConfigContent}
-                onChange={(e) => setRcloneConfigContent(e.target.value)}
-                placeholder={"[my_gdrive]\ntype = drive\nscope = drive\n\n[my_s3]\ntype = s3\nprovider = AWS\nregion = us-east-1"}
-                className={`w-full h-80 p-4 font-mono text-xs rounded-xl border focus:border-indigo-500 outline-none resize-none ${isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
-              />
+              <div className="space-y-3">
+                <input
+                  value={oauthForm.remote_name}
+                  onChange={(e) => setOauthForm({ ...oauthForm, remote_name: e.target.value })}
+                  placeholder={tr.oauthRemoteName}
+                  className={input}
+                />
+                <input
+                  value={oauthForm.client_id}
+                  onChange={(e) => setOauthForm({ ...oauthForm, client_id: e.target.value })}
+                  placeholder={tr.oauthClientId}
+                  className={input}
+                />
+                <input
+                  type="password"
+                  value={oauthForm.client_secret}
+                  onChange={(e) => setOauthForm({ ...oauthForm, client_secret: e.target.value })}
+                  placeholder={tr.oauthClientSecret}
+                  className={input}
+                />
+                <input
+                  value={oauthForm.redirect_uri}
+                  onChange={(e) => setOauthForm({ ...oauthForm, redirect_uri: e.target.value })}
+                  placeholder={tr.oauthRedirectUri}
+                  className={input}
+                />
+                {oauthStatus && (
+                  <p className={`text-xs ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{oauthStatus}</p>
+                )}
+              </div>
+
+              <div className={`mt-2 rounded-xl border ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`px-4 py-2.5 border-b flex items-center justify-between ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                  <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    OAuth Status
+                  </p>
+                  <button
+                    type="button"
+                    onClick={fetchOAuthStatusList}
+                    className={`text-[10px] px-2 py-1 rounded-lg border font-bold transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="max-h-56 overflow-auto">
+                  {oauthStatusList.length === 0 ? (
+                    <p className={`px-4 py-3 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>No OAuth remotes connected yet.</p>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead className={isDark ? 'text-slate-400' : 'text-slate-600'}>
+                        <tr>
+                          <th className="text-left px-4 py-2">Remote</th>
+                          <th className="text-left px-4 py-2">Connected</th>
+                          <th className="text-left px-4 py-2">Updated At</th>
+                          <th className="text-left px-4 py-2">Expiry</th>
+                        </tr>
+                      </thead>
+                      <tbody className={isDark ? 'text-slate-300' : 'text-slate-700'}>
+                        {oauthStatusList.map((item) => {
+                          const expiryState = getExpiryVisualState(item.expiry);
+                          const expiryClass =
+                            expiryState === 'expired'
+                              ? 'text-red-500 font-semibold'
+                              : expiryState === 'warning'
+                              ? 'text-amber-500 font-semibold'
+                              : '';
+                          const expiryLabel =
+                            expiryState === 'expired'
+                              ? 'Expired'
+                              : expiryState === 'warning'
+                              ? 'Expiring soon'
+                              : '';
+                          return (
+                            <tr key={item.remote_name} className={isDark ? 'border-t border-slate-800' : 'border-t border-slate-200'}>
+                              <td className="px-4 py-2 font-mono">{item.remote_name}</td>
+                              <td className="px-4 py-2">
+                                <span className="text-green-500 font-semibold">Yes</span>
+                              </td>
+                              <td className="px-4 py-2">{formatDateTime(item.updated_at)}</td>
+                              <td className={`px-4 py-2 ${expiryClass}`}>
+                                {formatDateTime(item.expiry)}
+                                {expiryLabel ? <span className="ml-2 text-[10px]">({expiryLabel})</span> : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className={modalFooter}>
@@ -1056,10 +1253,10 @@ export default function BackupManagerDashboard() {
                 Cancel
               </button>
               <button
-                onClick={saveRcloneConfig}
+                onClick={startGoogleOAuth}
                 className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition"
               >
-                Save Changes
+                {oauthLoading ? 'Starting...' : tr.startGoogleOAuth}
               </button>
             </div>
           </div>
