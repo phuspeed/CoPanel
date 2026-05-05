@@ -4,9 +4,11 @@ Pulls package details from dynamic GitHub index file, handles on-demand installa
 """
 import urllib.request
 import json
-import zipfile
-import shutil
+import platform
 import subprocess
+import shutil
+import threading
+import zipfile
 from pathlib import Path
 
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
@@ -98,15 +100,11 @@ def restart_backend_service(delay: float = 2.0):
     can be flushed before the process is replaced.
     Only acts on Linux when systemctl is available.
     """
-    import platform
-    import threading
-
     if platform.system() == "Windows":
         return
 
     def _do_restart():
         import time
-        import shutil
         time.sleep(delay)
         if shutil.which("systemctl"):
             try:
@@ -123,7 +121,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.9",
+    "appstore_manager": "1.0.10",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -374,8 +372,6 @@ class AppStoreManager:
         }
         
         def run_install():
-            import platform
-            import threading
             is_windows = platform.system() == "Windows"
             
             # Auto-install Linux package dependencies in parallel
@@ -391,22 +387,18 @@ class AppStoreManager:
                     deps.append(dep)
 
             for dep in deps:
-                import shutil
                 if not shutil.which(dep.get("apt")) and not shutil.which(dep.get("yum", dep.get("id"))):
                     BUILD_TASKS[pkg_id]["logs"].append(f"Package system dependency '{dep['id']}' not found. Installing in background...")
-                    import subprocess
-                    import platform as plat
-                    if plat.system() != "Windows":
+                    if not is_windows:
                         if shutil.which("apt-get"):
-                            cmd = f"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {dep['apt']}"
+                            sys_cmd = f"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {dep['apt']}"
                         elif shutil.which("yum"):
-                            cmd = f"sudo yum install -y {dep['yum']}"
+                            sys_cmd = f"sudo yum install -y {dep['yum']}"
                         else:
-                            cmd = None
-                            
-                        if cmd:
+                            sys_cmd = None
+                        if sys_cmd:
                             try:
-                                subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                subprocess.Popen(sys_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                                 BUILD_TASKS[pkg_id]["logs"].append(f"Successfully triggered installation for '{dep['id']}' via OS package manager.")
                             except Exception as e:
                                 BUILD_TASKS[pkg_id]["logs"].append(f"Warning: Could not auto-install '{dep['id']}': {str(e)}")
@@ -505,7 +497,6 @@ class AppStoreManager:
                 if tmp_zip.exists(): tmp_zip.unlink()
                 if extracted_dir.exists(): shutil.rmtree(extracted_dir)
                 
-        import threading
         thread = threading.Thread(target=run_install)
         thread.daemon = True
         thread.start()
@@ -538,9 +529,7 @@ class AppStoreManager:
                 shutil.rmtree(dst_frontend)
                 
             # Trigger build to remove the module from the frontend bundle
-            import platform
-            is_windows = platform.system() == "Windows"
-            subprocess.Popen(["npm", "run", "build"], cwd=frontend_cwd, shell=is_windows)
+            subprocess.Popen(["npm", "run", "build"], cwd=frontend_cwd, shell=platform.system() == "Windows")
             
             return {"status": "success", "message": f"Package {pkg_id} uninstalled successfully."}
         except Exception as e:
@@ -557,11 +546,6 @@ class AppStoreManager:
         }
         
         def run_install():
-            import platform
-            import threading
-            import zipfile
-            import shutil
-            import subprocess
             is_windows = platform.system() == "Windows"
             
             project_root = get_copanel_home()
@@ -691,7 +675,6 @@ class AppStoreManager:
                 if zip_path.exists(): zip_path.unlink()
                 if extracted_dir.exists(): shutil.rmtree(extracted_dir)
                 
-        import threading
         thread = threading.Thread(target=run_install)
         thread.daemon = True
         thread.start()
