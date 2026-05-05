@@ -62,7 +62,6 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       dashboard: 'Dashboard',
       modules: 'Modules',
       installed: 'Installed',
-      manageUsers: 'Manage Users',
       changePassword: 'Change Password',
       logout: 'Logout',
       vpsManagement: 'VPS Management',
@@ -84,14 +83,14 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         'ssl_manager': 'SSL',
         'system_monitor': 'Monitor',
         'terminal': 'Terminal',
-        'web_manager': 'Web'
+        'web_manager': 'Web',
+        'users': 'Users'
       }
     },
     vi: {
       dashboard: 'Tổng quan',
       modules: 'Các Module',
       installed: 'Đã cài đặt',
-      manageUsers: 'Quản lý người dùng',
       changePassword: 'Đổi mật khẩu',
       logout: 'Đăng xuất',
       vpsManagement: 'Quản lý VPS',
@@ -113,7 +112,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         'ssl_manager': 'Quản lý SSL',
         'system_monitor': 'Theo dõi hệ thống',
         'terminal': 'Dòng lệnh',
-        'web_manager': 'Quản lý Web'
+        'web_manager': 'Quản lý Web',
+        'users': 'Người dùng'
       }
     }
   };
@@ -290,22 +290,6 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
                   </Link>
                 ))}
               </>
-            )}
-
-            {/* Manage Users (SuperAdmin only) */}
-            {user && user.role === 'superadmin' && (
-              <Link
-                to="/users"
-                className={cn(
-                  'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mt-4',
-                  isActive('/users')
-                    ? 'bg-indigo-600 text-white font-bold'
-                    : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
-                )}
-              >
-                <Icons.Users className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-                <span>{tr.manageUsers}</span>
-              </Link>
             )}
 
             {/* Installed Dynamic Packages */}
