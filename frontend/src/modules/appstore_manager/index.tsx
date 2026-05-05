@@ -86,6 +86,8 @@ export default function AppStoreDashboard() {
   const [activePkgId, setActivePkgId] = useState<string | null>(null);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
+  const [buildProgress, setBuildProgress] = useState<number>(0);
+  const [showBuildLogs, setShowBuildLogs] = useState(false);
 
 
   const [communityUrls, setCommunityUrls] = useState<string[]>([]);
@@ -129,7 +131,7 @@ export default function AppStoreDashboard() {
       aheadOfCatalog: 'Installed build is newer than this catalog entry.',
       installedVsCatalog: (inst: string, cat: string) => `Installed v${inst} · catalog v${cat}`,
       communitySaved: 'Community catalog list saved.',
-      communitySaveFailed: 'Could not save community AppStore URLs (check server permissions on config/).',
+      communitySaveFailed: 'Could not save community AppStore URLs (check appstore config DB permissions).',
     },
     vi: {
       title: 'Cửa hàng ứng dụng AppStore',
@@ -162,7 +164,7 @@ export default function AppStoreDashboard() {
       aheadOfCatalog: 'Bản đã cài mới hơn mục trên kho (có thể từ ZIP hoặc bản dev).',
       installedVsCatalog: (inst: string, cat: string) => `Đã cài v${inst} · trên kho v${cat}`,
       communitySaved: 'Đã lưu danh sách AppStore cộng đồng.',
-      communitySaveFailed: 'Không lưu được URL (kiểm tra quyền ghi thư mục config/ trên máy chủ).',
+      communitySaveFailed: 'Không lưu được URL (kiểm tra quyền ghi appstore config DB trên máy chủ).',
     }
   };
 
@@ -241,6 +243,8 @@ export default function AppStoreDashboard() {
     setActivePkgId(pkgId);
     setBuildLogs([`Uploading and checking ZIP structure for ${file.name}...`]);
     setBuildStatus("running");
+    setBuildProgress(5);
+    setShowBuildLogs(false);
     setMsg(language === 'vi' ? 'Đang tải lên tệp zip...' : 'Uploading zip file...');
 
     const formData = new FormData();
@@ -275,14 +279,16 @@ export default function AppStoreDashboard() {
             if (r.ok) {
               const b = await r.json();
               if (b.logs) setBuildLogs(b.logs);
+              if (typeof b.progress === 'number') setBuildProgress(b.progress);
               if (b.status === 'success' || b.status === 'failed') {
                 setBuildStatus(b.status);
                 clearInterval(interval);
                 if (b.status === 'success') {
                   setMsg(`✓ ${file.name} installed and built successfully!`);
+                  fetchCatalog();
                   setTimeout(() => {
                     window.location.reload();
-                  }, 2000);
+                  }, 1200);
                 } else {
                   setMsg(`❌ Error building ${file.name}: ${b.error || 'Build failed.'}`);
                 }
@@ -340,6 +346,8 @@ export default function AppStoreDashboard() {
     setActivePkgId(pkg.id);
     setBuildLogs(["Starting real-time build status tracking..."]);
     setBuildStatus("running");
+    setBuildProgress(5);
+    setShowBuildLogs(false);
     setMsg(tr.installing(pkg.name));
     try {
       const res = await fetch('/api/appstore_manager/install', {
@@ -368,14 +376,16 @@ export default function AppStoreDashboard() {
             if (r.ok) {
               const b = await r.json();
               if (b.logs) setBuildLogs(b.logs);
+              if (typeof b.progress === 'number') setBuildProgress(b.progress);
               if (b.status === 'success' || b.status === 'failed') {
                 setBuildStatus(b.status);
                 clearInterval(interval);
                 if (b.status === 'success') {
                   setMsg(`✓ ${pkg.name} installed and built successfully!`);
+                  fetchCatalog();
                   setTimeout(() => {
                     window.location.reload();
-                  }, 2000);
+                  }, 1200);
                 } else {
                   setMsg(`❌ Error building ${pkg.name}: ${b.error || 'Build failed.'}`);
                 }
@@ -416,9 +426,6 @@ export default function AppStoreDashboard() {
       if (res.ok) {
         setMsg(`✓ ${pkg.name} removed successfully! System is rebuilding frontend.`);
         fetchCatalog();
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
       } else {
         setMsg(`❌ Error uninstalling: ${d.detail || 'Request failed.'}`);
       }
@@ -576,7 +583,7 @@ export default function AppStoreDashboard() {
                 </span>
                 {(buildStatus === 'success' || buildStatus === 'failed') && (
                   <button
-                    onClick={() => { setActivePkgId(null); setBuildLogs([]); }}
+                    onClick={() => { setActivePkgId(null); setBuildLogs([]); setBuildProgress(0); }}
                     className={`p-1.5 rounded-lg border transition-all duration-200 ${
                       isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-800 border-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border-slate-200'
                     }`}
@@ -587,7 +594,36 @@ export default function AppStoreDashboard() {
               </div>
             </div>
 
-            <div className={`font-mono text-xs p-4 rounded-xl flex-1 h-[45vh] overflow-y-auto space-y-1.5 border transition-all duration-200 ${
+            <div className={`rounded-xl border p-4 ${isDark ? 'bg-slate-950/80 border-slate-800/80' : 'bg-white border-slate-100'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={`text-xs font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {language === 'vi' ? 'Tiến trình cài đặt' : 'Installation progress'}
+                </span>
+                <span className={`text-[11px] font-mono ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{Math.max(0, Math.min(100, buildProgress))}%</span>
+              </div>
+              <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                <div
+                  className={`h-full transition-all duration-500 ${
+                    buildStatus === 'failed' ? 'bg-red-500' : buildStatus === 'success' ? 'bg-emerald-500' : 'bg-blue-500'
+                  }`}
+                  style={{ width: `${Math.max(5, Math.min(100, buildProgress || 5))}%` }}
+                />
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  {buildLogs.length ? buildLogs[buildLogs.length - 1] : (language === 'vi' ? 'Đang xử lý...' : 'Processing...')}
+                </p>
+                <button
+                  onClick={() => setShowBuildLogs((v) => !v)}
+                  className={`text-[11px] font-semibold ${isDark ? 'text-blue-300' : 'text-blue-600'}`}
+                >
+                  {showBuildLogs ? (language === 'vi' ? 'Ẩn log' : 'Hide logs') : (language === 'vi' ? 'Hiện log' : 'Show logs')}
+                </button>
+              </div>
+            </div>
+
+            {showBuildLogs && (
+            <div className={`font-mono text-xs p-4 rounded-xl flex-1 h-[36vh] overflow-y-auto space-y-1.5 border transition-all duration-200 ${
               isDark ? 'bg-slate-950/80 border-slate-800/80 text-slate-300' : 'bg-white border-slate-100 text-slate-700'
             }`}>
               {buildLogs.map((log, i) => (
@@ -605,10 +641,11 @@ export default function AppStoreDashboard() {
                 </div>
               ))}
             </div>
+            )}
 
             {(buildStatus === 'success' || buildStatus === 'failed') && (
               <button
-                onClick={() => { setActivePkgId(null); setBuildLogs([]); }}
+                onClick={() => { setActivePkgId(null); setBuildLogs([]); setBuildProgress(0); }}
                 className={`w-full py-2.5 font-bold text-xs rounded-xl transition-all duration-200 border ${
                   isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200 hover:text-white' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-sm'
                 }`}

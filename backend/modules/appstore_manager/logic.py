@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import threading
 import zipfile
+import sqlite3
 from pathlib import Path
 
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
@@ -26,6 +27,43 @@ def get_copanel_home() -> Path:
 
 def appstore_config_file() -> Path:
     return get_copanel_home() / "config" / "appstore_config.json"
+
+
+def appstore_config_db_file() -> Path:
+    return get_copanel_home() / "config" / "appstore_manager.db"
+
+
+def _cfg_db() -> sqlite3.Connection:
+    db_path = appstore_config_db_file()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_cfg_db() -> None:
+    with _cfg_db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS appstore_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
+
+
+def _get_cfg_value(key: str, default: str = "") -> str:
+    _init_cfg_db()
+    with _cfg_db() as conn:
+        row = conn.execute("SELECT value FROM appstore_settings WHERE key = ?", (key,)).fetchone()
+    return str(row["value"]) if row and row["value"] is not None else default
+
+
+def _set_cfg_value(key: str, value: str) -> None:
+    _init_cfg_db()
+    with _cfg_db() as conn:
+        conn.execute("INSERT OR REPLACE INTO appstore_settings (key, value) VALUES (?, ?)", (key, value))
 
 
 def derive_pkg_id_from_upload_name(filename: str) -> str:
@@ -121,7 +159,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.11",
+    "appstore_manager": "1.0.13",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -278,7 +316,15 @@ def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
 class AppStoreManager:
     @staticmethod
     def load_config() -> dict:
-        """Loads config for AppStore (e.g., custom community catalogs)."""
+        """Loads config from config DB (with JSON-file fallback migration)."""
+        try:
+            raw = _get_cfg_value("community_urls", "[]")
+            parsed = json.loads(raw) if raw else []
+            if isinstance(parsed, list):
+                return {"community_urls": [u for u in parsed if isinstance(u, str)]}
+        except Exception:
+            pass
+
         cfg_path = appstore_config_file()
         if not cfg_path.exists():
             legacy = get_copanel_home() / "backend" / "config" / "appstore_config.json"
@@ -296,6 +342,10 @@ class AppStoreManager:
                     urls = data.get("community_urls", [])
                     if not isinstance(urls, list):
                         urls = []
+                    try:
+                        _set_cfg_value("community_urls", json.dumps(urls))
+                    except Exception:
+                        pass
                     return {**data, "community_urls": urls}
             except Exception:
                 pass
@@ -303,24 +353,20 @@ class AppStoreManager:
 
     @staticmethod
     def save_config(update: dict) -> bool:
-        """Merges into appstore_config.json under CoPanel config dir (single canonical file)."""
+        """Persists config in DB; writes JSON mirror for backward compatibility."""
         cfg_path = appstore_config_file()
         try:
+            current = AppStoreManager.load_config()
+            merged = {**current, **(update or {})}
+            urls = merged.get("community_urls", [])
+            urls = list(urls) if isinstance(urls, list) else []
+            urls = [u.strip() for u in urls if isinstance(u, str) and u.strip()]
+            _set_cfg_value("community_urls", json.dumps(urls))
+
+            # Optional mirror file for compatibility with older tooling.
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            current: dict = {}
-            if cfg_path.exists():
-                try:
-                    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
-                    if isinstance(raw, dict):
-                        current = raw
-                except Exception:
-                    current = {}
-            merged = {**current, **update}
-            if "community_urls" in merged:
-                u = merged["community_urls"]
-                merged["community_urls"] = list(u) if isinstance(u, list) else []
             with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(merged, f, indent=4)
+                json.dump({"community_urls": urls}, f, indent=4)
             return True
         except Exception:
             return False
@@ -431,7 +477,8 @@ class AppStoreManager:
         BUILD_TASKS[pkg_id] = {
             "status": "running",
             "logs": ["Starting download and extraction..."],
-            "error": ""
+            "error": "",
+            "progress": 3
         }
         
         def run_install():
@@ -475,6 +522,7 @@ class AppStoreManager:
             
             try:
                 BUILD_TASKS[pkg_id]["logs"].append(f"Downloading from {download_url}...")
+                BUILD_TASKS[pkg_id]["progress"] = 10
                 req = urllib.request.Request(
                     download_url, 
                     headers={'User-Agent': 'Mozilla/5.0'}
@@ -483,6 +531,7 @@ class AppStoreManager:
                     out_file.write(response.read())
                 
                 BUILD_TASKS[pkg_id]["logs"].append("Download complete.")
+                BUILD_TASKS[pkg_id]["progress"] = 30
                 
                 if extracted_dir.exists():
                     shutil.rmtree(extracted_dir)
@@ -491,6 +540,7 @@ class AppStoreManager:
                     zip_ref.extractall(extracted_dir)
                     
                 BUILD_TASKS[pkg_id]["logs"].append("Extraction complete.")
+                BUILD_TASKS[pkg_id]["progress"] = 45
                 
                 src_backend = extracted_dir / "backend"
                 src_frontend = extracted_dir / "frontend"
@@ -513,6 +563,7 @@ class AppStoreManager:
                     shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
                 
                 BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                BUILD_TASKS[pkg_id]["progress"] = 60
                 
                 cmd = ["npm", "run", "build"]
                 
@@ -547,25 +598,28 @@ class AppStoreManager:
                         BUILD_TASKS[pkg_id]["status"] = "failed"
                         BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
                         BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
+                        BUILD_TASKS[pkg_id]["progress"] = 100
                         return
 
                     BUILD_TASKS[pkg_id]["status"] = "success"
+                    BUILD_TASKS[pkg_id]["progress"] = 100
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
                     try:
                         save_local_version(pkg_id, version)
                     except Exception:
                         pass
-                    BUILD_TASKS[pkg_id]["logs"].append("♻️ Restarting backend service to load new modules...")
-                    restart_backend_service(delay=2.0)
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Backend restart skipped to avoid forced logout. You can reload modules manually if needed.")
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
                     
             except Exception as e:
                 BUILD_TASKS[pkg_id]["status"] = "failed"
                 BUILD_TASKS[pkg_id]["error"] = str(e)
                 BUILD_TASKS[pkg_id]["logs"].append(f"❌ Error: {str(e)}")
+                BUILD_TASKS[pkg_id]["progress"] = 100
             finally:
                 if tmp_zip.exists(): tmp_zip.unlink()
                 if extracted_dir.exists(): shutil.rmtree(extracted_dir)
@@ -580,7 +634,7 @@ class AppStoreManager:
     def get_build_status(pkg_id: str) -> dict:
         """Retrieves status and logs for the given package ID."""
         global BUILD_TASKS
-        return BUILD_TASKS.get(pkg_id, {"status": "not_started", "logs": [], "error": ""})
+        return BUILD_TASKS.get(pkg_id, {"status": "not_started", "logs": [], "error": "", "progress": 0})
 
     @staticmethod
     def uninstall_package(pkg_id: str) -> dict:
@@ -615,7 +669,8 @@ class AppStoreManager:
         BUILD_TASKS[pkg_id] = {
             "status": "running",
             "logs": ["Starting installation from uploaded ZIP..."],
-            "error": ""
+            "error": "",
+            "progress": 5
         }
         
         def run_install():
@@ -634,6 +689,7 @@ class AppStoreManager:
                     zip_ref.extractall(extracted_dir)
                     
                 BUILD_TASKS[pkg_id]["logs"].append("Extraction complete.")
+                BUILD_TASKS[pkg_id]["progress"] = 40
                 
                 found_backend = None
                 found_frontend = None
@@ -698,6 +754,7 @@ class AppStoreManager:
                     shutil.copytree(found_frontend, dst_frontend, dirs_exist_ok=True)
                 
                 BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                BUILD_TASKS[pkg_id]["progress"] = 65
                 
                 cmd = ["npm", "run", "build"]
                 process = subprocess.Popen(
@@ -722,6 +779,7 @@ class AppStoreManager:
                 return_code = process.wait()
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
+                    BUILD_TASKS[pkg_id]["progress"] = 100
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
                     try:
                         if Path("/opt/copanel").exists():
@@ -733,17 +791,18 @@ class AppStoreManager:
                             save_local_version(pkg_id, vf.read_text(encoding="utf-8").strip())
                     except Exception:
                         pass
-                    BUILD_TASKS[pkg_id]["logs"].append("♻️ Restarting backend service to load new modules...")
-                    restart_backend_service(delay=2.0)
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Backend restart skipped to avoid forced logout. You can reload modules manually if needed.")
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
                     
             except Exception as e:
                 BUILD_TASKS[pkg_id]["status"] = "failed"
                 BUILD_TASKS[pkg_id]["error"] = str(e)
                 BUILD_TASKS[pkg_id]["logs"].append(f"❌ Error: {str(e)}")
+                BUILD_TASKS[pkg_id]["progress"] = 100
             finally:
                 if zip_path.exists(): zip_path.unlink()
                 if extracted_dir.exists(): shutil.rmtree(extracted_dir)
