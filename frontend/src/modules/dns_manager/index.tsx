@@ -64,9 +64,13 @@ export default function DnsManager() {
 
   async function dropZone(id: string) {
     if (!confirm('Delete this zone?')) return;
-    await api(`/api/dns_manager/zones/${id}`, { method: 'DELETE' });
-    setActive((z) => (z?.id === id ? null : z));
-    refresh();
+    try {
+      await api(`/api/dns_manager/zones/${id}`, { method: 'DELETE' });
+      setActive((z) => (z?.id === id ? null : z));
+      refresh();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete zone');
+    }
   }
 
   async function addRecord() {
@@ -92,8 +96,12 @@ export default function DnsManager() {
   async function dropRecord(rid: string) {
     if (!active) return;
     if (!confirm('Delete this record?')) return;
-    await api(`/api/dns_manager/zones/${active.id}/records/${rid}`, { method: 'DELETE' });
-    refresh();
+    try {
+      await api(`/api/dns_manager/zones/${active.id}/records/${rid}`, { method: 'DELETE' });
+      refresh();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete record');
+    }
   }
 
   return (

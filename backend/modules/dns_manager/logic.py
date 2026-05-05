@@ -34,6 +34,10 @@ STORE_PATH = (
 VALID_RECORD_TYPES = {"A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA"}
 
 
+def _new_id(prefix: str) -> str:
+    return f"{prefix}_{time.time_ns()}"
+
+
 @dataclass
 class Record:
     id: str
@@ -97,7 +101,7 @@ def create_zone(domain: str, backend: str = "local") -> Dict[str, Any]:
     if any(z["domain"] == domain for z in data["zones"]):
         raise ValueError("Zone already exists.")
     zone = {
-        "id": f"zone_{int(time.time() * 1000)}",
+        "id": _new_id("zone"),
         "domain": domain,
         "backend": backend if backend in {"local", "bind"} else "local",
         "records": [],
@@ -131,7 +135,7 @@ def add_record(zone_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
     for z in data["zones"]:
         if z["id"] == zone_id:
             new_record = {
-                "id": f"rec_{int(time.time() * 1000)}",
+                "id": _new_id("rec"),
                 "type": rtype,
                 "name": name,
                 "value": value,
