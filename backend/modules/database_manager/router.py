@@ -22,6 +22,12 @@ def _engine(name: str):
         return PostgresManager
     raise HTTPException(status_code=400, detail=f"Unsupported engine '{name}'.")
 
+
+def _unwrap_result(res: Dict[str, Any]) -> Dict[str, Any]:
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message", "Operation failed."))
+    return res
+
 class CreateDBRequest(BaseModel):
     name: str
 
@@ -49,10 +55,7 @@ def list_databases() -> Dict[str, Any]:
 @router.post("/create")
 def create_database(req: CreateDBRequest) -> Dict[str, Any]:
     try:
-        res = DBManager.create_database(req.name)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(DBManager.create_database(req.name))
     except HTTPException:
         raise
     except Exception as e:
@@ -61,10 +64,7 @@ def create_database(req: CreateDBRequest) -> Dict[str, Any]:
 @router.post("/delete")
 def delete_database(req: DeleteDBRequest) -> Dict[str, Any]:
     try:
-        res = DBManager.delete_database(req.name)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(DBManager.delete_database(req.name))
     except HTTPException:
         raise
     except Exception as e:
@@ -81,10 +81,7 @@ def list_users() -> Dict[str, Any]:
 @router.post("/users/create")
 def create_user(req: CreateUserRequest) -> Dict[str, Any]:
     try:
-        res = DBManager.create_user(req.user, req.host, req.password, req.db)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(DBManager.create_user(req.user, req.host, req.password, req.db))
     except HTTPException:
         raise
     except Exception as e:
@@ -93,10 +90,7 @@ def create_user(req: CreateUserRequest) -> Dict[str, Any]:
 @router.post("/users/delete")
 def delete_user(req: DeleteUserRequest) -> Dict[str, Any]:
     try:
-        res = DBManager.delete_user(req.user, req.host)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(DBManager.delete_user(req.user, req.host))
     except HTTPException:
         raise
     except Exception as e:
@@ -139,19 +133,13 @@ def engine_list(engine: str) -> Dict[str, Any]:
 @router.post("/engines/{engine}/databases")
 def engine_create(engine: str, req: EngineCreateDB) -> Dict[str, Any]:
     impl = _engine(engine)
-    res = impl.create_database(req.name)
-    if res.get("status") == "error":
-        raise HTTPException(status_code=400, detail=res["message"])
-    return res
+    return _unwrap_result(impl.create_database(req.name))
 
 
 @router.delete("/engines/{engine}/databases/{name}")
 def engine_drop(engine: str, name: str) -> Dict[str, Any]:
     impl = _engine(engine)
-    res = impl.delete_database(name)
-    if res.get("status") == "error":
-        raise HTTPException(status_code=400, detail=res["message"])
-    return res
+    return _unwrap_result(impl.delete_database(name))
 
 
 @router.get("/engines/{engine}/users")
@@ -169,6 +157,4 @@ def engine_user_create(engine: str, req: EngineCreateUser) -> Dict[str, Any]:
         res = impl.create_user(req.user, req.host, req.password, req.db)
     else:
         res = impl.create_user(req.user, req.password, req.db)
-    if res.get("status") == "error":
-        raise HTTPException(status_code=400, detail=res["message"])
-    return res
+    return _unwrap_result(res)
