@@ -1,380 +1,373 @@
-"""
-Docker Manager Module Router
-Handles listing, starting, stopping, restarting, removing containers, and fetching logs.
-"""
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import subprocess
-import shutil
-import os
+"""Docker Manager API router with Docker + Compose support."""
 
-# Try to import docker module
-try:
-    import docker
-except ImportError:
-    docker = None
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+from .compose_manager import ComposeManager
+from .logic import DockerManagerError, DockerService, should_allow_mock
+from .schemas import (
+    ComposeBuildRequest,
+    ComposeLogsQuery,
+    ComposePathRequest,
+    ComposeUpRequest,
+    ContainerActionRequest,
+    ContainerExecRequest,
+    ContainerRenameRequest,
+    StackComposeUpdateRequest,
+    StackInitRequest,
+)
 
 router = APIRouter()
-
-# Interactive mock state for Dev Compatibility
-MOCK_CONTAINERS = [
-    {
-        "id": "c1a2b3c4d5e6",
-        "name": "copanel_backend",
-        "image": "fastapi:latest",
-        "status": "running",
-        "ports": "8000/tcp",
-        "logs": "INFO:     Started server process [1]\nINFO:     Waiting for application startup.\nINFO:     Application startup complete.\n"
-    },
-    {
-        "id": "f8e7d6c5b4a3",
-        "name": "copanel_frontend",
-        "image": "nginx:alpine",
-        "status": "running",
-        "ports": "80/tcp -> 8686",
-        "logs": "172.17.0.1 - - [01/May/2026:12:00:00 +0000] \"GET / HTTP/1.1\" 200 612 \"-\"\n"
-    },
-    {
-        "id": "a9b8c7d6e5f4",
-        "name": "redis_cache",
-        "image": "redis:6.2-alpine",
-        "status": "exited",
-        "ports": "6379/tcp",
-        "logs": "1:C 01 May 2026 12:00:00.123 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\n"
-    }
-]
-
-def get_docker_client():
-    """Retrieve Docker client or None if daemon not running."""
-    if docker is None:
-        return None
-    try:
-        return docker.from_env()
-    except Exception:
-        return None
+docker_service = DockerService(allow_mock=should_allow_mock())
+compose_manager = ComposeManager()
 
 
-# Schemas
-class ContainerActionRequest(BaseModel):
-    container_id: str
+def _raise_http(error: Exception) -> None:
+    if isinstance(error, DockerManagerError):
+        status_code = 400
+        if error.code in {"docker_unavailable", "compose_unavailable"}:
+            status_code = 503
+        elif error.code in {"docker_exec_failed"}:
+            status_code = 500
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": error.code, "message": str(error), "details": error.details},
+        ) from error
+    raise HTTPException(status_code=500, detail={"code": "internal_error", "message": str(error)}) from error
 
 
 @router.get("/list")
 async def list_containers() -> Dict[str, Any]:
-    """List containers with their ID, Name, Image, Status, Ports."""
-    global MOCK_CONTAINERS
-    containers = []
-
-    # 1. Try using Python Docker SDK first
-    client = get_docker_client()
-    if client is not None:
-        try:
-            for c in client.containers.list(all=True):
-                ports = []
-                for p, mapping in c.ports.items():
-                    if mapping:
-                        ports.append(f"{p} -> {mapping[0]['HostPort']}")
-                    else:
-                        ports.append(p)
-
-                containers.append({
-                    "id": c.short_id,
-                    "name": c.name,
-                    "image": c.image.tags[0] if c.image.tags else c.image.short_id,
-                    "status": c.status,
-                    "ports": ", ".join(ports) if ports else "—"
-                })
-            
-            if containers:
-                return {
-                    "status": "success",
-                    "containers": containers,
-                    "mock": False
-                }
-        except Exception:
-            pass
-
-    # 2. Fallback to direct shell command for 100% reliability!
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        res = subprocess.run([docker_path, "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"], capture_output=True, text=True, check=False)
-        if res.returncode == 0 and res.stdout.strip():
-            lines = res.stdout.strip().split("\n")
-            for line in lines:
-                parts = line.split("\t")
-                if len(parts) >= 4:
-                    cid = parts[0]
-                    name = parts[1]
-                    image = parts[2]
-                    status = parts[3].lower()
-
-                    # simple status parsing
-                    simple_status = "running"
-                    if "exited" in status or "exit" in status:
-                        simple_status = "exited"
-                    elif "pause" in status:
-                        simple_status = "paused"
-                    elif "created" in status:
-                        simple_status = "created"
-
-                    ports_mapping = parts[4] if len(parts) > 4 and parts[4] else "—"
-
-                    containers.append({
-                        "id": cid,
-                        "name": name,
-                        "image": image,
-                        "status": simple_status,
-                        "ports": ports_mapping
-                    })
-            if containers:
-                return {
-                    "status": "success",
-                    "containers": containers,
-                    "mock": False
-                }
-    except Exception:
-        pass
-
-    # Last resort: Return interactive mock data for Dev Compatibility
-    return {
-        "status": "success",
-        "containers": MOCK_CONTAINERS,
-        "mock": True
-    }
+        containers, is_mock = docker_service.list_containers()
+        return {"status": "success", "containers": containers, "mock": is_mock}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.post("/start")
 async def start_container(req: ContainerActionRequest) -> Dict[str, Any]:
-    """Start a container."""
-    client = get_docker_client()
-    if client is not None:
-        try:
-            container = client.containers.get(req.container_id)
-            container.start()
-            return {"status": "success", "message": "Container started successfully."}
-        except Exception:
-            pass
-
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        res = subprocess.run([docker_path, "start", req.container_id], capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            return {"status": "success", "message": "Container started successfully."}
-        raise HTTPException(status_code=400, detail=res.stderr or "Failed to start container.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        docker_service.container_action(req.container_id, "start")
+        return {"status": "success", "message": "Container started successfully."}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.post("/stop")
 async def stop_container(req: ContainerActionRequest) -> Dict[str, Any]:
-    """Stop a container."""
-    client = get_docker_client()
-    if client is not None:
-        try:
-            container = client.containers.get(req.container_id)
-            container.stop()
-            return {"status": "success", "message": "Container stopped successfully."}
-        except Exception:
-            pass
-
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        res = subprocess.run([docker_path, "stop", req.container_id], capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            return {"status": "success", "message": "Container stopped successfully."}
-        raise HTTPException(status_code=400, detail=res.stderr or "Failed to stop container.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        docker_service.container_action(req.container_id, "stop")
+        return {"status": "success", "message": "Container stopped successfully."}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.post("/restart")
 async def restart_container(req: ContainerActionRequest) -> Dict[str, Any]:
-    """Restart a container."""
-    client = get_docker_client()
-    if client is not None:
-        try:
-            container = client.containers.get(req.container_id)
-            container.restart()
-            return {"status": "success", "message": "Container restarted successfully."}
-        except Exception:
-            pass
-
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        res = subprocess.run([docker_path, "restart", req.container_id], capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            return {"status": "success", "message": "Container restarted successfully."}
-        raise HTTPException(status_code=400, detail=res.stderr or "Failed to restart container.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        docker_service.container_action(req.container_id, "restart")
+        return {"status": "success", "message": "Container restarted successfully."}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.post("/remove")
 async def remove_container(req: ContainerActionRequest) -> Dict[str, Any]:
-    """Remove a container."""
-    client = get_docker_client()
-    if client is not None:
-        try:
-            container = client.containers.get(req.container_id)
-            container.remove(force=True)
-            return {"status": "success", "message": "Container removed successfully."}
-        except Exception:
-            pass
-
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
     try:
-        res = subprocess.run([docker_path, "rm", "-f", req.container_id], capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            return {"status": "success", "message": "Container removed successfully."}
-        raise HTTPException(status_code=400, detail=res.stderr or "Failed to remove container.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        docker_service.remove_container(req.container_id)
+        return {"status": "success", "message": "Container removed successfully."}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.get("/logs")
-async def get_container_logs(container_id: str) -> Dict[str, Any]:
-    """Fetch recent container logs (tail 100)."""
-    client = get_docker_client()
-    if client is not None:
-        try:
-            container = client.containers.get(container_id)
-            logs = container.logs(tail=100).decode("utf-8", errors="ignore")
-            return {
-                "status": "success",
-                "logs": logs
-            }
-        except Exception:
-            pass
-
-    docker_path = shutil.which("docker") or "/usr/bin/docker"
+async def get_container_logs(
+    container_id: str,
+    tail: int = Query(default=100, ge=1, le=5000),
+    since: Optional[str] = None,
+    timestamps: bool = False,
+) -> Dict[str, Any]:
     try:
-        res = subprocess.run([docker_path, "logs", "--tail", "100", container_id], capture_output=True, text=True, check=False)
-        # Some containers have stderr logs only, which is fine!
-        logs_out = res.stdout or res.stderr
-        return {
-            "status": "success",
-            "logs": logs_out or "No logs recorded.\n"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logs = docker_service.get_logs(container_id, tail=tail, since=since, timestamps=timestamps)
+        return {"status": "success", "logs": logs}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/containers/{container_id}/inspect")
+async def inspect_container(container_id: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.inspect_container(container_id)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/containers/{container_id}/stats")
+async def container_stats(container_id: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.container_stats(container_id)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/containers/exec")
+async def exec_container(req: ContainerExecRequest) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.exec_command(req.container_id, req.command)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/containers/rename")
+async def rename_container(req: ContainerRenameRequest) -> Dict[str, Any]:
+    try:
+        docker_service.rename_container(req.container_id, req.new_name)
+        return {"status": "success", "message": "Container renamed successfully."}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/containers/prune")
+async def prune_containers() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.prune_containers()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/images")
+async def list_images() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.list_images()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/images/inspect")
+async def inspect_image(image_ref: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.inspect_image(image_ref)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/images/pull")
+async def pull_image(image_ref: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.pull_image(image_ref)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/images/remove")
+async def remove_image(image_ref: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.remove_image(image_ref)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/images/prune")
+async def prune_images() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.prune_images()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/networks")
+async def list_networks() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.list_networks()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/networks/create")
+async def create_network(name: str, driver: str = "bridge") -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.create_network(name, driver)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/networks/remove")
+async def remove_network(name: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.remove_network(name)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/networks/connect")
+async def connect_network(name: str, container_id: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.connect_network(name, container_id)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/networks/disconnect")
+async def disconnect_network(name: str, container_id: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.disconnect_network(name, container_id)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/volumes")
+async def list_volumes() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": docker_service.list_volumes()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/volumes/create")
+async def create_volume(name: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.create_volume(name)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/volumes/remove")
+async def remove_volume(name: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.remove_volume(name)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/volumes/prune")
+async def prune_volumes() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "message": docker_service.prune_volumes()}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.get("/scan-compose")
 async def scan_compose_files(custom_path: Optional[str] = None) -> Dict[str, Any]:
-    """Scan directories for any docker-compose.yml files to suggest deployment."""
-    import os
-    from pathlib import Path
-
-    IS_WINDOWS = os.name == 'nt'
-    scan_paths = []
-
-    if custom_path:
-        scan_paths = [Path(custom_path)]
-    elif IS_WINDOWS:
-        scan_paths = [Path("./test_docker"), Path("./test_nginx"), Path("./")]
-    else:
-        scan_paths = [Path("/home"), Path("/var/www"), Path("/opt/copanel"), Path("/root")]
-
-    compose_files = []
-    # Search up to 5 directory levels deep
-    for base_path in scan_paths:
-        if base_path.exists() and base_path.is_dir():
-            try:
-                for root, dirs, files in os.walk(str(base_path)):
-                    # Limit depth
-                    depth = root.replace(str(base_path), "").count(os.sep)
-                    if depth > 5:
-                        dirs[:] = []  # Do not go deeper
-                        continue
-
-                    # Skip massive folders
-                    for x in [".git", "node_modules", "venv", ".npm", ".cache"]:
-                        if x in dirs:
-                            dirs.remove(x)
-
-                    for file in files:
-                        if file in ["docker-compose.yml", "docker-compose.yaml", "docker-composer.yml"]:
-                            compose_files.append({
-                                "path": root,
-                                "filename": file,
-                                "full_path": os.path.join(root, file)
-                            })
-            except Exception:
-                continue
-
-    return {
-        "status": "success",
-        "compose_files": compose_files
-    }
-
-
-class ComposeActionRequest(BaseModel):
-    path: str
+    try:
+        compose_files = compose_manager.scan_compose_files(custom_path=custom_path)
+        return {"status": "success", "compose_files": compose_files}
+    except Exception as exc:
+        _raise_http(exc)
 
 
 @router.post("/up-compose")
-async def build_compose_stack(req: ComposeActionRequest) -> Dict[str, Any]:
-    """Build and start the compose stack in the directory."""
-    if not os.path.isdir(req.path):
-        raise HTTPException(status_code=400, detail=f"The path '{req.path}' does not exist.")
-
+async def build_compose_stack(req: ComposePathRequest) -> Dict[str, Any]:
     try:
-        # Check command availability and expand PATH
-        env = os.environ.copy()
-        extra_paths = ["/usr/bin", "/usr/local/bin", "/snap/bin"]
-        path_str = env.get("PATH", "")
-        for p in extra_paths:
-            if p not in path_str:
-                path_str = f"{p}:{path_str}" if path_str else p
-        env["PATH"] = path_str
+        result = compose_manager.up(req.path, detach=True)
+        if result["status"] != "success":
+            return {"status": "error", "message": result["error"] or "Failed to bring up docker compose stack."}
+        return {"status": "success", "message": "Docker Compose stack brought up successfully.", "output": result["output"]}
+    except Exception as exc:
+        _raise_http(exc)
 
-        cmd = "docker compose"
-        # Check absolute paths explicitly
-        for possible_docker in ["/usr/bin/docker", "/usr/local/bin/docker", "/snap/bin/docker"]:
-            if os.path.exists(possible_docker) and os.access(possible_docker, os.X_OK):
-                cmd = f"{possible_docker} compose"
-                break
-        else:
-            if shutil.which("docker", path=path_str):
-                cmd = "docker compose"
 
-        # Check for docker-compose standalone
-        for possible_dc in ["/usr/bin/docker-compose", "/usr/local/bin/docker-compose", "/snap/bin/docker-compose"]:
-            if os.path.exists(possible_dc) and os.access(possible_dc, os.X_OK):
-                cmd = possible_dc
-                break
-            elif shutil.which("docker-compose", path=path_str):
-                cmd = "docker-compose"
+@router.post("/compose/validate")
+async def compose_validate(req: ComposePathRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.validate(req.path)
+    except Exception as exc:
+        _raise_http(exc)
 
-        # Execute docker-compose up -d
-        res = subprocess.run(
-            f"{cmd} up -d",
-            shell=True,
-            cwd=req.path,
-            capture_output=True,
-            text=True,
-            env=env
+
+@router.post("/compose/up")
+async def compose_up(req: ComposeUpRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.up(req.path, detach=req.detach)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/compose/down")
+async def compose_down(req: ComposePathRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.down(req.path)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/compose/restart")
+async def compose_restart(req: ComposePathRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.restart(req.path)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/compose/pull")
+async def compose_pull(req: ComposePathRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.pull(req.path)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/compose/build")
+async def compose_build(req: ComposeBuildRequest) -> Dict[str, Any]:
+    try:
+        return compose_manager.build(req.path, no_cache=req.no_cache)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/compose/ps")
+async def compose_ps(path: str) -> Dict[str, Any]:
+    try:
+        return compose_manager.ps(path)
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/compose/logs")
+async def compose_logs(path: str, tail: int = 100, since: Optional[str] = None, timestamps: bool = False, follow: bool = False) -> Dict[str, Any]:
+    try:
+        query = ComposeLogsQuery(path=path, tail=tail, since=since, timestamps=timestamps, follow=follow)
+        return compose_manager.logs(
+            path=query.path,
+            tail=query.tail,
+            since=query.since,
+            timestamps=query.timestamps,
+            follow=query.follow,
         )
+    except Exception as exc:
+        _raise_http(exc)
 
-        if res.returncode != 0:
-            return {
-                "status": "error",
-                "message": res.stderr or "Failed to bring up docker compose stack."
-            }
 
-        return {
-            "status": "success",
-            "message": "Docker Compose stack brought up successfully.",
-            "output": res.stdout
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/stacks/init")
+async def stack_init(req: StackInitRequest) -> Dict[str, Any]:
+    try:
+        data = compose_manager.init_stack(req.stack_id, req.image, req.host_port, req.container_port)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/stacks")
+async def list_stacks() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.list_managed_stacks()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/stacks/{stack_id}/compose")
+async def read_stack_compose(stack_id: str) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.get_compose_content(stack_id)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.put("/stacks/{stack_id}/compose")
+async def update_stack_compose(stack_id: str, req: StackComposeUpdateRequest) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.update_compose_content(stack_id, req.compose_content)}
+    except Exception as exc:
+        _raise_http(exc)
