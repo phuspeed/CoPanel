@@ -12,6 +12,8 @@ import json
 import os
 import shutil
 import subprocess
+import secrets
+import string
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -54,6 +56,25 @@ def _save_mock(path: Path, data: List[Dict[str, Any]]) -> None:
 
 
 class PostgresManager:
+    @staticmethod
+    def detect_status() -> Dict[str, Any]:
+        installed = bool(_has_psql() or (not IS_WINDOWS and os.path.exists("/var/lib/postgresql")))
+        if IS_WINDOWS:
+            return {"installed": True, "running": True, "mode": "mock", "engine": "postgres"}
+        running = False
+        if installed:
+            try:
+                res = subprocess.run(["systemctl", "is-active", "postgresql"], capture_output=True, text=True)
+                running = res.stdout.strip() == "active"
+            except Exception:
+                running = False
+        return {"installed": installed, "running": running, "mode": "native" if _has_psql() else "mock", "engine": "postgres"}
+
+    @staticmethod
+    def generate_password(length: int = 18) -> str:
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+        return "".join(secrets.choice(alphabet) for _ in range(max(12, min(length, 64))))
+
     @staticmethod
     def list_databases() -> List[Dict[str, Any]]:
         if not _has_psql():
@@ -139,3 +160,18 @@ class PostgresManager:
         if res.returncode != 0:
             return {"status": "error", "message": res.stderr.strip()}
         return {"status": "success", "message": f"User '{username}' deleted."}
+
+    @staticmethod
+    def set_user_password(username: str, password: str) -> Dict[str, Any]:
+        if not username or not password:
+            return {"status": "error", "message": "Username and password required."}
+        if not _has_psql():
+            users = _load_mock(MOCK_PG_USERS, [])
+            if not any(u["user"] == username for u in users):
+                return {"status": "error", "message": "User not found."}
+            return {"status": "success", "message": f"Password updated for '{username}' (mock)."}
+        safe_pwd = password.replace("'", "''")
+        res = _psql(f"ALTER USER \"{username}\" WITH PASSWORD '{safe_pwd}';")
+        if res.returncode != 0:
+            return {"status": "error", "message": res.stderr.strip() or "Failed to update password"}
+        return {"status": "success", "message": f"Password updated for '{username}'."}

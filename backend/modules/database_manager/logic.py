@@ -7,6 +7,8 @@ import os
 import shutil
 import subprocess
 import json
+import secrets
+import string
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -15,6 +17,31 @@ MOCK_DB_FILE = Path("./test_nginx/databases.json") if IS_WINDOWS else Path("/var
 MOCK_USER_FILE = Path("./test_nginx/database_users.json") if IS_WINDOWS else Path("/var/lib/copanel/database_users.json")
 
 class DBManager:
+    @staticmethod
+    def detect_status() -> Dict[str, Any]:
+        mysql_bin = shutil.which("mysql")
+        mariadb_bin = shutil.which("mariadb")
+        installed = bool(mysql_bin or mariadb_bin or (not IS_WINDOWS and os.path.exists("/var/lib/mysql")))
+        if IS_WINDOWS:
+            return {"installed": True, "running": True, "mode": "mock", "engine": "mysql"}
+        running = False
+        if installed:
+            try:
+                res = subprocess.run(["systemctl", "is-active", "mysql"], capture_output=True, text=True)
+                if res.stdout.strip() == "active":
+                    running = True
+                else:
+                    res2 = subprocess.run(["systemctl", "is-active", "mariadb"], capture_output=True, text=True)
+                    running = res2.stdout.strip() == "active"
+            except Exception:
+                running = False
+        return {"installed": installed, "running": running, "mode": "native" if mysql_bin else "mock", "engine": "mysql"}
+
+    @staticmethod
+    def generate_password(length: int = 18) -> str:
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+        return "".join(secrets.choice(alphabet) for _ in range(max(12, min(length, 64))))
+
     @staticmethod
     def _load_mock_dbs() -> List[Dict[str, Any]]:
         if not MOCK_DB_FILE.exists():
@@ -215,5 +242,22 @@ class DBManager:
             cmd = f"DROP USER IF EXISTS '{username}'@'{host}';"
             subprocess.run(["sudo", "mysql", "-u", "root", "-e", cmd], check=True, capture_output=True, text=True)
             return {"status": "success", "message": f"User '{username}' deleted successfully."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @staticmethod
+    def set_user_password(username: str, host: str, password: str) -> Dict[str, Any]:
+        if not username or not password:
+            return {"status": "error", "message": "Username and password are required."}
+        if IS_WINDOWS or not shutil.which("mysql"):
+            users = DBManager._load_mock_users()
+            if not any(u["user"] == username and u.get("host", "localhost") == host for u in users):
+                return {"status": "error", "message": "User not found."}
+            return {"status": "success", "message": f"Password updated for '{username}' (mock)."}
+        try:
+            safe_pwd = password.replace("'", "\\'")
+            cmd = f"ALTER USER '{username}'@'{host}' IDENTIFIED BY '{safe_pwd}'; FLUSH PRIVILEGES;"
+            subprocess.run(["sudo", "mysql", "-u", "root", "-e", cmd], check=True, capture_output=True, text=True)
+            return {"status": "success", "message": f"Password updated for '{username}'."}
         except Exception as e:
             return {"status": "error", "message": str(e)}

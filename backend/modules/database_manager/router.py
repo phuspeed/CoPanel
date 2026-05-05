@@ -110,6 +110,17 @@ class EngineCreateUser(BaseModel):
     host: str = "localhost"
 
 
+class EngineDeleteUser(BaseModel):
+    user: str
+    host: str = "localhost"
+
+
+class EngineSetPassword(BaseModel):
+    user: str
+    password: str
+    host: str = "localhost"
+
+
 @router.get("/engines")
 def list_engines() -> Dict[str, Any]:
     """Lightweight registry of database engines this panel can drive."""
@@ -120,6 +131,29 @@ def list_engines() -> Dict[str, Any]:
             {"id": "postgres", "name": "PostgreSQL"},
         ],
     }
+
+
+@router.get("/overview")
+def overview() -> Dict[str, Any]:
+    mysql_dbs = DBManager.get_databases()
+    mysql_users = DBManager.get_users()
+    pg_dbs = PostgresManager.list_databases()
+    pg_users = PostgresManager.list_users()
+    return {
+        "status": "success",
+        "overview": {
+            "mysql": {**DBManager.detect_status(), "database_count": len(mysql_dbs), "user_count": len(mysql_users)},
+            "postgres": {**PostgresManager.detect_status(), "database_count": len(pg_dbs), "user_count": len(pg_users)},
+        },
+    }
+
+
+@router.post("/engines/{engine}/password/generate")
+def engine_generate_password(engine: str) -> Dict[str, Any]:
+    impl = _engine(engine)
+    if not hasattr(impl, "generate_password"):
+        raise HTTPException(status_code=400, detail="Engine does not support password generator")
+    return {"status": "success", "password": impl.generate_password()}
 
 
 @router.get("/engines/{engine}/databases")
@@ -158,3 +192,23 @@ def engine_user_create(engine: str, req: EngineCreateUser) -> Dict[str, Any]:
     else:
         res = impl.create_user(req.user, req.password, req.db)
     return _unwrap_result(res)
+
+
+@router.delete("/engines/{engine}/users")
+def engine_user_delete(engine: str, req: EngineDeleteUser) -> Dict[str, Any]:
+    impl = _engine(engine)
+    if engine == "mysql":
+        res = impl.delete_user(req.user, req.host)
+    else:
+        res = impl.delete_user(req.user)
+    return _unwrap_result(res)
+
+
+@router.post("/engines/{engine}/users/password")
+def engine_user_password(engine: str, req: EngineSetPassword) -> Dict[str, Any]:
+    impl = _engine(engine)
+    if not hasattr(impl, "set_user_password"):
+        raise HTTPException(status_code=400, detail="Engine does not support password update")
+    if engine == "mysql":
+        return _unwrap_result(impl.set_user_password(req.user, req.host, req.password))
+    return _unwrap_result(impl.set_user_password(req.user, req.password))
