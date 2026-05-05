@@ -5,6 +5,7 @@ NOTE: This router still keeps its own ``get_current_user`` for backwards
 compatibility - other modules that imported it directly continue to work.
 New modules should prefer ``core.auth.require_user`` / ``require_admin``.
 """
+import json
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
@@ -16,6 +17,16 @@ from core.security import verify_password, create_access_token, verify_token
 from core import user_model
 
 router = APIRouter()
+
+
+def _public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "permitted_modules": user["permitted_modules"],
+        "permitted_folders": user["permitted_folders"],
+    }
 
 
 class LoginRequest(BaseModel):
@@ -82,13 +93,7 @@ def login(req: LoginRequest) -> Dict[str, Any]:
         "status": "success",
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "role": user["role"],
-            "permitted_modules": user["permitted_modules"],
-            "permitted_folders": user["permitted_folders"]
-        }
+        "user": _public_user(user),
     }
 
 
@@ -97,13 +102,7 @@ def get_me(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     """Returns details about the current logged-in user."""
     return {
         "status": "success",
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "role": user["role"],
-            "permitted_modules": user["permitted_modules"],
-            "permitted_folders": user["permitted_folders"]
-        }
+        "user": _public_user(user),
     }
 
 
@@ -119,7 +118,6 @@ def list_users(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
 @router.post("/users")
 def register_user(req: CreateUserRequest, user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
     """Registers a new user profile on the system."""
-    import json
     try:
         user_id = user_model.create_user(
             username=req.username,
@@ -148,7 +146,6 @@ def register_user(req: CreateUserRequest, user: Dict[str, Any] = Depends(require
 @router.put("/users/{user_id}")
 def edit_user(user_id: int, req: UpdateUserRequest, user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
     """Updates user roles and permissions."""
-    import json
     updated = user_model.update_user(
         user_id=user_id,
         role=req.role,
