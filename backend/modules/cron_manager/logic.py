@@ -47,11 +47,15 @@ def _init_db() -> None:
                 month TEXT NOT NULL,
                 weekday TEXT NOT NULL,
                 command TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(cron_jobs)").fetchall()]
+        if "is_active" not in cols:
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
 
 def _read_crontab() -> str:
@@ -117,7 +121,12 @@ def _sync_managed_crontab() -> None:
         return
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, minute, hour, day, month, weekday, command FROM cron_jobs ORDER BY created_at DESC"
+            """
+            SELECT id, minute, hour, day, month, weekday, command
+            FROM cron_jobs
+            WHERE is_active = 1
+            ORDER BY created_at DESC
+            """
         ).fetchall()
     managed_lines = [_cron_line(dict(r)) for r in rows]
 
@@ -145,12 +154,12 @@ def list_jobs() -> List[Dict[str, Any]]:
     with _db() as conn:
         rows = conn.execute(
             """
-            SELECT id, minute, hour, day, month, weekday, command
+            SELECT id, minute, hour, day, month, weekday, command, is_active
             FROM cron_jobs
             ORDER BY created_at DESC
             """
         ).fetchall()
-    managed = [{**dict(r), "managed": True} for r in rows]
+    managed = [{**dict(r), "managed": True, "is_active": bool(r["is_active"])} for r in rows]
     manual = _parse_manual_lines(_read_crontab())
     return managed + manual
 
@@ -173,8 +182,8 @@ def add_job(schedule: Dict[str, str], command: str) -> Dict[str, Any]:
     with _db() as conn:
         conn.execute(
             """
-            INSERT INTO cron_jobs (id, minute, hour, day, month, weekday, command, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO cron_jobs (id, minute, hour, day, month, weekday, command, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job["id"],
@@ -184,12 +193,13 @@ def add_job(schedule: Dict[str, str], command: str) -> Dict[str, Any]:
                 job["month"],
                 job["weekday"],
                 job["command"],
+                1,
                 now,
                 now,
             ),
         )
     _sync_managed_crontab()
-    return {**job, "managed": True}
+    return {**job, "managed": True, "is_active": True}
 
 
 def remove_job(cid: str) -> bool:
@@ -201,6 +211,20 @@ def remove_job(cid: str) -> bool:
     if removed:
         _sync_managed_crontab()
     return removed
+
+
+def set_job_active(cid: str, active: bool) -> bool:
+    _init_db()
+    now = datetime.utcnow().isoformat()
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE cron_jobs SET is_active = ?, updated_at = ? WHERE id = ?",
+            (1 if active else 0, now, cid),
+        )
+        changed = cur.rowcount > 0
+    if changed:
+        _sync_managed_crontab()
+    return changed
 
 
 _init_db()

@@ -22,6 +22,10 @@ class AddJobRequest(BaseModel):
     command: str = Field(..., min_length=1)
 
 
+class SetJobStateRequest(BaseModel):
+    active: bool
+
+
 @router.get("/jobs")
 def list_jobs(user: Dict[str, Any] = Depends(require_module("cron_manager"))) -> Dict[str, Any]:
     return ok(logic.list_jobs())
@@ -58,3 +62,22 @@ def remove_job(job_id: str, user: Dict[str, Any] = Depends(require_module("cron_
         actor_id=user.get("id"),
     )
     return ok({"removed": True})
+
+
+@router.post("/jobs/{job_id}/state")
+def set_job_state(
+    job_id: str,
+    req: SetJobStateRequest,
+    user: Dict[str, Any] = Depends(require_module("cron_manager")),
+) -> Dict[str, Any]:
+    if not logic.set_job_active(job_id, req.active):
+        raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
+    record_audit(
+        "cron.state",
+        module="cron_manager",
+        target=job_id,
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+        meta={"active": req.active},
+    )
+    return ok({"id": job_id, "active": req.active})

@@ -15,6 +15,7 @@ interface Job {
   weekday: string;
   command: string;
   managed: boolean;
+  is_active?: boolean;
 }
 
 const EMPTY: Job = {
@@ -198,6 +199,16 @@ export default function CronManager() {
       refresh();
     } catch (err: any) {
       setError(err?.message || 'Failed to remove cron job');
+    }
+  }
+
+  async function setActive(id: string | undefined, active: boolean) {
+    if (!id) return;
+    try {
+      await api(`/api/cron_manager/jobs/${id}/state`, { method: 'POST', body: { active } });
+      refresh();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update cron job state');
     }
   }
 
@@ -422,9 +433,21 @@ export default function CronManager() {
               </span>
               <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{j.command}</span>
               {j.managed ? (
-                <button onClick={() => remove(j.id)} className="text-slate-400 hover:text-red-500">
-                  <Icons.Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActive(j.id, !(j.is_active ?? true))}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold ${
+                      (j.is_active ?? true)
+                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                        : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
+                    }`}
+                  >
+                    {(j.is_active ?? true) ? 'Pause' : 'Start'}
+                  </button>
+                  <button onClick={() => remove(j.id)} className="text-slate-400 hover:text-red-500">
+                    <Icons.Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               ) : (
                 <span className="text-[10px] uppercase tracking-wider text-slate-400">manual</span>
               )}
