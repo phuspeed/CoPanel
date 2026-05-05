@@ -87,6 +87,53 @@ command_exists() {
     command -v "$1" &> /dev/null
 }
 
+# -----------------------------------------------------------------------------
+# APT: robust apt-get update when Launchpad PPAs are unreachable (common with
+# ondrej/php behind strict firewalls or regional mirror issues).
+# Ubuntu 22.04+ ship php-fpm in main/universe; Ondrej PPA is optional for CoPanel.
+# -----------------------------------------------------------------------------
+apt_update_or_recover() {
+    if ! command_exists apt-get; then
+        return 0
+    fi
+    export DEBIAN_FRONTEND=noninteractive
+
+    if apt-get update; then
+        return 0
+    fi
+
+    log_warning "apt-get update failed. Common cause: unreachable PPA (e.g. ppa:ondrej/php → launchpadcontent.net)."
+    log_warning "CoPanel does not require Ondrej PHP on Ubuntu 22.04+ (use ubuntu-provided php*-fpm)."
+
+    local disabled_any=false
+    shopt -s nullglob
+    for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "$ppa_f" ]] || continue
+        # Only the Ondrej *PHP* PPA (Launchpad); other ondrej/* PPAs are left alone
+        if grep -q 'ondrej/php' "$ppa_f" 2>/dev/null && grep -qE 'ppa\.launchpad(content)?\.net|ppa\.launchpad\.net' "$ppa_f" 2>/dev/null; then
+            log_warning "Temporarily disabling $(basename "$ppa_f") — restore later with:"
+            log_warning "  sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
+            mv "$ppa_f" "${ppa_f}.copanel-bak"
+            disabled_any=true
+        fi
+    done
+    shopt -u nullglob
+
+    if [[ "$disabled_any" != true ]]; then
+        log_error "apt-get update failed and no Ondrej PHP list file was found to disable."
+        log_error "Fix network/firewall to Launchpad or remove broken entries under /etc/apt/sources.list.d/ then re-run."
+        return 1
+    fi
+
+    if apt-get update; then
+        log_success "apt-get update succeeded after disabling unreachable Ondrej PHP PPA"
+        return 0
+    fi
+
+    log_error "apt-get update still failing. Inspect: ls /etc/apt/sources.list.d/"
+    return 1
+}
+
 ###############################################################################
 # Step 1: System Dependencies
 ###############################################################################
@@ -96,7 +143,7 @@ install_dependencies() {
     
     # Detect package manager
     if command_exists apt-get; then
-        apt-get update
+        apt_update_or_recover || exit 1
         apt-get install -y \
             python3 python3-pip python3-venv \
             nginx \
@@ -423,7 +470,7 @@ EOF
     fi
 
     # Open necessary ports if UFW is installed
-    if command_v ufw &> /dev/null || command -v ufw &> /dev/null; then
+    if command_exists ufw; then
         log_info "Configuring UFW rules for CoPanel..."
         ufw allow 8686/tcp || true
         ufw allow 8000/tcp || true
