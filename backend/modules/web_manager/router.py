@@ -4,7 +4,9 @@ Manages Nginx sites-available and sites-enabled.
 """
 import os
 import re
+import shutil
 import subprocess
+import urllib.request
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -38,6 +40,10 @@ def parse_nginx_config(content: str) -> Dict[str, str]:
         "domain": server_name,
         "root": root_path
     }
+
+
+def sanitize_filename(value: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_.-]', '', value)
 
 # Schemas
 class CreateSiteRequest(BaseModel):
@@ -108,7 +114,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             domain_name = re.sub(r'^(https?://)?(www\.)?', '', domain_name)
             fname = f"{domain_name}.conf"
 
-        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', fname)
+        safe_filename = sanitize_filename(fname)
         file_path = os.path.join(SITES_AVAILABLE, safe_filename)
         enabled_path = os.path.join(SITES_ENABLED, safe_filename)
 
@@ -198,7 +204,6 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         # On Linux, if PHP is selected and modules are requested, install them
         if not IS_WINDOWS and req.php_version and req.php_modules:
             try:
-                import shutil
                 pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
                 if pkg_manager == "apt-get":
                     pkgs = [f"php{req.php_version}-{m}" for m in req.php_modules]
@@ -212,7 +217,6 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         # Automatically activate the new site
         if not os.path.exists(enabled_path):
             if IS_WINDOWS:
-                import shutil
                 shutil.copy2(file_path, enabled_path)
             else:
                 os.symlink(file_path, enabled_path)
@@ -251,7 +255,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
     """Enable or disable an Nginx site by creating or deleting its link."""
     try:
-        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', req.filename)
+        safe_filename = sanitize_filename(req.filename)
         available_path = os.path.join(SITES_AVAILABLE, safe_filename)
         enabled_path = os.path.join(SITES_ENABLED, safe_filename)
 
@@ -263,7 +267,6 @@ async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
             if not os.path.exists(enabled_path):
                 if IS_WINDOWS:
                     # Windows symlink fallback: file copy
-                    import shutil
                     shutil.copy2(available_path, enabled_path)
                 else:
                     os.symlink(available_path, enabled_path)
@@ -306,7 +309,7 @@ async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
 async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
     """Delete site configuration from sites-available and sites-enabled."""
     try:
-        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', req.filename)
+        safe_filename = sanitize_filename(req.filename)
         available_path = os.path.join(SITES_AVAILABLE, safe_filename)
         enabled_path = os.path.join(SITES_ENABLED, safe_filename)
 
@@ -337,9 +340,8 @@ async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
 @router.post("/update")
 async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
     """Update Nginx or Apache site configuration, test syntax, and reload."""
-    import shutil
     try:
-        safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '', req.filename)
+        safe_filename = sanitize_filename(req.filename)
         available_path = os.path.join(SITES_AVAILABLE, safe_filename)
 
         if not os.path.exists(available_path):
@@ -394,7 +396,6 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
 @router.get("/web_services")
 async def list_web_services() -> Dict[str, Any]:
     """Retrieve status of main web server services with conflict info."""
-    import shutil
 
     # Conflict rules: if a service is installed/running, it conflicts with others on port 80
     CONFLICT_MAP = {
@@ -441,7 +442,6 @@ async def list_web_services() -> Dict[str, Any]:
 @router.post("/web_services/install_stack")
 async def install_web_stack(req: dict) -> Dict[str, Any]:
     """Install a chosen web server stack with conflict guard."""
-    import shutil
     stack = req.get("stack", "nginx")  # nginx | apache2 | litespeed | nginx_apache
 
     if IS_WINDOWS:
@@ -494,7 +494,6 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
     if IS_WINDOWS:
         return {"status": "success", "message": f"Service {service_id} action '{action}' performed successfully (Mock mode)."}
 
-    import shutil
     if action == "install":
         # Run package installation using apt/yum
         pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
@@ -519,7 +518,6 @@ async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
 @router.get("/db_admin_tools")
 async def get_db_admin_tools() -> Dict[str, Any]:
     """Detect installed database engines and their admin tools."""
-    import shutil
 
     def check_service_running(service: str) -> bool:
         if IS_WINDOWS:
@@ -598,8 +596,6 @@ async def install_adminer() -> Dict[str, Any]:
     """Download and configure Adminer as a universal DB admin tool."""
     if IS_WINDOWS:
         return {"status": "success", "message": "Adminer install simulated (Windows mock)."}
-    import shutil
-    import urllib.request
 
     adminer_dir = "/usr/share/adminer"
     adminer_path = f"{adminer_dir}/adminer.php"
@@ -664,7 +660,6 @@ class SavePhpMyAdminCredentialsRequest(BaseModel):
 @router.get("/phpmyadmin")
 async def get_phpmyadmin_credentials() -> Dict[str, Any]:
     """Return phpMyAdmin login credentials saved by install.sh."""
-    import shutil
     creds_file = "/opt/copanel/config/mysql_credentials.txt"
     pma_installed = bool(
         shutil.which("mysql") or os.path.exists("/usr/share/phpmyadmin")
@@ -691,9 +686,6 @@ async def get_phpmyadmin_credentials() -> Dict[str, Any]:
 @router.post("/phpmyadmin/save")
 async def save_phpmyadmin_credentials(req: SavePhpMyAdminCredentialsRequest) -> Dict[str, Any]:
     """Save or create phpMyAdmin/MySQL user."""
-    import shutil
-    import subprocess
-    
     # Save to file
     creds_file = "/opt/copanel/config/mysql_credentials.txt"
     os.makedirs(os.path.dirname(creds_file), exist_ok=True)
