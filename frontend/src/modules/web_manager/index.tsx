@@ -346,6 +346,19 @@ export default function WebManagerDashboard() {
     setTimeout(() => setPmaCopied(null), 2000);
   };
 
+  const buildAdminToolUrl = (adminPath: string) => {
+    const protocol = window.location.protocol;
+    const host = window.location.hostname;
+    const currentPort = window.location.port;
+    const normalizedPath = adminPath.startsWith('/') ? adminPath : `/${adminPath}`;
+
+    // DB admin tools are usually exposed by web server on 80/443, not panel UI port.
+    if (currentPort && currentPort !== '80' && currentPort !== '443') {
+      return `${protocol}//${host}${normalizedPath}`;
+    }
+    return `${window.location.origin}${normalizedPath}`;
+  };
+
   const handleSavePmaCredentials = async () => {
     try {
       const res = await fetch('/api/web_manager/phpmyadmin/save', {
@@ -734,7 +747,7 @@ export default function WebManagerDashboard() {
             <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.4
+              v1.0.5
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -1123,7 +1136,7 @@ export default function WebManagerDashboard() {
                       <div className="border-t pt-3 dark:border-slate-800/40 flex flex-col gap-2">
                         {engine.admin_installed ? (
                           <button
-                            onClick={() => window.open(`${window.location.origin}${engine.admin_url}`, '_blank')}
+                            onClick={() => window.open(buildAdminToolUrl(engine.admin_url), '_blank')}
                             className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white transition shadow-sm ${
                               engine.id === 'mysql' ? 'bg-blue-600 hover:bg-blue-500'
                               : engine.id === 'postgresql' ? 'bg-sky-600 hover:bg-sky-500'

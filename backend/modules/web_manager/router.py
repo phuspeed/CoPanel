@@ -64,6 +64,20 @@ def _pkg_manager() -> Optional[str]:
         return "yum"
     return None
 
+
+def _pkg_installed(pkg_name: str) -> bool:
+    pm = _pkg_manager()
+    if not pm:
+        return False
+    try:
+        if pm == "apt-get":
+            res = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg_name], capture_output=True, text=True)
+            return "install ok installed" in (res.stdout or "")
+        res = subprocess.run(["rpm", "-q", pkg_name], capture_output=True, text=True)
+        return res.returncode == 0
+    except Exception:
+        return False
+
 # Schemas
 class CreateSiteRequest(BaseModel):
     filename: Optional[str] = None
@@ -561,9 +575,16 @@ async def get_db_admin_tools() -> Dict[str, Any]:
     mysql_version = ""
     if mysql_installed and not IS_WINDOWS:
         mysql_version = get_db_version(["mysql", "--version"])
-    pma_installed = os.path.exists("/usr/share/phpmyadmin") or os.path.exists("/var/www/html/phpmyadmin")
-    pma_url = "/phpmyadmin/"
-    if os.path.exists("/var/www/html/phpmyadmin/index.php"):
+    pma_installed = (
+        os.path.exists("/usr/share/phpmyadmin")
+        or os.path.exists("/usr/share/phpMyAdmin")
+        or os.path.exists("/var/www/html/phpmyadmin")
+        or os.path.exists("/var/www/html/phpMyAdmin")
+        or _pkg_installed("phpmyadmin")
+        or _pkg_installed("phpMyAdmin")
+    )
+    pma_url = "/phpmyadmin"
+    if os.path.exists("/var/www/html/phpmyadmin/index.php") or os.path.exists("/usr/share/phpmyadmin/index.php"):
         pma_url = "/phpmyadmin/index.php"
     engines.append({
         "id": "mysql",
@@ -598,9 +619,10 @@ async def get_db_admin_tools() -> Dict[str, Any]:
     # Adminer — universal lightweight fallback
     adminer_paths = ["/usr/share/adminer/adminer.php", "/var/www/html/adminer.php"]
     adminer_installed = any(os.path.exists(p) for p in adminer_paths)
-    adminer_url = "/adminer"
+    adminer_installed = adminer_installed or _pkg_installed("adminer")
+    adminer_url = "/adminer.php"
     if os.path.exists("/usr/share/adminer/adminer.php"):
-        adminer_url = "/adminer/adminer.php"
+        adminer_url = "/adminer.php"
     elif os.path.exists("/var/www/html/adminer.php"):
         adminer_url = "/adminer.php"
     engines.append({
@@ -631,10 +653,16 @@ async def install_db_admin_tool(tool_id: str) -> Dict[str, Any]:
     try:
         if tool_id == "mysql":
             if pkg == "apt-get":
-                _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                try:
+                    _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                except Exception:
+                    _run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
                 _run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
             else:
-                _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                try:
+                    _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                except Exception:
+                    _run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
                 # phpMyAdmin package name differs by distro; try best-effort
                 try:
                     _run_with_optional_sudo([pkg, "install", "-y", "phpMyAdmin"])
@@ -667,13 +695,19 @@ async def install_adminer() -> Dict[str, Any]:
 
     adminer_dir = "/usr/share/adminer"
     adminer_path = f"{adminer_dir}/adminer.php"
+    public_adminer_path = "/var/www/html/adminer.php"
     nginx_conf = "/etc/nginx/conf.d/adminer.conf"
     apache_conf = "/etc/apache2/conf-available/adminer.conf"
 
     try:
         os.makedirs(adminer_dir, exist_ok=True)
+        os.makedirs("/var/www/html", exist_ok=True)
         url = "https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
         urllib.request.urlretrieve(url, adminer_path)
+        try:
+            shutil.copy2(adminer_path, public_adminer_path)
+        except Exception:
+            pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to download Adminer: {e}")
 
@@ -718,7 +752,7 @@ async def install_adminer() -> Dict[str, Any]:
         except Exception:
             pass
 
-    return {"status": "success", "message": "Adminer installed successfully at /adminer"}
+    return {"status": "success", "message": "Adminer installed successfully. Try /adminer.php (or /adminer if nginx alias is active)."}
 
 
 class SavePhpMyAdminCredentialsRequest(BaseModel):
