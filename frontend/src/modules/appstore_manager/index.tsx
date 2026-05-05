@@ -27,6 +27,22 @@ interface Package {
   is_community?: boolean;
 }
 
+function formatApiDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((x: { msg?: string }) => x?.msg || JSON.stringify(x)).join('; ');
+  }
+  if (detail && typeof detail === 'object' && 'msg' in detail) {
+    return String((detail as { msg: string }).msg);
+  }
+  return 'Request failed';
+}
+
+function pkgIdFromZipName(filename: string): string {
+  const base = filename.replace(/^.*[/\\]/, '').replace(/\.zip$/i, '');
+  return base.split('-v')[0].split('_v')[0].split('.')[0].trim().toLowerCase() || 'custom_module';
+}
+
 const requiredPackageMap: { [key: string]: { id: string; name: string } } = {
   'module_redis': { id: 'redis', name: 'Redis' },
   'module_cron': { id: 'memcached', name: 'Memcached' },
@@ -83,6 +99,8 @@ export default function AppStoreDashboard() {
       changelogReleaseNotes: 'Release notes',
       aheadOfCatalog: 'Installed build is newer than this catalog entry.',
       installedVsCatalog: (inst: string, cat: string) => `Installed v${inst} · catalog v${cat}`,
+      communitySaved: 'Community catalog list saved.',
+      communitySaveFailed: 'Could not save community AppStore URLs (check server permissions on config/).',
     },
     vi: {
       title: 'Cửa hàng ứng dụng AppStore',
@@ -112,6 +130,8 @@ export default function AppStoreDashboard() {
       changelogReleaseNotes: 'Ghi chú phát hành',
       aheadOfCatalog: 'Bản đã cài mới hơn mục trên kho (có thể từ ZIP hoặc bản dev).',
       installedVsCatalog: (inst: string, cat: string) => `Đã cài v${inst} · trên kho v${cat}`,
+      communitySaved: 'Đã lưu danh sách AppStore cộng đồng.',
+      communitySaveFailed: 'Không lưu được URL (kiểm tra quyền ghi thư mục config/ trên máy chủ).',
     }
   };
 
@@ -126,7 +146,7 @@ export default function AppStoreDashboard() {
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.community_urls) setCommunityUrls(d.community_urls);
+        setCommunityUrls(Array.isArray(d.community_urls) ? d.community_urls : []);
       }
     } catch (err) {
       console.error(err);
@@ -144,10 +164,22 @@ export default function AppStoreDashboard() {
         body: JSON.stringify({ community_urls: urls })
       });
       if (res.ok) {
+        setMsg(tr.communitySaved);
+        await fetchConfig();
         fetchCatalog();
+      } else {
+        let detail = '';
+        try {
+          const errBody = await res.json();
+          detail = formatApiDetail(errBody.detail);
+        } catch {
+          detail = res.statusText;
+        }
+        setMsg(`${tr.communitySaveFailed}${detail ? ` (${detail})` : ''}`);
       }
     } catch (err) {
       console.error(err);
+      setMsg(tr.communitySaveFailed);
     }
   };
 
@@ -174,7 +206,7 @@ export default function AppStoreDashboard() {
       return;
     }
 
-    const pkgId = file.name.split('.')[0].split('-v')[0].split('_v')[0].replace('.zip', '').toLowerCase();
+    const pkgId = pkgIdFromZipName(file.name);
     setActivePkgId(pkgId);
     setBuildLogs([`Uploading and checking ZIP structure for ${file.name}...`]);
     setBuildStatus("running");
@@ -185,11 +217,20 @@ export default function AppStoreDashboard() {
 
     try {
       const token = localStorage.getItem('copanel_token');
-      const res = await fetch('/api/appstore_manager/upload-install', {
+      let res = await fetch('/api/appstore_manager/upload-install', {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData
       });
+      if (res.status === 404) {
+        const fd2 = new FormData();
+        fd2.append('file', file);
+        res = await fetch('/api/appstore_manager/upload_zip', {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          body: fd2
+        });
+      }
       const d = await res.json();
       if (res.ok) {
         setMsg(language === 'vi' ? `✓ Đang cài đặt ${file.name} từ tệp ZIP...` : `✓ Installing ${file.name} from uploaded ZIP...`);
@@ -221,9 +262,10 @@ export default function AppStoreDashboard() {
           }
         }, 1500);
       } else {
-        setMsg(d.detail || (language === 'vi' ? 'Cấu trúc file ZIP không hợp lệ.' : 'Invalid ZIP file structure.'));
+        const errText = formatApiDetail(d.detail) || (language === 'vi' ? 'Cấu trúc file ZIP không hợp lệ.' : 'Invalid ZIP file structure.');
+        setMsg(errText);
         setBuildStatus("failed");
-        setBuildLogs(prev => [...prev, `❌ Error: ${d.detail || 'Extraction/validation failed.'}`]);
+        setBuildLogs(prev => [...prev, `❌ Error: ${errText}`]);
       }
     } catch {
       setMsg(tr.commError);
@@ -255,6 +297,12 @@ export default function AppStoreDashboard() {
     fetchConfig();
     fetchCatalog();
   }, [language]);
+
+  useEffect(() => {
+    if (isConfigOpen) {
+      void fetchConfig();
+    }
+  }, [isConfigOpen]);
 
   const handleInstall = async (pkg: Package) => {
     setInstallingId(pkg.id);

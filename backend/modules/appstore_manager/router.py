@@ -2,9 +2,12 @@
 AppStore Manager Router
 Exposes FastAPI endpoints for AppStore catalog and installation actions.
 """
-from fastapi import APIRouter, HTTPException
-from typing import Dict, Any, List
-from .logic import AppStoreManager
+import secrets
+from typing import Dict, Any
+
+from fastapi import APIRouter, HTTPException, UploadFile, File
+
+from .logic import AppStoreManager, get_copanel_home, derive_pkg_id_from_upload_name
 
 router = APIRouter()
 
@@ -32,6 +35,8 @@ def install_package(req: dict) -> Dict[str, Any]:
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -53,6 +58,8 @@ def uninstall_package(req: dict) -> Dict[str, Any]:
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -74,38 +81,39 @@ def save_appstore_config(req: dict) -> Dict[str, Any]:
         if not res:
             raise HTTPException(status_code=500, detail="Failed to save AppStore configuration.")
         return {"status": "success", "message": "Configuration saved successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-from fastapi import UploadFile, File
-from pathlib import Path
-import shutil
-import secrets
 
 @router.post("/upload-install")
 async def upload_install(file: UploadFile = File(...)) -> Dict[str, Any]:
     """Handles on-demand custom module ZIP installation via file upload."""
     try:
-        current_file_dir = Path(__file__).parent.resolve()
-        project_root = current_file_dir.parent.parent.parent.resolve()
-        
-        tmp_dir = project_root / "tmp"
-        tmp_dir.mkdir(exist_ok=True)
-        
-        filename = file.filename or "custom_module.zip"
-        pkg_id = filename.split(".")[0].split("-v")[0].split("_v")[0].replace(".zip", "").lower()
-        
-        # Safe generated filename to prevent conflicts
+        body = await file.read()
+        if not body:
+            raise HTTPException(status_code=400, detail="Empty file upload")
+
+        pkg_id = derive_pkg_id_from_upload_name(file.filename or "")
+        tmp_dir = get_copanel_home() / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
         zip_path = tmp_dir / f"upload_{pkg_id}_{secrets.token_hex(3)}.zip"
-        with open(zip_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
+        zip_path.write_bytes(body)
+
         res = AppStoreManager.install_local_zip(pkg_id, zip_path)
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res.get("message"))
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Alias: some reverse proxies mishandle paths with hyphens
+@router.post("/upload_zip")
+async def upload_zip_alias(file: UploadFile = File(...)) -> Dict[str, Any]:
+    return await upload_install(file)
 

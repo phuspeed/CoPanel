@@ -14,6 +14,28 @@ CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/conten
 BUILD_TASKS = {}
 
 
+def get_copanel_home() -> Path:
+    """Production: /opt/copanel. Dev: repo root (directory that contains backend/)."""
+    if Path("/opt/copanel").exists():
+        return Path("/opt/copanel")
+    # This file: <root>/backend/modules/appstore_manager/logic.py
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
+def appstore_config_file() -> Path:
+    return get_copanel_home() / "config" / "appstore_config.json"
+
+
+def derive_pkg_id_from_upload_name(filename: str) -> str:
+    """Stable module id from an uploaded zip name (handles path junk and *.v1.0.0 style)."""
+    name = Path(filename or "custom_module.zip").name
+    if name.lower().endswith(".zip"):
+        name = name[:-4]
+    name = name.split("-v")[0].split("_v")[0]
+    name = name.split(".")[0].strip().lower()
+    return name or "custom_module"
+
+
 def normalize_version(v: str) -> str:
     if not v or not isinstance(v, str):
         return "0.0.0"
@@ -69,7 +91,7 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.6",
+    "appstore_manager": "1.0.7",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -86,11 +108,9 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
         except Exception:
             pass
 
-    # 2. Check in all possible locations for installed_packages.json
+    # 2. installed_packages.json under CoPanel config
     possible_installed_files = [
-        Path("/opt/copanel/config/installed_packages.json"),
-        modules_dir.parent / "config" / "installed_packages.json",
-        modules_dir.parent.parent / "config" / "installed_packages.json"
+        get_copanel_home() / "config" / "installed_packages.json",
     ]
     for installed_file in possible_installed_files:
         if installed_file.exists():
@@ -115,26 +135,16 @@ def get_local_version(pkg_id: str, modules_dir: Path) -> str:
 
 def save_local_version(pkg_id: str, version: str):
     ver = normalize_version(version)
-    if Path("/opt/copanel").exists():
-        modules_dir = Path("/opt/copanel/backend/modules")
-    else:
-        current_file_dir = Path(__file__).parent.resolve()
-        modules_dir = current_file_dir.parent.parent.resolve() / "backend" / "modules"
-        
+    home = get_copanel_home()
+    modules_dir = home / "backend" / "modules"
     try:
         vfile = modules_dir / pkg_id / "version.txt"
         vfile.parent.mkdir(parents=True, exist_ok=True)
         vfile.write_text(ver, encoding="utf-8")
     except Exception:
         pass
-        
-    # Save to both possible paths for reliability
-    possible_cfg_dirs = [
-        Path("/opt/copanel/config"),
-        modules_dir.parent / "config",
-        modules_dir.parent.parent / "config"
-    ]
-    for cfg_dir in possible_cfg_dirs:
+
+    for cfg_dir in [home / "config"]:
         try:
             cfg_dir.mkdir(parents=True, exist_ok=True)
             installed_file = cfg_dir / "installed_packages.json"
@@ -172,49 +182,60 @@ DEPENDENCY_PACKAGES = {
 }
 
 
-APPSTORE_CONFIG_FILE = Path("/opt/copanel/config/appstore_config.json") if Path("/opt/copanel").exists() else Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
-
 class AppStoreManager:
     @staticmethod
     def load_config() -> dict:
         """Loads config for AppStore (e.g., custom community catalogs)."""
-        possible_config_files = [
-            Path("/opt/copanel/config/appstore_config.json"),
-            Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
-        ]
-        for cfg_file in possible_config_files:
-            if cfg_file.exists():
+        cfg_path = appstore_config_file()
+        if not cfg_path.exists():
+            legacy = get_copanel_home() / "backend" / "config" / "appstore_config.json"
+            if legacy.exists():
                 try:
-                    with open(cfg_file, "r", encoding="utf-8") as f:
-                        return json.load(f)
+                    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(legacy, cfg_path)
                 except Exception:
                     pass
+        if cfg_path.exists():
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    urls = data.get("community_urls", [])
+                    if not isinstance(urls, list):
+                        urls = []
+                    return {**data, "community_urls": urls}
+            except Exception:
+                pass
         return {"community_urls": []}
 
     @staticmethod
-    def save_config(cfg: dict) -> bool:
-        """Saves config for AppStore to all possible paths."""
-        possible_config_files = [
-            Path("/opt/copanel/config/appstore_config.json"),
-            Path(__file__).parent.parent.parent.resolve() / "config" / "appstore_config.json"
-        ]
-        success = False
-        for cfg_file in possible_config_files:
-            try:
-                cfg_file.parent.mkdir(parents=True, exist_ok=True)
-                with open(cfg_file, "w", encoding="utf-8") as f:
-                    json.dump(cfg, f, indent=4)
-                success = True
-            except Exception:
-                pass
-        return success
+    def save_config(update: dict) -> bool:
+        """Merges into appstore_config.json under CoPanel config dir (single canonical file)."""
+        cfg_path = appstore_config_file()
+        try:
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            current: dict = {}
+            if cfg_path.exists():
+                try:
+                    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        current = raw
+                except Exception:
+                    current = {}
+            merged = {**current, **update}
+            if "community_urls" in merged:
+                u = merged["community_urls"]
+                merged["community_urls"] = list(u) if isinstance(u, list) else []
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(merged, f, indent=4)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def get_catalog() -> list:
         """Fetches available packages from remote GitHub catalog with installed status."""
-        current_file_dir = Path(__file__).parent.resolve()
-        project_root = current_file_dir.parent.parent.parent.resolve()
-        
+        project_root = get_copanel_home()
         if Path("/opt/copanel").exists():
             modules_dir = Path("/opt/copanel/backend/modules")
         else:
@@ -360,9 +381,7 @@ class AppStoreManager:
                     else:
                         BUILD_TASKS[pkg_id]["logs"].append(f"OS is Windows. Skipping auto-installation of Linux package '{dep['id']}'.")
 
-            current_file_dir = Path(__file__).parent.resolve()
-            project_root = current_file_dir.parent.parent.parent.resolve()
-            
+            project_root = get_copanel_home()
             tmp_dir = project_root / "tmp"
             tmp_dir.mkdir(exist_ok=True)
             
@@ -468,9 +487,7 @@ class AppStoreManager:
     @staticmethod
     def uninstall_package(pkg_id: str) -> dict:
         """Removes installed package directories."""
-        current_file_dir = Path(__file__).parent.resolve()
-        project_root = current_file_dir.parent.parent.parent.resolve()
-        
+        project_root = get_copanel_home()
         if Path("/opt/copanel").exists():
             dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
             dst_frontend = Path(f"/opt/copanel/frontend/src/modules/{pkg_id}")
@@ -513,9 +530,7 @@ class AppStoreManager:
             import subprocess
             is_windows = platform.system() == "Windows"
             
-            current_file_dir = Path(__file__).parent.resolve()
-            project_root = current_file_dir.parent.parent.parent.resolve()
-            
+            project_root = get_copanel_home()
             tmp_dir = project_root / "tmp"
             tmp_dir.mkdir(exist_ok=True)
             extracted_dir = tmp_dir / f"extracted_{pkg_id}"
