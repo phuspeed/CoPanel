@@ -27,7 +27,7 @@ const EMPTY: Job = {
   managed: true,
 };
 
-type ScheduleMode = 'every_x_minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
+type ScheduleMode = 'every_x_minutes' | 'hourly' | 'daily' | 'weekly' | 'weekdays' | 'weekends' | 'monthly' | 'custom';
 
 interface BuilderState {
   mode: ScheduleMode;
@@ -69,10 +69,88 @@ function buildScheduleFromBuilder(builder: BuilderState): Pick<Job, 'minute' | '
       return { minute, hour, day: '*', month: '*', weekday: String(clamp(builder.weekday, 0, 6)) };
     case 'monthly':
       return { minute, hour, day: String(clamp(builder.dayOfMonth, 1, 31)), month: '*', weekday: '*' };
+    case 'weekdays':
+      return { minute, hour, day: '*', month: '*', weekday: '1-5' };
+    case 'weekends':
+      return { minute, hour, day: '*', month: '*', weekday: '0,6' };
     case 'custom':
     default:
       return { minute: '*', hour: '*', day: '*', month: '*', weekday: '*' };
   }
+}
+
+function parseSimpleCronPart(value: string, min: number, max: number): Set<number> | null {
+  const raw = (value || '').trim();
+  if (!raw || raw === '*') return null;
+
+  const out = new Set<number>();
+  const segments = raw.split(',');
+  for (const seg0 of segments) {
+    const seg = seg0.trim();
+    if (!seg) continue;
+    if (seg.includes('/')) {
+      const [base, stepStr] = seg.split('/');
+      const step = Number(stepStr);
+      if (!Number.isFinite(step) || step <= 0) return null;
+      let start = min;
+      let end = max;
+      if (base && base !== '*') {
+        if (base.includes('-')) {
+          const [a, b] = base.split('-').map(Number);
+          if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+          start = clamp(a, min, max);
+          end = clamp(b, min, max);
+        } else {
+          const n = Number(base);
+          if (!Number.isFinite(n)) return null;
+          start = clamp(n, min, max);
+        }
+      }
+      for (let i = start; i <= end; i += step) out.add(i);
+      continue;
+    }
+    if (seg.includes('-')) {
+      const [a, b] = seg.split('-').map(Number);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+      for (let i = clamp(a, min, max); i <= clamp(b, min, max); i++) out.add(i);
+      continue;
+    }
+    const n = Number(seg);
+    if (!Number.isFinite(n)) return null;
+    out.add(clamp(n, min, max));
+  }
+  return out.size ? out : null;
+}
+
+function getNextRunTime(job: Pick<Job, 'minute' | 'hour' | 'day' | 'month' | 'weekday'>): Date | null {
+  const minutes = parseSimpleCronPart(job.minute, 0, 59);
+  const hours = parseSimpleCronPart(job.hour, 0, 23);
+  const days = parseSimpleCronPart(job.day, 1, 31);
+  const months = parseSimpleCronPart(job.month, 1, 12);
+  const weekdays = parseSimpleCronPart(job.weekday, 0, 6);
+
+  const now = new Date();
+  const probe = new Date(now.getTime());
+  probe.setSeconds(0, 0);
+  probe.setMinutes(probe.getMinutes() + 1);
+
+  const maxChecks = 60 * 24 * 400;
+  for (let i = 0; i < maxChecks; i++) {
+    const m = probe.getMinutes();
+    const h = probe.getHours();
+    const d = probe.getDate();
+    const mo = probe.getMonth() + 1;
+    const w = probe.getDay();
+    const ok =
+      (!minutes || minutes.has(m)) &&
+      (!hours || hours.has(h)) &&
+      (!days || days.has(d)) &&
+      (!months || months.has(mo)) &&
+      (!weekdays || weekdays.has(w));
+    if (ok) return new Date(probe.getTime());
+    probe.setMinutes(probe.getMinutes() + 1);
+  }
+  return null;
 }
 
 export default function CronManager() {
@@ -140,6 +218,12 @@ export default function CronManager() {
     if (job.month === '*' && job.weekday === '*') {
       return `Monthly on day ${job.day} at ${job.hour.padStart(2, '0')}:${job.minute.padStart(2, '0')}`;
     }
+    if (job.day === '*' && job.month === '*' && job.weekday === '1-5') {
+      return `Every weekday at ${job.hour.padStart(2, '0')}:${job.minute.padStart(2, '0')}`;
+    }
+    if (job.day === '*' && job.month === '*' && job.weekday === '0,6') {
+      return `Weekends only at ${job.hour.padStart(2, '0')}:${job.minute.padStart(2, '0')}`;
+    }
     return 'Custom schedule';
   }
 
@@ -161,6 +245,8 @@ export default function CronManager() {
             { id: 'hourly', label: 'Hourly' },
             { id: 'daily', label: 'Daily' },
             { id: 'weekly', label: 'Weekly' },
+            { id: 'weekdays', label: 'Weekdays' },
+            { id: 'weekends', label: 'Weekends' },
             { id: 'monthly', label: 'Monthly' },
             { id: 'custom', label: 'Custom cron' },
           ] as Array<{ id: ScheduleMode; label: string }>).map((m) => (
@@ -179,7 +265,24 @@ export default function CronManager() {
         </div>
 
         {builder.mode === 'every_x_minutes' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {[5, 10, 15, 30].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setBuilder((prev) => ({ ...prev, intervalMinutes: n }))}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${
+                    builder.intervalMinutes === n
+                      ? 'bg-blue-500/10 border-blue-500 text-blue-600 dark:text-blue-300'
+                      : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  Every {n} min
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <label className="text-xs text-slate-500 flex items-center">Interval (minutes)</label>
             <input
               type="number"
@@ -189,6 +292,7 @@ export default function CronManager() {
               onChange={(e) => setBuilder((prev) => ({ ...prev, intervalMinutes: clamp(Number(e.target.value) || 1, 1, 59) }))}
               className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950/40 px-3 py-2 text-sm font-mono"
             />
+            </div>
           </div>
         )}
 
@@ -206,7 +310,7 @@ export default function CronManager() {
           </div>
         )}
 
-        {(builder.mode === 'daily' || builder.mode === 'weekly' || builder.mode === 'monthly') && (
+        {(builder.mode === 'daily' || builder.mode === 'weekly' || builder.mode === 'weekdays' || builder.mode === 'weekends' || builder.mode === 'monthly') && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <label className="text-xs text-slate-500 flex items-center">Hour</label>
             <input
@@ -277,6 +381,15 @@ export default function CronManager() {
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">{scheduleSummary(draft)}</p>
           <p className="text-[11px] font-mono text-slate-500 mt-1">
             {draft.minute} {draft.hour} {draft.day} {draft.month} {draft.weekday}
+          </p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Next run:{' '}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {(() => {
+                const next = getNextRunTime(draft);
+                return next ? next.toLocaleString() : 'Unavailable for this pattern';
+              })()}
+            </span>
           </p>
         </div>
 
