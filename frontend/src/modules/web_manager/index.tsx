@@ -24,6 +24,8 @@ export default function WebManagerDashboard() {
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
+  const token = localStorage.getItem('copanel_token');
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [domain, setDomain] = useState<string>('');
@@ -54,6 +56,7 @@ export default function WebManagerDashboard() {
   const [dbEngines, setDbEngines] = useState<any[]>([]);
   const [loadingEngines, setLoadingEngines] = useState<boolean>(false);
   const [installingAdminer, setInstallingAdminer] = useState<boolean>(false);
+  const [installingEngineId, setInstallingEngineId] = useState<string | null>(null);
   const [adminerMsg, setAdminerMsg] = useState<{ msg: string; isError: boolean } | null>(null);
 
   const [databases, setDatabases] = useState<any[]>([]);
@@ -249,7 +252,7 @@ export default function WebManagerDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/web_manager/list');
+      const response = await fetch('/api/web_manager/list', { headers: authHeaders });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to fetch Nginx sites');
@@ -266,7 +269,7 @@ export default function WebManagerDashboard() {
   const fetchWebServices = async () => {
     setLoadingServices(true);
     try {
-      const response = await fetch('/api/web_manager/web_services');
+      const response = await fetch('/api/web_manager/web_services', { headers: authHeaders });
       if (response.ok) {
         const d = await response.json();
         if (d.services) setWebServices(d.services);
@@ -281,7 +284,7 @@ export default function WebManagerDashboard() {
   const fetchDbEngines = async () => {
     setLoadingEngines(true);
     try {
-      const res = await fetch('/api/web_manager/db_admin_tools');
+      const res = await fetch('/api/web_manager/db_admin_tools', { headers: authHeaders });
       if (res.ok) {
         const d = await res.json();
         if (d.engines) setDbEngines(d.engines);
@@ -296,7 +299,7 @@ export default function WebManagerDashboard() {
   const fetchDatabases = async () => {
     setLoadingDbs(true);
     try {
-      const response = await fetch('/api/database_manager/list');
+      const response = await fetch('/api/database_manager/list', { headers: authHeaders });
       if (response.ok) {
         const d = await response.json();
         if (d.databases) setDatabases(d.databases);
@@ -311,7 +314,7 @@ export default function WebManagerDashboard() {
   const fetchDbUsers = async () => {
     setLoadingUsers(true);
     try {
-      const response = await fetch('/api/database_manager/users');
+      const response = await fetch('/api/database_manager/users', { headers: authHeaders });
       if (response.ok) {
         const d = await response.json();
         if (d.users) setDbUsers(d.users);
@@ -325,7 +328,7 @@ export default function WebManagerDashboard() {
 
   const fetchPmaCredentials = async () => {
     try {
-      const res = await fetch('/api/web_manager/phpmyadmin');
+      const res = await fetch('/api/web_manager/phpmyadmin', { headers: authHeaders });
       if (res.ok) {
         const d = await res.json();
         setPmaCredentials(d);
@@ -347,7 +350,7 @@ export default function WebManagerDashboard() {
     try {
       const res = await fetch('/api/web_manager/phpmyadmin/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ user: pmaUserEdit, password: pmaPassEdit })
       });
       if (res.ok) {
@@ -366,7 +369,7 @@ export default function WebManagerDashboard() {
 
   const fetchPhpIni = async (version: string) => {
     try {
-      const response = await fetch(`/api/php_manager/php_ini/${version}`);
+      const response = await fetch(`/api/php_manager/php_ini/${version}`, { headers: authHeaders });
       if (response.ok) {
         const d = await response.json();
         if (d.content) setPhpIniContent(d.content);
@@ -393,12 +396,12 @@ export default function WebManagerDashboard() {
   useEffect(() => {
     const fetchPhpOptions = async () => {
       try {
-        const resV = await fetch('/api/php_manager/versions');
+        const resV = await fetch('/api/php_manager/versions', { headers: authHeaders });
         if (resV.ok) {
           const dV = await resV.json();
           if (dV.versions) setAvailablePhpVersions(dV.versions);
         }
-        const resM = await fetch('/api/php_manager/modules');
+        const resM = await fetch('/api/php_manager/modules', { headers: authHeaders });
         if (resM.ok) {
           const dM = await resM.json();
           if (dM.modules) setAvailablePhpModules(dM.modules);
@@ -415,7 +418,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/web_manager/toggle', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ filename: item.filename, active: !item.active }),
       });
       if (!response.ok) {
@@ -433,7 +436,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/web_manager/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ filename: item.filename }),
       });
       if (!response.ok) {
@@ -451,7 +454,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/web_manager/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           domain,
           root: siteType !== 'proxy' ? root : '',
@@ -484,7 +487,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/web_manager/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ filename: viewingSite.filename, content: editedContent }),
       });
       const data = await response.json();
@@ -504,7 +507,8 @@ export default function WebManagerDashboard() {
   const handleServiceAction = async (serviceId: string, action: string) => {
     try {
       const response = await fetch(`/api/web_manager/web_services/${serviceId}/${action}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: authHeaders
       });
       if (response.ok) {
         fetchWebServices();
@@ -523,7 +527,7 @@ export default function WebManagerDashboard() {
     try {
       const res = await fetch('/api/web_manager/web_services/install_stack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ stack })
       });
       const d = await res.json();
@@ -544,7 +548,7 @@ export default function WebManagerDashboard() {
     setInstallingAdminer(true);
     setAdminerMsg(null);
     try {
-      const res = await fetch('/api/web_manager/db_admin_tools/adminer/install', { method: 'POST' });
+      const res = await fetch('/api/web_manager/db_admin_tools/adminer/install', { method: 'POST', headers: authHeaders });
       const d = await res.json();
       if (res.ok) {
         setAdminerMsg({ msg: d.message || 'Adminer installed.', isError: false });
@@ -559,6 +563,25 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const handleInstallEngineTool = async (engineId: string) => {
+    setInstallingEngineId(engineId);
+    setAdminerMsg(null);
+    try {
+      const res = await fetch(`/api/web_manager/db_admin_tools/${engineId}/install`, { method: 'POST', headers: authHeaders });
+      const d = await res.json();
+      if (res.ok) {
+        setAdminerMsg({ msg: d.message || 'Installation completed.', isError: false });
+        fetchDbEngines();
+      } else {
+        setAdminerMsg({ msg: d.detail || 'Install failed.', isError: true });
+      }
+    } catch {
+      setAdminerMsg({ msg: 'Network error.', isError: true });
+    } finally {
+      setInstallingEngineId(null);
+    }
+  };
+
 
   const handleCreateDatabase = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -567,7 +590,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/database_manager/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ name: newDbName })
       });
       const d = await response.json();
@@ -586,7 +609,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/database_manager/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ name: dbname })
       });
       if (response.ok) {
@@ -604,7 +627,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/database_manager/users/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           user: newDbUser,
           host: 'localhost',
@@ -630,7 +653,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/database_manager/users/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ user: username, host })
       });
       if (response.ok) {
@@ -646,7 +669,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch('/api/php_manager/install', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ version: newPhpVersionToInstall })
       });
       const data = await response.json();
@@ -668,7 +691,7 @@ export default function WebManagerDashboard() {
     try {
       const response = await fetch(`/api/php_manager/php_ini/${phpManagerVersion}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ content: phpIniContent })
       });
       const d = await response.json();
@@ -711,7 +734,7 @@ export default function WebManagerDashboard() {
             <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.1
+              v1.0.3
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -1100,7 +1123,7 @@ export default function WebManagerDashboard() {
                       <div className="border-t pt-3 dark:border-slate-800/40 flex flex-col gap-2">
                         {engine.admin_installed ? (
                           <button
-                            onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}${engine.admin_url}`, '_blank')}
+                            onClick={() => window.open(`${window.location.origin}${engine.admin_url}`, '_blank')}
                             className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white transition shadow-sm ${
                               engine.id === 'mysql' ? 'bg-blue-600 hover:bg-blue-500'
                               : engine.id === 'postgresql' ? 'bg-sky-600 hover:bg-sky-500'
@@ -1110,19 +1133,23 @@ export default function WebManagerDashboard() {
                             <Icons.ExternalLink className="w-3.5 h-3.5" />
                             {language === 'vi' ? `Mở ${engine.admin_name}` : `Open ${engine.admin_name}`}
                           </button>
-                        ) : engine.id === 'adminer' ? (
-                          <button
-                            onClick={handleInstallAdminer}
-                            disabled={installingAdminer}
-                            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition shadow-sm"
-                          >
-                            {installingAdminer ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
-                            {installingAdminer ? (language === 'vi' ? 'Đang cài...' : 'Installing...') : (language === 'vi' ? 'Cài Adminer' : 'Install Adminer')}
-                          </button>
                         ) : (
-                          <div className={`text-[11px] text-center py-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-                            {language === 'vi' ? `${engine.name} chưa được cài đặt` : `${engine.name} not installed`}
-                          </div>
+                          <button
+                            onClick={engine.id === 'adminer' ? handleInstallAdminer : () => handleInstallEngineTool(engine.id)}
+                            disabled={installingAdminer || installingEngineId !== null}
+                            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-bold text-xs text-white disabled:opacity-50 transition shadow-sm ${
+                              engine.id === 'mysql' ? 'bg-blue-600 hover:bg-blue-500' :
+                              engine.id === 'postgresql' ? 'bg-sky-600 hover:bg-sky-500' :
+                              'bg-emerald-600 hover:bg-emerald-500'
+                            }`}
+                          >
+                            {(installingAdminer || installingEngineId === engine.id) ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                            {(installingAdminer || installingEngineId === engine.id)
+                              ? (language === 'vi' ? 'Đang cài...' : 'Installing...')
+                              : (language === 'vi'
+                                ? `Cài ${engine.admin_name || engine.name}`
+                                : `Install ${engine.admin_name || engine.name}`)}
+                          </button>
                         )}
                         {/* phpMyAdmin credentials for MySQL */}
                         {engine.id === 'mysql' && engine.admin_installed && (

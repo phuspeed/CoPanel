@@ -45,6 +45,25 @@ def parse_nginx_config(content: str) -> Dict[str, str]:
 def sanitize_filename(value: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '', value)
 
+
+def _run_with_optional_sudo(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
+    """Run command directly, then fallback to non-interactive sudo on Linux."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    except Exception:
+        pass
+    if IS_WINDOWS:
+        raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="Command failed on Windows mode.")
+    return subprocess.run(["sudo", "-n"] + cmd, capture_output=True, text=True, timeout=timeout, check=True)
+
+
+def _pkg_manager() -> Optional[str]:
+    if shutil.which("apt-get"):
+        return "apt-get"
+    if shutil.which("yum"):
+        return "yum"
+    return None
+
 # Schemas
 class CreateSiteRequest(BaseModel):
     filename: Optional[str] = None
@@ -543,6 +562,9 @@ async def get_db_admin_tools() -> Dict[str, Any]:
     if mysql_installed and not IS_WINDOWS:
         mysql_version = get_db_version(["mysql", "--version"])
     pma_installed = os.path.exists("/usr/share/phpmyadmin") or os.path.exists("/var/www/html/phpmyadmin")
+    pma_url = "/phpmyadmin/"
+    if os.path.exists("/var/www/html/phpmyadmin/index.php"):
+        pma_url = "/phpmyadmin/index.php"
     engines.append({
         "id": "mysql",
         "name": "MySQL / MariaDB",
@@ -551,7 +573,7 @@ async def get_db_admin_tools() -> Dict[str, Any]:
         "status": "running" if (mysql_installed and check_service_running("mysql")) or (mysql_installed and check_service_running("mariadb")) else ("stopped" if mysql_installed else "not_installed"),
         "admin_tool": "phpmyadmin",
         "admin_name": "phpMyAdmin",
-        "admin_url": "/phpmyadmin",
+        "admin_url": pma_url,
         "admin_installed": pma_installed,
     })
 
@@ -576,6 +598,11 @@ async def get_db_admin_tools() -> Dict[str, Any]:
     # Adminer — universal lightweight fallback
     adminer_paths = ["/usr/share/adminer/adminer.php", "/var/www/html/adminer.php"]
     adminer_installed = any(os.path.exists(p) for p in adminer_paths)
+    adminer_url = "/adminer"
+    if os.path.exists("/usr/share/adminer/adminer.php"):
+        adminer_url = "/adminer/adminer.php"
+    elif os.path.exists("/var/www/html/adminer.php"):
+        adminer_url = "/adminer.php"
     engines.append({
         "id": "adminer",
         "name": "Adminer",
@@ -584,11 +611,52 @@ async def get_db_admin_tools() -> Dict[str, Any]:
         "status": "available",
         "admin_tool": "adminer",
         "admin_name": "Adminer (Universal)",
-        "admin_url": "/adminer",
+        "admin_url": adminer_url,
         "admin_installed": adminer_installed,
     })
 
     return {"status": "success", "engines": engines}
+
+
+@router.post("/db_admin_tools/{tool_id}/install")
+async def install_db_admin_tool(tool_id: str) -> Dict[str, Any]:
+    """Install missing DB engine/admin tool packages."""
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"{tool_id} install simulated (Windows mock)."}
+
+    pkg = _pkg_manager()
+    if not pkg:
+        raise HTTPException(status_code=400, detail="No supported package manager found (apt-get/yum).")
+
+    try:
+        if tool_id == "mysql":
+            if pkg == "apt-get":
+                _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                _run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
+            else:
+                _run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
+                # phpMyAdmin package name differs by distro; try best-effort
+                try:
+                    _run_with_optional_sudo([pkg, "install", "-y", "phpMyAdmin"])
+                except Exception:
+                    _run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
+            return {"status": "success", "message": "MySQL/MariaDB and phpMyAdmin installation completed."}
+
+        if tool_id == "postgresql":
+            if pkg == "apt-get":
+                _run_with_optional_sudo([pkg, "install", "-y", "postgresql"])
+                _run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
+            else:
+                _run_with_optional_sudo([pkg, "install", "-y", "postgresql-server"])
+                _run_with_optional_sudo([pkg, "install", "-y", "pgadmin4"])
+            return {"status": "success", "message": "PostgreSQL and pgAdmin installation completed."}
+
+        if tool_id == "adminer":
+            return await install_adminer()
+
+        raise HTTPException(status_code=404, detail=f"Unsupported db admin tool: {tool_id}")
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=(e.stderr or e.stdout or "Installation failed.").strip())
 
 
 @router.post("/db_admin_tools/adminer/install")
