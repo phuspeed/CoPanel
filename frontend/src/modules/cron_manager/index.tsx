@@ -236,6 +236,9 @@ export default function CronManager() {
           Schedule recurring tasks. Entries created here are tagged so we never touch crontab lines you
           authored manually.
         </p>
+        <p className="text-[11px] text-slate-400 mt-1 font-mono">
+          Managed jobs store: /opt/copanel/config/cron_manager.db
+        </p>
       </header>
 
       <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 space-y-4">

@@ -1,27 +1,57 @@
 """
 Cron Manager logic.
 
-Reads/writes the system crontab via the ``crontab`` command. Each entry is
-identified by a stable comment marker (``# copanel-id=<uuid>``) so we can
-edit/remove a single line without touching ones the user added by hand.
+Persists CoPanel-managed jobs in SQLite under ``/opt/copanel/config`` and
+syncs them to system crontab on Linux. This gives us a single source of truth
+for settings while still executing through native cron.
 """
 from __future__ import annotations
 
 import os
-import re
+import sqlite3
 import shutil
 import subprocess
 import uuid
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from datetime import datetime
+from typing import Any, Dict, List
 
 IS_WINDOWS = os.name == "nt"
 
-# Track CoPanel-managed jobs by tagging the line with this comment marker.
 MARKER = "# copanel-id="
+BLOCK_START = "# BEGIN COPANEL CRON"
+BLOCK_END = "# END COPANEL CRON"
+DB_PATH = Path("./test_nginx/cron_manager.db") if IS_WINDOWS else Path("/opt/copanel/config/cron_manager.db")
 
 
 def _has_crontab() -> bool:
     return not IS_WINDOWS and shutil.which("crontab") is not None
+
+
+def _db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db() -> None:
+    with _db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cron_jobs (
+                id TEXT PRIMARY KEY,
+                minute TEXT NOT NULL,
+                hour TEXT NOT NULL,
+                day TEXT NOT NULL,
+                month TEXT NOT NULL,
+                weekday TEXT NOT NULL,
+                command TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 def _read_crontab() -> str:
@@ -41,62 +71,136 @@ def _write_crontab(content: str) -> None:
         raise RuntimeError(proc.stderr.strip() or "Failed to write crontab")
 
 
-def _parse_lines(raw: str) -> List[Dict[str, Any]]:
+def _parse_manual_lines(raw: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
+    in_copanel_block = False
     for line in raw.splitlines():
         line = line.rstrip("\n")
-        if not line or line.startswith("#") and MARKER not in line:
+        if line.strip() == BLOCK_START:
+            in_copanel_block = True
             continue
-        marker_match = re.search(r"copanel-id=([a-f0-9-]+)", line)
-        cid = marker_match.group(1) if marker_match else None
-        body = re.sub(r"\s*" + re.escape(MARKER) + r"[a-f0-9-]+\s*$", "", line)
-        parts = body.split(maxsplit=5)
+        if line.strip() == BLOCK_END:
+            in_copanel_block = False
+            continue
+        if in_copanel_block:
+            continue
+        if not line or line.startswith("#"):
+            continue
+        if MARKER in line:
+            # Ignore legacy unmanaged parsing of tagged lines; managed lines come from DB.
+            continue
+        parts = line.split(maxsplit=5)
         if len(parts) < 6:
             continue
         out.append({
-            "id": cid,
+            "id": None,
             "minute": parts[0],
             "hour": parts[1],
             "day": parts[2],
             "month": parts[3],
             "weekday": parts[4],
             "command": parts[5],
-            "managed": cid is not None,
+            "managed": False,
         })
     return out
 
 
+def _cron_line(job: Dict[str, Any]) -> str:
+    return (
+        f"{job['minute']} {job['hour']} {job['day']} {job['month']} {job['weekday']} "
+        f"{job['command']} {MARKER}{job['id']}"
+    )
+
+
+def _sync_managed_crontab() -> None:
+    if not _has_crontab():
+        return
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, minute, hour, day, month, weekday, command FROM cron_jobs ORDER BY created_at DESC"
+        ).fetchall()
+    managed_lines = [_cron_line(dict(r)) for r in rows]
+
+    existing = _read_crontab().splitlines()
+    keep: List[str] = []
+    in_copanel_block = False
+    for line in existing:
+        if line.strip() == BLOCK_START:
+            in_copanel_block = True
+            continue
+        if line.strip() == BLOCK_END:
+            in_copanel_block = False
+            continue
+        if not in_copanel_block:
+            keep.append(line)
+
+    if managed_lines:
+        keep.extend([BLOCK_START, *managed_lines, BLOCK_END])
+    content = "\n".join(keep).rstrip() + ("\n" if keep else "")
+    _write_crontab(content)
+
+
 def list_jobs() -> List[Dict[str, Any]]:
-    return _parse_lines(_read_crontab())
+    _init_db()
+    with _db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, minute, hour, day, month, weekday, command
+            FROM cron_jobs
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+    managed = [{**dict(r), "managed": True} for r in rows]
+    manual = _parse_manual_lines(_read_crontab())
+    return managed + manual
 
 
 def add_job(schedule: Dict[str, str], command: str) -> Dict[str, Any]:
+    _init_db()
     if not command or not command.strip():
         raise ValueError("Command is required.")
     cid = str(uuid.uuid4())
-    entry = (
-        f"{schedule.get('minute', '*')} "
-        f"{schedule.get('hour', '*')} "
-        f"{schedule.get('day', '*')} "
-        f"{schedule.get('month', '*')} "
-        f"{schedule.get('weekday', '*')} "
-        f"{command.strip()} {MARKER}{cid}"
-    )
-    raw = _read_crontab()
-    raw = (raw.rstrip() + "\n" + entry + "\n") if raw.strip() else (entry + "\n")
-    _write_crontab(raw)
-    return {"id": cid, **schedule, "command": command, "managed": True}
+    now = datetime.utcnow().isoformat()
+    job = {
+        "id": cid,
+        "minute": schedule.get("minute", "*"),
+        "hour": schedule.get("hour", "*"),
+        "day": schedule.get("day", "*"),
+        "month": schedule.get("month", "*"),
+        "weekday": schedule.get("weekday", "*"),
+        "command": command.strip(),
+    }
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT INTO cron_jobs (id, minute, hour, day, month, weekday, command, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job["id"],
+                job["minute"],
+                job["hour"],
+                job["day"],
+                job["month"],
+                job["weekday"],
+                job["command"],
+                now,
+                now,
+            ),
+        )
+    _sync_managed_crontab()
+    return {**job, "managed": True}
 
 
 def remove_job(cid: str) -> bool:
-    raw = _read_crontab()
-    keep: List[str] = []
+    _init_db()
     removed = False
-    for line in raw.splitlines():
-        if MARKER + cid in line:
-            removed = True
-            continue
-        keep.append(line)
+    with _db() as conn:
+        cur = conn.execute("DELETE FROM cron_jobs WHERE id = ?", (cid,))
+        removed = cur.rowcount > 0
     if removed:
-        _write_crontab("\n".join(keep) + ("\n" if keep else ""))
+        _sync_managed_crontab()
     return removed
+
+
+_init_db()
