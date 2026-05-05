@@ -22,6 +22,15 @@ export function createStore<T extends object>(initial: T): Store<T> {
     getState: () => state,
     setState: (updater) => {
       const patch = typeof updater === 'function' ? (updater as (s: T) => Partial<T>)(state) : updater;
+      if (!patch || Object.keys(patch).length === 0) return;
+      let changed = false;
+      for (const key of Object.keys(patch) as Array<keyof T>) {
+        if (state[key] !== patch[key]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return;
       state = { ...state, ...patch };
       listeners.forEach((l) => l());
     },
@@ -36,6 +45,9 @@ export function useStore<T extends object, R>(store: Store<T>, selector: (s: T) 
   // Safer than useSyncExternalStore for this simple custom store in production
   // bundles: we keep one subscribed state snapshot and derive from it.
   const [state, setState] = useState<T>(() => store.getState());
-  useEffect(() => store.subscribe(() => setState(store.getState())), [store]);
+  useEffect(() => {
+    const unsub = store.subscribe(() => setState(store.getState()));
+    return unsub;
+  }, [store]);
   return selector(state);
 }

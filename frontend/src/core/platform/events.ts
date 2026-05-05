@@ -22,6 +22,10 @@ class EventHub {
     this.ensureConnected();
     return () => {
       set!.delete(handler);
+      if (set!.size === 0) {
+        this.handlers.delete(topic);
+      }
+      this.teardownIfIdle();
     };
   }
 
@@ -73,6 +77,18 @@ class EventHub {
       this.retryTimer = null;
       this.ensureConnected();
     }, this.retryDelay);
+  }
+
+  private teardownIfIdle() {
+    if (this.handlers.size > 0) return;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.source) {
+      this.source.close();
+      this.source = null;
+    }
   }
 }
 
