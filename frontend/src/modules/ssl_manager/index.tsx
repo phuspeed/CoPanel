@@ -37,6 +37,12 @@ export default function SSLManagerDashboard() {
   const [inlineEmail, setInlineEmail] = useState('');
 
   const token = localStorage.getItem('copanel_token');
+  const authHeaders = (json = false): HeadersInit => {
+    const headers: Record<string, string> = {};
+    if (json) headers['Content-Type'] = 'application/json';
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  };
 
   const t = {
     en: {
@@ -111,7 +117,7 @@ export default function SSLManagerDashboard() {
     setLoading(true);
     try {
       const res = await fetch('/api/ssl_manager/certificates', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: authHeaders()
       });
       if (res.ok) {
         const d = await res.json();
@@ -134,7 +140,7 @@ export default function SSLManagerDashboard() {
     try {
       const res = await fetch('/api/ssl_manager/renew', {
         method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: authHeaders()
       });
       const d = await res.json();
       if (res.ok) {
@@ -156,10 +162,7 @@ export default function SSLManagerDashboard() {
     try {
       const res = await fetch('/api/ssl_manager/issue', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders(true),
         body: JSON.stringify({ domain: certbotDomain, email: certbotEmail })
       });
       const d = await res.json();
@@ -183,10 +186,7 @@ export default function SSLManagerDashboard() {
     try {
       const res = await fetch('/api/ssl_manager/issue', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders(true),
         body: JSON.stringify({ domain: inlineDomain, email: inlineEmail })
       });
       const d = await res.json();
@@ -208,10 +208,7 @@ export default function SSLManagerDashboard() {
     try {
       const res = await fetch('/api/ssl_manager/custom', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders(true),
         body: JSON.stringify({
           domain: customDomain,
           private_key: customPrivateKey,

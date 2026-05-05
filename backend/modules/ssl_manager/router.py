@@ -33,6 +33,12 @@ def _expiry_to_days_left(expiry: str) -> int:
             continue
     return -1
 
+
+def _unwrap_result(res: Dict[str, Any]) -> Dict[str, Any]:
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message", "Operation failed."))
+    return res
+
 class IssueCertbotRequest(BaseModel):
     domain: str
     email: str
@@ -55,10 +61,7 @@ def get_certificates() -> Dict[str, Any]:
 def issue_certbot(req: IssueCertbotRequest) -> Dict[str, Any]:
     """Obtain a free Let's Encrypt certificate via Certbot."""
     try:
-        res = SSLManager.issue_certbot(req.domain, req.email)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(SSLManager.issue_certbot(req.domain, req.email))
     except HTTPException:
         raise
     except Exception as e:
@@ -68,10 +71,7 @@ def issue_certbot(req: IssueCertbotRequest) -> Dict[str, Any]:
 def install_custom_ssl(req: CustomSSLRequest) -> Dict[str, Any]:
     """Upload or install a user's pasted SSL certificate and private key."""
     try:
-        res = SSLManager.install_custom_ssl(req.domain, req.private_key, req.certificate)
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(SSLManager.install_custom_ssl(req.domain, req.private_key, req.certificate))
     except HTTPException:
         raise
     except Exception as e:
@@ -81,10 +81,7 @@ def install_custom_ssl(req: CustomSSLRequest) -> Dict[str, Any]:
 def renew_certificates() -> Dict[str, Any]:
     """Renew all available Let's Encrypt certificates."""
     try:
-        res = SSLManager.renew_certificates()
-        if res.get("status") == "error":
-            raise HTTPException(status_code=400, detail=res["message"])
-        return res
+        return _unwrap_result(SSLManager.renew_certificates())
     except HTTPException:
         raise
     except Exception as e:
