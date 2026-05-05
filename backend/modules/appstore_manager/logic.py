@@ -121,7 +121,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.10",
+    "appstore_manager": "1.0.11",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -210,6 +210,69 @@ DEPENDENCY_PACKAGES = {
     "web_manager": {"id": "nginx", "apt": "nginx", "yum": "nginx"},
     "database_manager": {"id": "mariadb", "apt": "mariadb-server", "yum": "mariadb-server"},
 }
+
+
+def _detect_pkg_manager() -> str:
+    if shutil.which("apt-get"):
+        return "apt"
+    if shutil.which("yum"):
+        return "yum"
+    return ""
+
+
+def _is_pkg_installed(pkg_manager: str, pkg_name: str) -> bool:
+    try:
+        if pkg_manager == "apt" and shutil.which("dpkg-query"):
+            res = subprocess.run(
+                ["dpkg-query", "-W", "-f=${Status}", pkg_name],
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            return "install ok installed" in (res.stdout or "")
+        if pkg_manager == "yum" and shutil.which("rpm"):
+            res = subprocess.run(["rpm", "-q", pkg_name], shell=False, capture_output=True, text=True)
+            return res.returncode == 0
+    except Exception:
+        return False
+    return False
+
+
+def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
+    dep_id = dep.get("id", "unknown")
+    if is_windows:
+        return {"id": dep_id, "ok": True, "message": f"Skipping Linux system package '{dep_id}' on Windows."}
+
+    pkg_manager = _detect_pkg_manager()
+    if not pkg_manager:
+        return {"id": dep_id, "ok": False, "message": "No supported package manager found (apt/yum)."}
+
+    target_pkg = dep.get("apt") if pkg_manager == "apt" else dep.get("yum")
+    if not target_pkg:
+        return {"id": dep_id, "ok": False, "message": f"No package mapping for {pkg_manager}."}
+
+    if _is_pkg_installed(pkg_manager, target_pkg):
+        return {"id": dep_id, "ok": True, "message": f"Dependency '{dep_id}' already installed ({target_pkg})."}
+
+    if pkg_manager == "apt":
+        cmd = ["sudo", "-n", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", target_pkg]
+        # sudo with env var inline needs shell; fallback to split update below if shellless fails.
+        res = subprocess.run(
+            "sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y " + target_pkg,
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        res = subprocess.run(["sudo", "-n", "yum", "install", "-y", target_pkg], shell=False, capture_output=True, text=True)
+
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or "").strip()
+        return {"id": dep_id, "ok": False, "message": detail or f"Failed to install {target_pkg}."}
+
+    if _is_pkg_installed(pkg_manager, target_pkg):
+        return {"id": dep_id, "ok": True, "message": f"Installed dependency '{dep_id}' ({target_pkg})."}
+    return {"id": dep_id, "ok": False, "message": f"Install command ran but package '{target_pkg}' is still missing."}
 
 
 class AppStoreManager:
@@ -374,7 +437,8 @@ class AppStoreManager:
         def run_install():
             is_windows = platform.system() == "Windows"
             
-            # Auto-install Linux package dependencies in parallel
+            # Auto-install Linux package dependencies in parallel, then enforce
+            # completion before finalizing module install.
             deps = []
             if isinstance(system_packages, list) and system_packages:
                 for sp in system_packages:
@@ -386,24 +450,21 @@ class AppStoreManager:
                 if dep:
                     deps.append(dep)
 
-            for dep in deps:
-                if not shutil.which(dep.get("apt")) and not shutil.which(dep.get("yum", dep.get("id"))):
-                    BUILD_TASKS[pkg_id]["logs"].append(f"Package system dependency '{dep['id']}' not found. Installing in background...")
-                    if not is_windows:
-                        if shutil.which("apt-get"):
-                            sys_cmd = f"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {dep['apt']}"
-                        elif shutil.which("yum"):
-                            sys_cmd = f"sudo yum install -y {dep['yum']}"
-                        else:
-                            sys_cmd = None
-                        if sys_cmd:
-                            try:
-                                subprocess.Popen(sys_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                BUILD_TASKS[pkg_id]["logs"].append(f"Successfully triggered installation for '{dep['id']}' via OS package manager.")
-                            except Exception as e:
-                                BUILD_TASKS[pkg_id]["logs"].append(f"Warning: Could not auto-install '{dep['id']}': {str(e)}")
-                    else:
-                        BUILD_TASKS[pkg_id]["logs"].append(f"OS is Windows. Skipping auto-installation of Linux package '{dep['id']}'.")
+            dep_results = []
+            dep_threads = []
+            dep_lock = threading.Lock()
+
+            def _dep_worker(dep_item: dict):
+                result = _install_system_dependency(dep_item, is_windows)
+                with dep_lock:
+                    dep_results.append(result)
+
+            if deps:
+                BUILD_TASKS[pkg_id]["logs"].append(f"Installing {len(deps)} system dependencies in parallel...")
+                for dep in deps:
+                    t = threading.Thread(target=_dep_worker, args=(dep,), daemon=True)
+                    dep_threads.append(t)
+                    t.start()
 
             project_root = get_copanel_home()
             tmp_dir = project_root / "tmp"
@@ -476,6 +537,18 @@ class AppStoreManager:
                             
                 return_code = process.wait()
                 if return_code == 0:
+                    # Ensure dependency installs finished and succeeded before marking success.
+                    for t in dep_threads:
+                        t.join()
+                    dep_failures = [r for r in dep_results if not r.get("ok")]
+                    for r in dep_results:
+                        BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "Dependency step completed."))
+                    if dep_failures:
+                        BUILD_TASKS[pkg_id]["status"] = "failed"
+                        BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
+                        BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
+                        return
+
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
                     try:
