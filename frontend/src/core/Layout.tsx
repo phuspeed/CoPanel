@@ -1,11 +1,20 @@
 /**
- * Main Layout component with dynamic sidebar and access control
+ * Main Layout component with dynamic sidebar and access control.
+ *
+ * Phase 2 (Synology-style shell): adds the App Launcher overlay, Task
+ * Center drawer, Notification Center drawer, and a global ToastLayer fed
+ * by the platform event hub.
  */
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { moduleRegistry } from './registry';
 import * as Icons from 'lucide-react';
 import { cn } from '../lib/utils';
+import AppLauncher from './shell/AppLauncher';
+import NotificationCenter from './shell/NotificationCenter';
+import TaskCenter from './shell/TaskCenter';
+import ToastLayer from './shell/ToastLayer';
+import { jobsApi, notificationsApi, useInbox, useJobs } from './platform';
 
 interface IconProps {
   className?: string;
@@ -54,6 +63,13 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const [oldPwdInput, setOldPwdInput] = useState('');
   const [newPwdInput, setNewPwdInput] = useState('');
   const [pwdMsg, setPwdMsg] = useState('');
+
+  // Shell overlays (App Launcher, Task Center, Notification Center)
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const { running } = useJobs();
+  const { unread } = useInbox();
 
   const isDark = theme === 'dark';
 
@@ -164,6 +180,30 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       setPwdMsg('Network error.');
     }
   };
+
+  // Initial fetch of platform state (jobs, notifications) so badges are
+  // populated on first paint; SSE keeps them up to date afterwards.
+  useEffect(() => {
+    jobsApi.refresh().catch(() => {});
+    notificationsApi.refresh().catch(() => {});
+  }, []);
+
+  // Global keyboard shortcut: Cmd/Ctrl+K opens the App Launcher
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setLauncherOpen((v) => !v);
+      }
+      if (e.key === 'Escape') {
+        setLauncherOpen(false);
+        setTasksOpen(false);
+        setNotificationsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const fetchInstalledPackages = () => {
@@ -360,8 +400,30 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex flex-col text-right">
+          <div className="flex items-center gap-2 md:gap-3">
+            <ShellIconButton
+              isDark={isDark}
+              icon={<Icons.LayoutGrid className="w-4 h-4" />}
+              title="App Launcher (Ctrl+K)"
+              onClick={() => setLauncherOpen(true)}
+            />
+            <ShellIconButton
+              isDark={isDark}
+              icon={<Icons.Activity className="w-4 h-4" />}
+              title="Task Center"
+              onClick={() => setTasksOpen(true)}
+              badge={running > 0 ? running : undefined}
+              badgeTone="blue"
+            />
+            <ShellIconButton
+              isDark={isDark}
+              icon={<Icons.Bell className="w-4 h-4" />}
+              title="Notifications"
+              onClick={() => setNotificationsOpen(true)}
+              badge={unread > 0 ? unread : undefined}
+              badgeTone="red"
+            />
+            <div className="flex flex-col text-right pl-1">
               <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
                 {user?.username || 'Guest'}
               </span>
@@ -516,6 +578,44 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
           </Link>
         </div>
       </div>
+
+      <AppLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
+      <TaskCenter open={tasksOpen} onClose={() => setTasksOpen(false)} />
+      <NotificationCenter open={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+      <ToastLayer />
     </div>
+  );
+}
+
+interface ShellIconButtonProps {
+  icon: React.ReactNode;
+  onClick: () => void;
+  title?: string;
+  isDark: boolean;
+  badge?: number;
+  badgeTone?: 'blue' | 'red' | 'amber';
+}
+
+function ShellIconButton({ icon, onClick, title, isDark, badge, badgeTone = 'blue' }: ShellIconButtonProps) {
+  const tone = badgeTone === 'red' ? 'bg-red-500' : badgeTone === 'amber' ? 'bg-amber-500' : 'bg-blue-500';
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`relative p-2 rounded-xl border transition duration-150 ${
+        isDark
+          ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'
+      }`}
+    >
+      {icon}
+      {badge !== undefined && badge > 0 && (
+        <span
+          className={`absolute -top-1 -right-1 ${tone} text-white text-[9px] font-bold rounded-full min-w-[16px] h-[16px] px-1 flex items-center justify-center`}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
   );
 }

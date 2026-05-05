@@ -6,6 +6,12 @@
 
 A lightweight, high-performance Linux VPS management panel with a **pluggable architecture**. Add new features just by dropping a module folder—no core code modifications needed!
 
+## AI Agent Quick Navigation
+
+- Start here first: `AGENT_START_HERE.md`
+- Backend logic map: `backend/ARCHITECTURE_AI.md`
+- Frontend logic map: `frontend/ARCHITECTURE_AI.md`
+
 ## 🎯 Core Philosophy
 
 **Pluggable Architecture**: Automatically detect and register new features (Backend APIs + Frontend UI) just by adding a folder into a specific directory.

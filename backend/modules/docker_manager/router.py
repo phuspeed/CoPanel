@@ -2,7 +2,11 @@
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from core.audit import record_audit
+from core.auth import optional_user
+from core.jobs import jobs as job_manager
 
 from .compose_manager import ComposeManager
 from .logic import DockerManagerError, DockerService, should_allow_mock
@@ -371,3 +375,46 @@ async def update_stack_compose(stack_id: str, req: StackComposeUpdateRequest) ->
         return {"status": "success", "data": compose_manager.update_compose_content(stack_id, req.compose_content)}
     except Exception as exc:
         _raise_http(exc)
+
+
+@router.post("/compose/deploy")
+async def compose_deploy_job(req: ComposeUpRequest, user: Optional[Dict[str, Any]] = Depends(optional_user)) -> Dict[str, Any]:
+    """Run ``compose pull -> up -d`` as a background job.
+
+    The job streams progress to the Task Center; the route returns
+    immediately with the job id. Useful for stacks where build/pull can
+    take several minutes.
+    """
+
+    async def _handler(job, path: str):
+        job.update(progress=5, message=f"Pulling images for {path}")
+        pull = compose_manager.pull(path)
+        job.log(pull.get("output", "") or pull.get("error", ""))
+        if pull.get("status") not in ("success", None):
+            raise RuntimeError(pull.get("error") or "compose pull failed")
+        job.update(progress=55, message="Bringing stack up")
+        result = compose_manager.up(path, detach=True)
+        job.log(result.get("output", "") or result.get("error", ""))
+        if result.get("status") != "success":
+            raise RuntimeError(result.get("error") or "compose up failed")
+        job.update(progress=100, message="Stack deployed")
+        return {"path": path, "output": result.get("output")}
+
+    job = job_manager.submit(
+        kind="docker_manager.compose_deploy",
+        title=f"Compose deploy {req.path}",
+        module="docker_manager",
+        actor=(user or {}).get("username"),
+        payload={"path": req.path},
+        handler=_handler,
+        args=(req.path,),
+    )
+    record_audit(
+        "docker.compose_deploy",
+        module="docker_manager",
+        target=req.path,
+        actor=(user or {}).get("username"),
+        actor_id=(user or {}).get("id"),
+        meta={"job_id": job.id},
+    )
+    return {"status": "success", "job_id": job.id}
