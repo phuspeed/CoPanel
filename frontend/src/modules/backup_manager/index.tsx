@@ -123,6 +123,7 @@ export default function BackupManagerDashboard() {
   const [oauthStatus, setOauthStatus] = useState('');
   const [oauthStatusList, setOauthStatusList] = useState<OAuthStatusItem[]>([]);
   const oauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const oauthPendingRemoteRef = useRef('');
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -260,7 +261,7 @@ export default function BackupManagerDashboard() {
   }, []);
 
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = async (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.type !== 'copanel_google_oauth') return;
       if (data.ok && data.remote_name) {
@@ -272,7 +273,25 @@ export default function BackupManagerDashboard() {
         fetchOAuthStatus(data.remote_name);
         showMsg(`Google Drive connected for remote ${data.remote_name}`);
       } else {
-        const detail = getOAuthErrorMessage(data.error || '', language || 'en');
+        const rawError = String(data.error || '');
+        const pendingRemote = oauthPendingRemoteRef.current || oauthForm.remote_name || '';
+        const stateError = /invalid or expired oauth state|missing oauth state/i.test(rawError);
+
+        if (stateError && pendingRemote) {
+          const connected = await isOAuthConnected(pendingRemote);
+          if (connected) {
+            if (oauthPollRef.current) {
+              clearInterval(oauthPollRef.current);
+              oauthPollRef.current = null;
+            }
+            setOauthStatus(`Authorization completed for ${pendingRemote}`);
+            fetchOAuthStatus(pendingRemote);
+            showMsg(`Google Drive connected for remote ${pendingRemote}`);
+            return;
+          }
+        }
+
+        const detail = getOAuthErrorMessage(rawError, language || 'en');
         const prefix = (language || 'en') === 'vi' ? 'OAuth lỗi:' : 'OAuth failed:';
         setOauthStatus(`${prefix} ${detail}`);
         showMsg(detail, true);
@@ -280,7 +299,7 @@ export default function BackupManagerDashboard() {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [showMsg]);
+  }, [authHeaders, language, oauthForm.remote_name, showMsg]);
 
   useEffect(() => {
     if (showRcloneConfig) {
@@ -374,6 +393,20 @@ export default function BackupManagerDashboard() {
     }
   };
 
+  const isOAuthConnected = async (remoteName: string): Promise<boolean> => {
+    if (!remoteName) return false;
+    try {
+      const res = await fetch(`/api/backup_manager/oauth/google/status?remote_name=${encodeURIComponent(remoteName)}`, {
+        headers: authHeaders(),
+      });
+      const data = await res.json();
+      return Boolean(res.ok && data?.data?.connected);
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  };
+
   const fetchOAuthStatusList = async () => {
     try {
       const res = await fetch('/api/backup_manager/oauth/google/status', {
@@ -425,6 +458,7 @@ export default function BackupManagerDashboard() {
       if (oauthPollRef.current) clearInterval(oauthPollRef.current);
       let tries = 0;
       const remoteName = normalizedRemote;
+      oauthPendingRemoteRef.current = remoteName;
       setOauthForm((prev) => ({ ...prev, remote_name: normalizedRemote }));
       oauthPollRef.current = setInterval(async () => {
         tries += 1;
