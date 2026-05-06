@@ -92,6 +92,28 @@ def check_fail2ban_installed() -> bool:
     return False
 
 
+def check_fail2ban_active(f2b_path: str) -> bool:
+    """Detect Fail2Ban active state with client + systemd fallbacks."""
+    # Primary signal: fail2ban-client ping
+    ping_res = _run_with_optional_sudo([f2b_path, "ping"])
+    ping_text = f"{ping_res.stdout}\n{ping_res.stderr}".lower()
+    if ping_res.returncode == 0 and "server echoed" in ping_text and "pong" in ping_text:
+        return True
+
+    # Secondary signal: fail2ban-client status exits 0 when daemon is reachable
+    status_res = _run_with_optional_sudo([f2b_path, "status"])
+    if status_res.returncode == 0:
+        return True
+
+    # Fallback: check service manager for environments where client needs permissions
+    if shutil.which("systemctl"):
+        systemd_res = _run_with_optional_sudo(["systemctl", "is-active", "fail2ban"])
+        if systemd_res.returncode == 0 and "active" in (systemd_res.stdout or "").strip().lower():
+            return True
+
+    return False
+
+
 def run_cmd(cmd: List[str]) -> str:
     """Run system command using subprocess safely."""
     try:
@@ -350,9 +372,7 @@ async def get_fail2ban_status() -> Dict[str, Any]:
 
     f2b_path = find_fail2ban_path()
     try:
-        # Check if fail2ban systemd service is active or fail2ban-client is responding
-        ping_res = _run_with_optional_sudo([f2b_path, "ping"])
-        is_active = "Server echoed pong" in ping_res.stdout
+        is_active = check_fail2ban_active(f2b_path)
         
         # Get all Jails
         res = _run_with_optional_sudo([f2b_path, "status"])
@@ -412,10 +432,42 @@ async def install_fail2ban() -> Dict[str, Any]:
         if res.returncode == 0:
             # Start and enable service right after install so status endpoint
             # immediately reports active state.
-            subprocess.run(["systemctl", "enable", "fail2ban"], shell=False, capture_output=True, text=True)
-            subprocess.run(["systemctl", "restart", "fail2ban"], shell=False, capture_output=True, text=True)
+            if shutil.which("systemctl"):
+                _run_with_optional_sudo(["systemctl", "enable", "fail2ban"])
+                _run_with_optional_sudo(["systemctl", "restart", "fail2ban"])
             return {"status": "success", "message": "Fail2Ban installed successfully!"}
         raise HTTPException(status_code=500, detail=res.stderr or "Installation failed.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fail2ban/enable")
+async def enable_fail2ban() -> Dict[str, Any]:
+    """Enable and start Fail2Ban service."""
+    global MOCK_F2B_INSTALLED, MOCK_F2B_ACTIVE
+    if IS_WINDOWS:
+        MOCK_F2B_INSTALLED = True
+        MOCK_F2B_ACTIVE = True
+        return {"status": "success", "message": "Fail2Ban enabled successfully (Mock Mode)."}
+
+    if not check_fail2ban_installed():
+        raise HTTPException(status_code=400, detail="Fail2Ban is not installed.")
+
+    if not shutil.which("systemctl"):
+        raise HTTPException(status_code=500, detail="systemctl not available on this system.")
+
+    try:
+        enable_res = _run_with_optional_sudo(["systemctl", "enable", "fail2ban"])
+        if enable_res.returncode != 0:
+            raise HTTPException(status_code=500, detail=(enable_res.stderr or enable_res.stdout or "Failed to enable Fail2Ban service.").strip())
+
+        restart_res = _run_with_optional_sudo(["systemctl", "restart", "fail2ban"])
+        if restart_res.returncode != 0:
+            raise HTTPException(status_code=500, detail=(restart_res.stderr or restart_res.stdout or "Failed to start Fail2Ban service.").strip())
+
+        return {"status": "success", "message": "Fail2Ban enabled and started successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

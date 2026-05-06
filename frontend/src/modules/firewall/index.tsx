@@ -77,6 +77,7 @@ export default function FirewallDashboard() {
   const [jails, setJails] = useState<JailItem[]>([]);
   const [f2bLoading, setF2bLoading] = useState<boolean>(true);
   const [f2bInstalling, setF2bInstalling] = useState<boolean>(false);
+  const [f2bEnabling, setF2bEnabling] = useState<boolean>(false);
 
   // Common Error
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +102,9 @@ export default function FirewallDashboard() {
       confirmToggle: (act: string) => `Are you sure you want to ${act} the firewall?`,
       f2bNotInstalled: 'Fail2Ban is not installed on this server.',
       f2bInstallBtn: 'Install Fail2Ban Now',
+      f2bEnableBtn: 'Enable Fail2Ban',
       f2bInstalling: 'Installing Fail2Ban...',
+      f2bEnabling: 'Enabling Fail2Ban...',
       unban: 'Unban',
       noJails: 'No active jails found.',
       noBans: 'No IPs banned currently.',
@@ -126,7 +129,9 @@ export default function FirewallDashboard() {
       confirmToggle: (act: string) => `Bạn có chắc chắn muốn ${act === 'enable' ? 'bật' : 'tắt'} tường lửa không?`,
       f2bNotInstalled: 'Fail2Ban chưa được cài đặt trên máy chủ này.',
       f2bInstallBtn: 'Cài đặt Fail2Ban Ngay',
+      f2bEnableBtn: 'Bật Fail2Ban',
       f2bInstalling: 'Đang cài đặt Fail2Ban...',
+      f2bEnabling: 'Đang bật Fail2Ban...',
       unban: 'Mở khóa (Unban)',
       noJails: 'Không tìm thấy cấu hình Jail nào đang chạy.',
       noBans: 'Chưa có IP nào bị khóa.',
@@ -249,6 +254,22 @@ export default function FirewallDashboard() {
     }
   };
 
+  const handleEnableF2B = async () => {
+    setF2bEnabling(true);
+    try {
+      const response = await fetch('/api/firewall/fail2ban/enable', { method: 'POST', headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to enable Fail2Ban');
+      }
+      fetchFail2Ban();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error enabling Fail2Ban');
+    } finally {
+      setF2bEnabling(false);
+    }
+  };
+
   const handleUnban = async (jail: string, ip: string) => {
     if (!confirm(`Unban IP ${ip} from jail ${jail}?`)) return;
     try {
@@ -311,12 +332,24 @@ export default function FirewallDashboard() {
           )}
 
           {activeTab === 'fail2ban' && f2bInstalled && (
-            <span className={`flex items-center gap-2 text-xs font-bold px-3 py-2.5 rounded-xl border transition-all ${
-              f2bActive ? 'bg-green-600/10 border-green-500/20 text-green-500 shadow-lg shadow-green-500/5' : isDark ? 'bg-slate-800/60 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${f2bActive ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-              Fail2Ban: {f2bActive ? tr.active : tr.inactive}
-            </span>
+            <>
+              {!f2bActive && (
+                <button
+                  onClick={handleEnableF2B}
+                  disabled={f2bEnabling}
+                  className="flex items-center gap-2 text-xs font-bold px-3.5 py-2.5 rounded-xl border transition-all bg-indigo-600/10 hover:bg-indigo-600/20 border-indigo-500/20 text-indigo-600 disabled:opacity-70 disabled:cursor-wait"
+                >
+                  {f2bEnabling ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Power className="w-3.5 h-3.5" />}
+                  {f2bEnabling ? tr.f2bEnabling : tr.f2bEnableBtn}
+                </button>
+              )}
+              <span className={`flex items-center gap-2 text-xs font-bold px-3 py-2.5 rounded-xl border transition-all ${
+                f2bActive ? 'bg-green-600/10 border-green-500/20 text-green-500 shadow-lg shadow-green-500/5' : isDark ? 'bg-slate-800/60 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${f2bActive ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+                Fail2Ban: {f2bActive ? tr.active : tr.inactive}
+              </span>
+            </>
           )}
 
           <button
