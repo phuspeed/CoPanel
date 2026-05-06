@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import json
+import time
 
 
 class SystemMonitor:
@@ -101,9 +102,21 @@ class SystemMonitor:
     def get_process_count() -> Dict[str, Any]:
         """Get process count."""
         try:
+            status_counts: Dict[str, int] = {}
+            for proc in psutil.process_iter(['status']):
+                try:
+                    status = proc.info.get("status") or "unknown"
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
             return {
                 "total": len(psutil.pids()),
-                "running": 0,
+                "running": status_counts.get(psutil.STATUS_RUNNING, 0),
+                "sleeping": status_counts.get(psutil.STATUS_SLEEPING, 0),
+                "stopped": status_counts.get(psutil.STATUS_STOPPED, 0),
+                "zombie": status_counts.get(psutil.STATUS_ZOMBIE, 0),
+                "status_counts": status_counts,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -119,7 +132,7 @@ class SystemMonitor:
                 "hostname": platform.node(),
                 "processor": platform.processor(),
                 "boot_time": boot_time,
-                "uptime_seconds": int(psutil.time.time() - boot_time),
+                "uptime_seconds": int(time.time() - boot_time),
             }
         except Exception as e:
             return {"error": str(e)}

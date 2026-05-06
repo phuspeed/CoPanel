@@ -18,15 +18,85 @@ import {
 } from 'recharts';
 import * as Icons from 'lucide-react';
 
+interface ProcessInfo {
+  pid: number;
+  name: string;
+  username?: string;
+  cpu_percent?: number;
+  memory_percent?: number;
+}
+
+interface Pm2Process {
+  name: string;
+  pm_id: number;
+  monit?: {
+    memory?: number;
+    cpu?: number;
+  };
+  pm2_env?: {
+    status?: string;
+    restart_time?: number;
+  };
+}
+
 interface SystemStats {
-  system: any;
-  cpu: any;
-  memory: any;
-  disk: any;
-  network: any;
-  processes: any;
-  top_processes?: any[];
-  pm2?: any[];
+  system: {
+    system: string;
+    platform: string;
+    hostname: string;
+    processor: string;
+    boot_time: number;
+    uptime_seconds: number;
+  };
+  cpu: {
+    percent: number;
+    count: number;
+    frequency?: {
+      current: number;
+      min: number;
+      max: number;
+    } | null;
+  };
+  memory: {
+    total: number;
+    used: number;
+    free: number;
+    percent: number;
+    available: number;
+    swap: {
+      total: number;
+      used: number;
+      free: number;
+      percent: number;
+    };
+  };
+  disk: {
+    partitions: Array<{
+      device: string;
+      mountpoint: string;
+      fstype: string;
+      total: number;
+      used: number;
+      free: number;
+      percent: number;
+    }>;
+  };
+  network: {
+    bytes_sent: number;
+    bytes_recv: number;
+    packets_sent: number;
+    packets_recv: number;
+    connections: number;
+  };
+  processes: {
+    total: number;
+    running: number;
+    sleeping?: number;
+    stopped?: number;
+    zombie?: number;
+  };
+  top_processes?: ProcessInfo[];
+  pm2?: Pm2Process[];
 }
 
 interface HistoryData {
@@ -34,6 +104,28 @@ interface HistoryData {
   cpu: number;
   memory: number;
 }
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
+const formatUptime = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0m';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
 
 export default function SystemMonitorDashboard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -52,7 +144,7 @@ export default function SystemMonitorDashboard() {
       });
       if (!response.ok) throw new Error('Failed to fetch stats');
       const data = await response.json();
-      setStats(data.data);
+      setStats(data.data as SystemStats);
 
       // Keep last 30 history points
       const now = new Date();
@@ -130,7 +222,12 @@ export default function SystemMonitorDashboard() {
   const diskData = stats.disk.partitions || [];
   const cpuPercent = stats.cpu.percent || 0;
   const memPercent = stats.memory.percent || 0;
-  const diskPercent = diskData[0]?.percent || 0;
+  const diskPercent = diskData.length
+    ? Math.max(...diskData.map((partition) => partition.percent || 0))
+    : 0;
+  const busiestDisk = diskData.length
+    ? diskData.reduce((max, partition) => ((partition.percent || 0) > (max.percent || 0) ? partition : max), diskData[0])
+    : null;
 
   const memoryChartData = [
     { name: 'Used', value: stats.memory.used, fill: '#ef4444' },
@@ -148,6 +245,17 @@ export default function SystemMonitorDashboard() {
           <p className="text-slate-400 text-sm md:text-base leading-relaxed">
             Track resource history, monitor running processes, and perform advanced PM2 lifecycles.
           </p>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 pt-2">
+            <span className="px-2.5 py-1 rounded-full border border-slate-700 bg-slate-900/60">
+              Uptime: {formatUptime(stats.system.uptime_seconds)}
+            </span>
+            <span className="px-2.5 py-1 rounded-full border border-slate-700 bg-slate-900/60">
+              CPU Cores: {stats.cpu.count}
+            </span>
+            <span className="px-2.5 py-1 rounded-full border border-slate-700 bg-slate-900/60">
+              Connections: {stats.network.connections}
+            </span>
+          </div>
         </div>
         <div className="flex flex-col items-end gap-1 text-right bg-slate-900/50 p-4 rounded-xl border border-slate-800 backdrop-blur-sm self-stretch md:self-auto min-w-[200px]">
           <span className="text-xs font-semibold text-blue-400 uppercase tracking-widest">Hostname</span>
@@ -239,6 +347,9 @@ export default function SystemMonitorDashboard() {
                 <div>
                   <p className="text-slate-400 text-xs font-bold tracking-wider uppercase mb-1">Disk Usage</p>
                   <p className="text-3xl font-extrabold text-white">{diskPercent.toFixed(1)}%</p>
+                  <p className="text-[11px] text-slate-400 mt-1 truncate">
+                    {busiestDisk ? busiestDisk.mountpoint : 'No disk data'}
+                  </p>
                 </div>
                 <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-400">
                   <Icons.HardDrive className="w-6 h-6" />
@@ -257,6 +368,9 @@ export default function SystemMonitorDashboard() {
                 <div>
                   <p className="text-slate-400 text-xs font-bold tracking-wider uppercase mb-1">Active PIDs</p>
                   <p className="text-3xl font-extrabold text-white">{stats.processes.total}</p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    running {stats.processes.running} / sleep {stats.processes.sleeping || 0}
+                  </p>
                 </div>
                 <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-purple-400">
                   <Icons.Zap className="w-6 h-6" />
@@ -332,10 +446,56 @@ export default function SystemMonitorDashboard() {
                   <div key={idx} className="flex justify-between text-xs">
                     <span className="text-slate-400">{item.name}</span>
                     <span className="font-semibold text-slate-200">
-                      {(item.value / (1024 * 1024 * 1024)).toFixed(2)} GB
+                      {formatBytes(item.value)}
                     </span>
                   </div>
                 ))}
+                <div className="flex justify-between text-xs pt-1 border-t border-slate-800/60 mt-2">
+                  <span className="text-slate-400">Available</span>
+                  <span className="font-semibold text-slate-200">{formatBytes(stats.memory.available)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl backdrop-blur-sm">
+              <h2 className="text-sm font-bold text-slate-200 tracking-wide uppercase mb-4">Network</h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Upload</span>
+                  <span className="font-semibold text-slate-100">{formatBytes(stats.network.bytes_sent)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Download</span>
+                  <span className="font-semibold text-slate-100">{formatBytes(stats.network.bytes_recv)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Packets (TX/RX)</span>
+                  <span className="font-semibold text-slate-100">
+                    {stats.network.packets_sent.toLocaleString()} / {stats.network.packets_recv.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl backdrop-blur-sm">
+              <h2 className="text-sm font-bold text-slate-200 tracking-wide uppercase mb-4">Top Disk Usage</h2>
+              <div className="space-y-3">
+                {diskData.slice(0, 5).map((partition) => (
+                  <div key={`${partition.device}-${partition.mountpoint}`}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-slate-300 truncate pr-2">{partition.mountpoint}</span>
+                      <span className="text-slate-400">{partition.percent.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-yellow-500 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${partition.percent}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {!diskData.length && <p className="text-xs text-slate-400">No disk partition information available.</p>}
               </div>
             </div>
           </div>
@@ -359,8 +519,8 @@ export default function SystemMonitorDashboard() {
                   </tr>
                 </thead>
                 <tbody className="text-xs text-slate-200 divide-y divide-slate-800/40 font-mono">
-                  {stats.top_processes.map((proc, idx) => (
-                    <tr key={idx} className="hover:bg-slate-800/30 transition-all">
+                  {stats.top_processes.map((proc) => (
+                    <tr key={proc.pid} className="hover:bg-slate-800/30 transition-all">
                       <td className="p-4 text-indigo-400 font-bold">{proc.pid}</td>
                       <td className="p-4 text-slate-100">{proc.name}</td>
                       <td className="p-4 text-slate-400">{proc.username || 'N/A'}</td>
@@ -408,10 +568,10 @@ export default function SystemMonitorDashboard() {
                   </tr>
                 </thead>
                 <tbody className="text-xs text-slate-200 divide-y divide-slate-800/40 font-mono">
-                  {stats.pm2.map((app, idx) => {
+                  {stats.pm2.map((app) => {
                     const isRunning = app.pm2_env?.status === 'online';
                     return (
-                      <tr key={idx} className="hover:bg-slate-800/30 transition-all">
+                      <tr key={`${app.pm_id}-${app.name}`} className="hover:bg-slate-800/30 transition-all">
                         <td className="p-4 font-bold text-blue-400">{app.name}</td>
                         <td className="p-4">{app.pm_id}</td>
                         <td className="p-4">
@@ -421,7 +581,7 @@ export default function SystemMonitorDashboard() {
                             {app.pm2_env?.status || 'N/A'}
                           </span>
                         </td>
-                        <td className="p-4">{((app.monit?.memory || 0) / (1024 * 1024)).toFixed(1)} MB</td>
+                        <td className="p-4">{formatBytes(app.monit?.memory || 0)}</td>
                         <td className="p-4">{app.monit?.cpu || 0}%</td>
                         <td className="p-4">{app.pm2_env?.restart_time || 0}</td>
                         <td className="p-4 text-right">
