@@ -56,6 +56,46 @@ function getRemoteMeta(type: string) {
   return REMOTE_TYPE_META[type?.toLowerCase()] ?? { label: type || 'Unknown', color: 'text-slate-400' };
 }
 
+function getOAuthErrorMessage(rawError: string, lang: 'en' | 'vi'): string {
+  const normalized = (rawError || '').toLowerCase();
+  const tr = {
+    en: {
+      stateExpired: 'Google OAuth state expired. Please restart the connect flow and complete it within 30 minutes.',
+      redirectMismatch: 'Redirect URI mismatch. Ensure Google OAuth redirect URI exactly matches the URI configured in Cloud Setup.',
+      tokenExchange: 'Google token exchange failed. Authorization code may be expired/reused, or OAuth client credentials are invalid.',
+      accessDenied: 'Google authorization was denied. Please grant consent and try again.',
+      generic: 'Google OAuth failed. Please retry.',
+      oauthFailedPrefix: 'OAuth failed:',
+    },
+    vi: {
+      stateExpired: 'Phiên OAuth của Google đã hết hạn. Vui lòng bắt đầu lại quá trình kết nối và hoàn tất trong 30 phút.',
+      redirectMismatch: 'Redirect URI không khớp. Hãy đảm bảo Redirect URI trên Google OAuth trùng khớp chính xác với URI trong Cloud Setup.',
+      tokenExchange: 'Không thể đổi token từ Google. Có thể mã ủy quyền đã hết hạn/đã dùng, hoặc thông tin OAuth client không đúng.',
+      accessDenied: 'Bạn đã từ chối quyền truy cập Google. Vui lòng cấp quyền và thử lại.',
+      generic: 'Google OAuth thất bại. Vui lòng thử lại.',
+      oauthFailedPrefix: 'OAuth lỗi:',
+    },
+  }[lang];
+
+  if (normalized.includes('invalid or expired oauth state') || normalized.includes('missing oauth state')) {
+    return tr.stateExpired;
+  }
+
+  if (normalized.includes('redirect_uri_mismatch') || normalized.includes('redirect uri mismatch')) {
+    return tr.redirectMismatch;
+  }
+
+  if (normalized.includes('token exchange failed') || normalized.includes('invalid_grant')) {
+    return tr.tokenExchange;
+  }
+
+  if (normalized.includes('access_denied')) {
+    return tr.accessDenied;
+  }
+
+  return rawError || tr.generic;
+}
+
 // --- Main component ---
 export default function BackupManagerDashboard() {
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
@@ -232,7 +272,10 @@ export default function BackupManagerDashboard() {
         fetchOAuthStatus(data.remote_name);
         showMsg(`Google Drive connected for remote ${data.remote_name}`);
       } else {
-        showMsg(data.error || 'Google OAuth failed', true);
+        const detail = getOAuthErrorMessage(data.error || '', language || 'en');
+        const prefix = (language || 'en') === 'vi' ? 'OAuth lỗi:' : 'OAuth failed:';
+        setOauthStatus(`${prefix} ${detail}`);
+        showMsg(detail, true);
       }
     };
     window.addEventListener('message', onMessage);
@@ -360,7 +403,10 @@ export default function BackupManagerDashboard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        showMsg(data.detail || 'Failed to start Google OAuth', true);
+        const detail = getOAuthErrorMessage(data.detail || '', language || 'en');
+        const prefix = (language || 'en') === 'vi' ? 'OAuth lỗi:' : 'OAuth failed:';
+        setOauthStatus(`${prefix} ${detail}`);
+        showMsg(detail, true);
         return;
       }
       const authUrl = data?.data?.auth_url;
@@ -391,7 +437,11 @@ export default function BackupManagerDashboard() {
         }
       }, 2000);
     } catch (e) {
-      showMsg('Failed to start Google OAuth', true);
+      const fallback = (language || 'en') === 'vi' ? 'Không thể bắt đầu Google OAuth' : 'Failed to start Google OAuth';
+      const detail = getOAuthErrorMessage(e instanceof Error ? e.message : fallback, language || 'en');
+      const prefix = (language || 'en') === 'vi' ? 'OAuth lỗi:' : 'OAuth failed:';
+      setOauthStatus(`${prefix} ${detail}`);
+      showMsg(detail, true);
     } finally {
       setOauthLoading(false);
     }

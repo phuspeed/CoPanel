@@ -324,11 +324,10 @@ class ProfileManager:
         return state
 
     @staticmethod
-    def consume_oauth_state(provider: str, state: str):
+    def get_oauth_state(provider: str, state: str):
         with ProfileManager._get_db() as conn:
             cursor = conn.execute("SELECT * FROM oauth_states WHERE state = ? AND provider = ?", (state, provider))
             row = cursor.fetchone()
-            conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
         if not row:
             return None
         data = dict(row)
@@ -338,6 +337,11 @@ class ProfileManager:
         except Exception:
             return None
         return data
+
+    @staticmethod
+    def delete_oauth_state(state: str):
+        with ProfileManager._get_db() as conn:
+            conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
 
     @staticmethod
     def save_oauth_token(remote_name: str, provider: str, token_data: dict):
@@ -631,7 +635,8 @@ class GoogleOAuthService:
             raise ValueError("client_id, client_secret, redirect_uri are required")
 
         ProfileManager.save_oauth_client("google", client_id.strip(), client_secret.strip(), redirect_uri.strip())
-        state = ProfileManager.create_oauth_state("google", normalized_remote)
+        # Give users more time to complete Google consent flow.
+        state = ProfileManager.create_oauth_state("google", normalized_remote, ttl_seconds=1800)
 
         query = urlencode(
             {
@@ -652,7 +657,7 @@ class GoogleOAuthService:
             raise ValueError("Missing OAuth authorization code")
         if not state:
             raise ValueError("Missing OAuth state")
-        state_row = ProfileManager.consume_oauth_state("google", state)
+        state_row = ProfileManager.get_oauth_state("google", state)
         if not state_row:
             raise ValueError("Invalid or expired OAuth state")
         client = ProfileManager.get_oauth_client("google")
@@ -688,6 +693,7 @@ class GoogleOAuthService:
 
         ProfileManager.save_oauth_token(state_row["remote_name"], "google", token_data)
         config_path = ProfileManager.sync_google_remote_to_rclone(state_row["remote_name"])
+        ProfileManager.delete_oauth_state(state)
         return {"remote_name": state_row["remote_name"], "config_path": config_path}
 
 
