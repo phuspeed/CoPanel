@@ -123,6 +123,23 @@ def oauth_google_start(data: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to start OAuth flow: {e}")
 
 
+@router.post("/oauth/google/manual-token")
+def oauth_google_manual_token(data: dict) -> Dict[str, Any]:
+    try:
+        result = GoogleOAuthService.apply_manual_token(
+            remote_name=data.get("remote_name", "").strip(),
+            token_payload=data.get("token_json", "").strip(),
+            client_id=data.get("client_id", "").strip(),
+            client_secret=data.get("client_secret", "").strip(),
+            redirect_uri=data.get("redirect_uri", "").strip(),
+        )
+        return {"status": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply manual token: {e}")
+
+
 @router.get("/oauth/google/callback")
 def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
     if error:

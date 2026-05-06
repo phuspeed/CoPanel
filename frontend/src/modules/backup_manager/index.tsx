@@ -120,10 +120,13 @@ export default function BackupManagerDashboard() {
     redirect_uri: `${window.location.origin}/api/backup_manager/oauth/google/callback`,
   });
   const [oauthLoading, setOauthLoading] = useState(false);
+  const [manualTokenLoading, setManualTokenLoading] = useState(false);
   const [oauthStatus, setOauthStatus] = useState('');
   const [oauthStatusList, setOauthStatusList] = useState<OAuthStatusItem[]>([]);
   const oauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const oauthPendingRemoteRef = useRef('');
+  const [manualTokenJson, setManualTokenJson] = useState('');
+  const [copyCmdLoading, setCopyCmdLoading] = useState(false);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -478,6 +481,72 @@ export default function BackupManagerDashboard() {
       showMsg(detail, true);
     } finally {
       setOauthLoading(false);
+    }
+  };
+
+  const applyManualGoogleToken = async () => {
+    if (!oauthForm.remote_name || !manualTokenJson.trim()) {
+      showMsg(language === 'vi' ? 'Vui lòng nhập remote name và token JSON.' : 'Please provide remote name and token JSON.', true);
+      return;
+    }
+    setManualTokenLoading(true);
+    try {
+      const res = await fetch('/api/backup_manager/oauth/google/manual-token', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          remote_name: oauthForm.remote_name,
+          token_json: manualTokenJson,
+          client_id: oauthForm.client_id,
+          client_secret: oauthForm.client_secret,
+          redirect_uri: oauthForm.redirect_uri,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = getOAuthErrorMessage(data.detail || '', language || 'en');
+        const prefix = (language || 'en') === 'vi' ? 'OAuth lỗi:' : 'OAuth failed:';
+        setOauthStatus(`${prefix} ${detail}`);
+        showMsg(detail, true);
+        return;
+      }
+
+      const normalizedRemote = data?.data?.remote_name || oauthForm.remote_name;
+      setOauthForm((prev) => ({ ...prev, remote_name: normalizedRemote }));
+      setManualTokenJson('');
+      setOauthStatus(
+        (language || 'en') === 'vi'
+          ? `Đã nhập token thủ công thành công cho remote ${normalizedRemote}`
+          : `Manual token applied successfully for remote ${normalizedRemote}`
+      );
+      showMsg(
+        (language || 'en') === 'vi'
+          ? `Đã kết nối Google Drive cho remote ${normalizedRemote}`
+          : `Google Drive connected for remote ${normalizedRemote}`
+      );
+      fetchRemotes();
+      fetchOAuthStatusList();
+      fetchOAuthStatus(normalizedRemote);
+    } catch (e) {
+      showMsg(language === 'vi' ? 'Không thể áp dụng token thủ công.' : 'Failed to apply manual token.', true);
+    } finally {
+      setManualTokenLoading(false);
+    }
+  };
+
+  const copyRcloneAuthorizeCommand = async () => {
+    const clientId = oauthForm.client_id.trim() || 'YOUR_CLIENT_ID';
+    const clientSecret = oauthForm.client_secret.trim() || 'YOUR_CLIENT_SECRET';
+    const cmd = `rclone authorize "drive" "${clientId}" "${clientSecret}"`;
+    try {
+      setCopyCmdLoading(true);
+      await navigator.clipboard.writeText(cmd);
+      showMsg(language === 'vi' ? 'Đã copy lệnh rclone authorize.' : 'Copied rclone authorize command.');
+    } catch (e) {
+      console.error(e);
+      showMsg(language === 'vi' ? 'Không thể copy lệnh. Vui lòng copy thủ công.' : 'Failed to copy command. Please copy manually.', true);
+    } finally {
+      setCopyCmdLoading(false);
     }
   };
 
@@ -1299,6 +1368,60 @@ export default function BackupManagerDashboard() {
                 {oauthStatus && (
                   <p className={`text-xs ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{oauthStatus}</p>
                 )}
+              </div>
+
+              <div className={`rounded-xl border p-4 space-y-3 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
+                <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {language === 'vi' ? 'Thiết lập thủ công qua PC' : 'Manual Setup via PC'}
+                </p>
+                <p className={`text-[11px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  {language === 'vi'
+                    ? 'Nếu callback OAuth báo lỗi, bạn có thể chạy rclone authorize trên PC, sau đó dán token JSON vào đây để tạo remote trực tiếp.'
+                    : 'If OAuth callback fails, run rclone authorize on your PC and paste the token JSON here to create the remote directly.'}
+                </p>
+                <div className={`rounded-lg border px-3 py-2 ${isDark ? 'border-slate-800 bg-slate-900/70' : 'border-slate-200 bg-white'}`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                      {language === 'vi' ? 'Mẫu lệnh PC' : 'PC Command'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyRcloneAuthorizeCommand}
+                      disabled={copyCmdLoading}
+                      className={`text-[10px] px-2 py-1 rounded-md border font-bold transition ${
+                        isDark
+                          ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                          : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {copyCmdLoading
+                        ? (language === 'vi' ? 'Đang copy...' : 'Copying...')
+                        : (language === 'vi' ? 'Copy lệnh' : 'Copy command')}
+                    </button>
+                  </div>
+                  <code className={`block text-[11px] font-mono break-all ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+                    {`rclone authorize "drive" "${oauthForm.client_id.trim() || 'YOUR_CLIENT_ID'}" "${oauthForm.client_secret.trim() || 'YOUR_CLIENT_SECRET'}"`}
+                  </code>
+                </div>
+                <textarea
+                  value={manualTokenJson}
+                  onChange={(e) => setManualTokenJson(e.target.value)}
+                  placeholder='{"access_token":"...","refresh_token":"...","token_type":"Bearer","expiry":"2026-05-06T10:00:00Z"}'
+                  rows={5}
+                  className={`${input} font-mono text-[11px] resize-y`}
+                />
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={applyManualGoogleToken}
+                    disabled={manualTokenLoading}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-sm transition"
+                  >
+                    {manualTokenLoading
+                      ? (language === 'vi' ? 'Đang áp dụng...' : 'Applying...')
+                      : (language === 'vi' ? 'Áp dụng token thủ công' : 'Apply Manual Token')}
+                  </button>
+                </div>
               </div>
 
               <div className={`mt-2 rounded-xl border ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>

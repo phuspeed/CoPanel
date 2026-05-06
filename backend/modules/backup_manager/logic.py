@@ -696,6 +696,41 @@ class GoogleOAuthService:
         ProfileManager.delete_oauth_state(state)
         return {"remote_name": state_row["remote_name"], "config_path": config_path}
 
+    @staticmethod
+    def apply_manual_token(
+        remote_name: str,
+        token_payload: str,
+        client_id: str = "",
+        client_secret: str = "",
+        redirect_uri: str = "",
+    ):
+        normalized_remote = ProfileManager.normalize_remote_name(remote_name)
+        if not normalized_remote:
+            raise ValueError("remote_name is required")
+        if not token_payload.strip():
+            raise ValueError("token_json is required")
+
+        token_data = None
+        try:
+            token_data = json.loads(token_payload)
+        except Exception:
+            raise ValueError("token_json must be valid JSON")
+
+        if not isinstance(token_data, dict):
+            raise ValueError("token_json must be a JSON object")
+        if not token_data.get("access_token"):
+            raise ValueError("token_json must include access_token")
+
+        existing_client = ProfileManager.get_oauth_client("google")
+        if client_id.strip() and client_secret.strip() and redirect_uri.strip():
+            ProfileManager.save_oauth_client("google", client_id.strip(), client_secret.strip(), redirect_uri.strip())
+        elif not existing_client:
+            raise ValueError("Google OAuth client is missing. Provide client_id, client_secret, and redirect_uri.")
+
+        ProfileManager.save_oauth_token(normalized_remote, "google", token_data)
+        config_path = ProfileManager.sync_google_remote_to_rclone(normalized_remote)
+        return {"remote_name": normalized_remote, "config_path": config_path}
+
 
 # Initialize DB on module load
 ProfileManager.init_db()
