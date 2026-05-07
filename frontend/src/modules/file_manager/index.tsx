@@ -155,6 +155,11 @@ export default function FileManagerDashboard() {
   const tr = t[language];
   const isDark = theme === 'dark';
 
+  const joinPath = (parent: string, child: string) => {
+    if (!parent || parent === '/') return `/${child}`;
+    return `${parent.replace(/[\\/]+$/, '')}/${child}`;
+  };
+
   // Get token helper
   const getAuthHeader = (): Record<string, string> => {
     const token = localStorage.getItem('copanel_token');
@@ -360,9 +365,13 @@ export default function FileManagerDashboard() {
 
   // ✏️ Rename Item
   const handleRename = async () => {
-    if (!renamingItem || !renameValue) return;
-    const parentPath = renamingItem.path.substring(0, renamingItem.path.lastIndexOf(renamingItem.name));
-    const newPath = `${parentPath.replace(/[\\/]+$/, '')}/${renameValue}`;
+    if (!renamingItem) return;
+    const nextName = renameValue.trim();
+    if (!nextName || nextName === renamingItem.name) return;
+    const normalizedPath = renamingItem.path.replace(/[\\/]+$/, '');
+    const splitIndex = Math.max(normalizedPath.lastIndexOf('/'), normalizedPath.lastIndexOf('\\'));
+    const parentPath = splitIndex >= 0 ? normalizedPath.slice(0, splitIndex) : '';
+    const newPath = joinPath(parentPath, nextName);
     try {
       const res = await fetch('/api/file_manager/rename', {
         method: 'POST',

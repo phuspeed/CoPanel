@@ -10,6 +10,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
 }
+type Lang = 'en' | 'vi';
 
 const LEVEL_COLOR: Record<Level, string> = {
   info: 'text-blue-500',
@@ -27,6 +28,22 @@ const ICON: Record<Level, any> = {
 
 export default function NotificationCenter({ open, onClose }: Props) {
   const { inbox, unread } = useInbox();
+  const language = ((localStorage.getItem('copanel_lang') as Lang) || 'en') === 'vi' ? 'vi' : 'en';
+  const tr = language === 'vi'
+    ? {
+      title: 'Thông báo',
+      unread: 'chưa đọc',
+      markAllRead: 'Đánh dấu đã đọc tất cả',
+      noNotifications: 'Chưa có thông báo nào.',
+      system: 'hệ thống',
+    }
+    : {
+      title: 'Notifications',
+      unread: 'unread',
+      markAllRead: 'Mark all read',
+      noNotifications: 'No notifications yet.',
+      system: 'system',
+    };
 
   useEffect(() => {
     if (open) {
@@ -45,15 +62,15 @@ export default function NotificationCenter({ open, onClose }: Props) {
       >
         <header className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Notifications</h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">{unread} unread</p>
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">{tr.title}</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">{unread} {tr.unread}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => notificationsApi.markAllRead()}
               className="text-[11px] font-bold text-blue-500 hover:text-blue-400"
             >
-              Mark all read
+              {tr.markAllRead}
             </button>
             <button onClick={onClose} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-200">
               <Icons.X className="w-4 h-4" />
@@ -64,7 +81,7 @@ export default function NotificationCenter({ open, onClose }: Props) {
           {inbox.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-500">
               <Icons.Bell className="w-10 h-10 mx-auto mb-3 opacity-40" />
-              No notifications yet.
+              {tr.noNotifications}
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -87,7 +104,7 @@ export default function NotificationCenter({ open, onClose }: Props) {
                         <p className="text-xs mt-0.5 text-slate-600 dark:text-slate-400 whitespace-pre-line line-clamp-3">{n.body}</p>
                       )}
                       <p className="text-[10px] uppercase tracking-wider mt-1 text-slate-400">
-                        {n.module || 'system'}
+                        {n.module || tr.system}
                       </p>
                     </div>
                   </li>

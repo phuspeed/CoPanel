@@ -242,21 +242,28 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   };
 
   const isActive = (path: string) => location.pathname === path;
-
-  const allowedModules = modules.filter((mod) => {
-    if (!user || user.role === 'superadmin') return true;
+  const normalizePermitted = (): string[] => {
+    if (!user) return ['all'];
+    if (user.role === 'superadmin') return ['all'];
     try {
       const permitted = typeof user.permitted_modules === 'string'
         ? JSON.parse(user.permitted_modules)
         : user.permitted_modules;
-      if (Array.isArray(permitted) && permitted.includes('all')) return true;
-      if (Array.isArray(permitted)) {
-        return permitted.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
-      }
+      return Array.isArray(permitted) ? permitted.map((m: any) => String(m)) : [];
     } catch {
-      return false;
+      return [];
     }
-    return false;
+  };
+  const permittedModules = normalizePermitted();
+  const hasAllAccess = permittedModules.includes('all');
+
+  const allowedModules = modules.filter((mod) => {
+    if (hasAllAccess) return true;
+    return permittedModules.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
+  });
+  const allowedInstalledPackages = installedPackages.filter((pkg) => {
+    if (hasAllAccess) return true;
+    return permittedModules.includes(String(pkg.id));
   });
 
   return (
@@ -333,13 +340,13 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             )}
 
             {/* Installed Dynamic Packages */}
-            {installedPackages.length > 0 && (
+            {allowedInstalledPackages.length > 0 && (
               <>
                 <div className={`px-4 py-2 text-xs font-semibold uppercase mt-6 mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'
                   }`}>
-                  {tr.installed} ({installedPackages.length})
+                  {tr.installed} ({allowedInstalledPackages.length})
                 </div>
-                {installedPackages.map((pkg) => (
+                {allowedInstalledPackages.map((pkg) => (
                   <Link
                     key={pkg.id}
                     to={`/package-manager?id=${pkg.id}`}

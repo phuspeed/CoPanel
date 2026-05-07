@@ -13,24 +13,22 @@ interface UserProfile {
   permitted_folders: string | string[];
 }
 
-const ALL_MODULES = [
-  { id: 'system_monitor', label: 'System Monitor' },
-  { id: 'file_manager', label: 'File Manager' },
-  { id: 'package_manager', label: 'Package Manager' },
-  { id: 'firewall', label: 'Firewall' },
-  { id: 'docker_manager', label: 'Docker Manager' },
-  { id: 'web_manager', label: 'Web Manager' },
-];
+interface AvailableModule {
+  id: string;
+  label: string;
+  source: 'core' | 'package';
+}
 
 export default function UsersDashboard() {
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [availableModules, setAvailableModules] = useState<AvailableModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'superadmin' | 'user'>('user');
-  const [selectedModules, setSelectedModules] = useState<string[]>(['system_monitor', 'file_manager']);
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [folderInput, setFolderInput] = useState<string>('/home/');
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
@@ -68,7 +66,12 @@ export default function UsersDashboard() {
       fillError: 'Please fill in username and password.',
       regError: 'Failed to register new user profile.',
       commError: 'Failed to reach authentication backend.',
-      deleteConfirm: 'Are you sure you want to delete this user?'
+      deleteConfirm: 'Are you sure you want to delete this user?',
+      availableModules: 'Available modules',
+      none: 'None',
+      allAccess: 'All',
+      coreModule: 'Core',
+      installedPackage: 'Installed',
     },
     vi: {
       title: 'Tài khoản người dùng & Quyền hạn',
@@ -99,7 +102,12 @@ export default function UsersDashboard() {
       fillError: 'Vui lòng điền tên đăng nhập và mật khẩu.',
       regError: 'Không thể đăng ký tài khoản mới này.',
       commError: 'Không thể kết nối tới máy chủ.',
-      deleteConfirm: 'Bạn có chắc chắn muốn xóa tài khoản này không?'
+      deleteConfirm: 'Bạn có chắc chắn muốn xóa tài khoản này không?',
+      availableModules: 'Module khả dụng',
+      none: 'Không có',
+      allAccess: 'Toàn quyền',
+      coreModule: 'Core',
+      installedPackage: 'Đã cài',
     }
   };
 
@@ -123,8 +131,60 @@ export default function UsersDashboard() {
       });
   };
 
+  const formatModuleLabel = (id: string) =>
+    id
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const fetchAvailableModules = async () => {
+    try {
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const [coreRes, pkgRes] = await Promise.all([
+        fetch('/api/modules', { headers }),
+        fetch('/api/package_manager/list', { headers }),
+      ]);
+
+      const next: AvailableModule[] = [];
+      const seen = new Set<string>();
+
+      if (coreRes.ok) {
+        const data = await coreRes.json();
+        const modules = Array.isArray(data?.modules) ? data.modules : [];
+        modules.forEach((id: string) => {
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          next.push({ id, label: formatModuleLabel(id), source: 'core' });
+        });
+      }
+
+      if (pkgRes.ok) {
+        const data = await pkgRes.json();
+        const packages = Array.isArray(data?.packages) ? data.packages : [];
+        packages
+          .filter((p: any) => p?.id && p?.status !== 'not_installed')
+          .forEach((p: any) => {
+            const id = String(p.id);
+            if (seen.has(id)) return;
+            seen.add(id);
+            next.push({
+              id,
+              label: p.name || formatModuleLabel(id),
+              source: 'package',
+            });
+          });
+      }
+
+      setAvailableModules(next);
+      setSelectedModules((current) => current.filter((id) => seen.has(id)));
+    } catch (err) {
+      console.error('Failed to load available modules:', err);
+      setAvailableModules([]);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
+    fetchAvailableModules();
   }, [language]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -149,7 +209,7 @@ export default function UsersDashboard() {
           username,
           password,
           role,
-          permitted_modules: selectedModules,
+          permitted_modules: role === 'superadmin' ? ['all'] : selectedModules,
           permitted_folders: pFolders
         })
       });
@@ -157,9 +217,10 @@ export default function UsersDashboard() {
       if (res.ok) {
         setUsername('');
         setPassword('');
-        setSelectedModules(['system_monitor', 'file_manager']);
+        setSelectedModules([]);
         setFolderInput('/home/');
         fetchUsers();
+        fetchAvailableModules();
       } else {
         const errData = await res.json();
         setError(errData.detail || tr.regError);
@@ -178,10 +239,10 @@ export default function UsersDashboard() {
   };
 
   const toggleSelectAllModules = () => {
-    if (selectedModules.length === ALL_MODULES.length) {
+    if (selectedModules.length === availableModules.length) {
       setSelectedModules([]);
     } else {
-      setSelectedModules(ALL_MODULES.map((m) => m.id));
+      setSelectedModules(availableModules.map((m) => m.id));
     }
   };
 
@@ -208,6 +269,15 @@ export default function UsersDashboard() {
     } catch {
       return [String(val)];
     }
+  };
+
+  const formatPermissionModules = (value: string | string[]) => {
+    const ids = parseJsonList(value);
+    if (ids.includes('all')) return tr.allAccess;
+    if (!ids.length) return tr.none;
+    return ids
+      .map((id) => availableModules.find((m) => m.id === id)?.label || formatModuleLabel(id))
+      .join(', ');
   };
 
   return (
@@ -299,11 +369,14 @@ export default function UsersDashboard() {
                   onClick={toggleSelectAllModules}
                   className={`text-[10px] transition ${isDark ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-500'}`}
                 >
-                  {selectedModules.length === ALL_MODULES.length ? tr.deselectAll : tr.selectAll}
+                  {selectedModules.length === availableModules.length ? tr.deselectAll : tr.selectAll}
                 </button>
               </div>
+              <p className={`text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                {tr.availableModules}: {availableModules.length}
+              </p>
               <div className={`flex flex-wrap gap-1.5 p-3.5 border rounded-xl min-h-[85px] ${isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50 border-slate-100'}`}>
-                {ALL_MODULES.map((m) => {
+                {availableModules.map((m) => {
                   const isSelected = selectedModules.includes(m.id);
                   return (
                     <button
@@ -316,10 +389,13 @@ export default function UsersDashboard() {
                           : isDark ? 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-300' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      {m.label}
+                      {m.label} <span className="opacity-70">({m.source === 'core' ? tr.coreModule : tr.installedPackage})</span>
                     </button>
                   );
                 })}
+                {availableModules.length === 0 && (
+                  <span className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.none}</span>
+                )}
               </div>
             </div>
 
@@ -388,7 +464,7 @@ export default function UsersDashboard() {
                           <div>
                             <span className={`text-[10px] uppercase font-semibold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}:</span>
                             <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${isDark ? 'text-slate-300 bg-slate-900/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
-                              {parseJsonList(u.permitted_modules).join(', ') || 'None'}
+                              {formatPermissionModules(u.permitted_modules)}
                             </span>
                           </div>
                           <div>
@@ -442,7 +518,7 @@ export default function UsersDashboard() {
                         <div>
                           <span className={`text-[10px] uppercase font-bold block ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.modules}</span>
                           <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded border block mt-0.5 ${isDark ? 'text-slate-300 bg-slate-950/40 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-100'}`}>
-                            {parseJsonList(u.permitted_modules).join(', ') || 'None'}
+                            {formatPermissionModules(u.permitted_modules)}
                           </span>
                         </div>
                         <div>

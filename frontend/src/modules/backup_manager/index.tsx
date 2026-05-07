@@ -36,6 +36,9 @@ interface OAuthStatusItem {
   updated_at?: string;
 }
 
+type CronMode = 'guided' | 'advanced';
+type CronFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly';
+
 // Map rclone type -> display label + color class
 const REMOTE_TYPE_META: Record<string, { label: string; color: string }> = {
   drive:      { label: 'Google Drive',  color: 'text-blue-400' },
@@ -96,6 +99,46 @@ function getOAuthErrorMessage(rawError: string, lang: 'en' | 'vi'): string {
   return rawError || tr.generic;
 }
 
+function humanizeCron(cron: string, lang: 'en' | 'vi'): string {
+  const fallback = lang === 'vi' ? `Lịch cron: ${cron}` : `Cron schedule: ${cron}`;
+  if (!cron) return fallback;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return fallback;
+  const [min, hour, dom, mon, dow] = parts;
+  const weekdayVi = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
+  const weekdayEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const isNum = (v: string) => /^\d+$/.test(v);
+  const to2 = (v: string) => String(parseInt(v, 10)).padStart(2, '0');
+
+  if (/^\*\/\d+$/.test(hour) && min === '0' && dom === '*' && mon === '*' && dow === '*') {
+    const n = hour.split('/')[1];
+    return lang === 'vi' ? `Mỗi ${n} giờ` : `Every ${n} hours`;
+  }
+
+  if (isNum(min) && isNum(hour) && dom === '*' && mon === '*' && dow === '*') {
+    return lang === 'vi'
+      ? `Mỗi ngày lúc ${to2(hour)}:${to2(min)}`
+      : `Daily at ${to2(hour)}:${to2(min)}`;
+  }
+
+  if (isNum(min) && isNum(hour) && dom === '*' && mon === '*' && isNum(dow)) {
+    const d = parseInt(dow, 10);
+    if (d >= 0 && d <= 6) {
+      return lang === 'vi'
+        ? `Mỗi tuần ${weekdayVi[d]} lúc ${to2(hour)}:${to2(min)}`
+        : `Weekly on ${weekdayEn[d]} at ${to2(hour)}:${to2(min)}`;
+    }
+  }
+
+  if (isNum(min) && isNum(hour) && isNum(dom) && mon === '*' && dow === '*') {
+    return lang === 'vi'
+      ? `Hằng tháng ngày ${dom} lúc ${to2(hour)}:${to2(min)}`
+      : `Monthly on day ${dom} at ${to2(hour)}:${to2(min)}`;
+  }
+
+  return fallback;
+}
+
 // --- Main component ---
 export default function BackupManagerDashboard() {
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
@@ -150,6 +193,13 @@ export default function BackupManagerDashboard() {
     sync_deletions: true,
     transfers: 4,
   });
+  const [cronMode, setCronMode] = useState<CronMode>('guided');
+  const [cronFrequency, setCronFrequency] = useState<CronFrequency>('daily');
+  const [cronMinute, setCronMinute] = useState(0);
+  const [cronHour, setCronHour] = useState(2);
+  const [cronIntervalHours, setCronIntervalHours] = useState(6);
+  const [cronWeekday, setCronWeekday] = useState(0);
+  const [cronDayOfMonth, setCronDayOfMonth] = useState(1);
 
   // Stream state
   const [streamingProfile, setStreamingProfile] = useState<Profile | null>(null);
@@ -203,6 +253,35 @@ export default function BackupManagerDashboard() {
       oauthRedirectUri: 'Authorized Redirect URI',
       oauthRemoteName: 'Remote Name',
       startGoogleOAuth: 'Connect Google Drive',
+      scheduleMode: 'Schedule Mode',
+      guidedMode: 'Guided',
+      advancedMode: 'Advanced (Cron)',
+      quickPresets: 'Quick Presets',
+      every6Hours: 'Every 6 hours',
+      dailyAt2: 'Daily at 02:00',
+      weeklySunday: 'Weekly on Sunday at 02:00',
+      monthlyFirst: 'Monthly on day 1 at 02:00',
+      customSchedule: 'Custom Schedule Builder',
+      frequency: 'Frequency',
+      everyNHours: 'Every N hours',
+      minute: 'Minute',
+      hour: 'Hour',
+      weekday: 'Weekday',
+      dayOfMonth: 'Day of month',
+      cronPreview: 'Cron Preview',
+      cronHumanHint: 'Use Guided mode to avoid manual cron typing.',
+      cronHumanLabel: 'Readable schedule',
+      weekdaySun: 'Sunday',
+      weekdayMon: 'Monday',
+      weekdayTue: 'Tuesday',
+      weekdayWed: 'Wednesday',
+      weekdayThu: 'Thursday',
+      weekdayFri: 'Friday',
+      weekdaySat: 'Saturday',
+      freqHourly: 'Hourly',
+      freqDaily: 'Daily',
+      freqWeekly: 'Weekly',
+      freqMonthly: 'Monthly',
     },
     vi: {
       title: 'Quản trị Sao lưu Đám mây',
@@ -241,6 +320,35 @@ export default function BackupManagerDashboard() {
       oauthRedirectUri: 'Authorized Redirect URI',
       oauthRemoteName: 'Remote Name',
       startGoogleOAuth: 'Connect Google Drive',
+      scheduleMode: 'Chế độ lịch',
+      guidedMode: 'Có hướng dẫn',
+      advancedMode: 'Nâng cao (Cron)',
+      quickPresets: 'Mẫu nhanh',
+      every6Hours: 'Mỗi 6 giờ',
+      dailyAt2: 'Hằng ngày lúc 02:00',
+      weeklySunday: 'Hằng tuần vào Chủ nhật lúc 02:00',
+      monthlyFirst: 'Hằng tháng vào ngày 1 lúc 02:00',
+      customSchedule: 'Trình tạo lịch tùy chỉnh',
+      frequency: 'Tần suất',
+      everyNHours: 'Mỗi N giờ',
+      minute: 'Phút',
+      hour: 'Giờ',
+      weekday: 'Thứ',
+      dayOfMonth: 'Ngày trong tháng',
+      cronPreview: 'Xem trước Cron',
+      cronHumanHint: 'Dùng chế độ Có hướng dẫn để tránh phải gõ cron thủ công.',
+      cronHumanLabel: 'Lịch dễ đọc',
+      weekdaySun: 'Chủ nhật',
+      weekdayMon: 'Thứ hai',
+      weekdayTue: 'Thứ ba',
+      weekdayWed: 'Thứ tư',
+      weekdayThu: 'Thứ năm',
+      weekdayFri: 'Thứ sáu',
+      weekdaySat: 'Thứ bảy',
+      freqHourly: 'Theo giờ',
+      freqDaily: 'Hằng ngày',
+      freqWeekly: 'Hằng tuần',
+      freqMonthly: 'Hằng tháng',
     },
   };
   const tr = t[language || 'en'];
@@ -303,6 +411,22 @@ export default function BackupManagerDashboard() {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [authHeaders, language, oauthForm.remote_name, showMsg]);
+
+  useEffect(() => {
+    if (cronMode !== 'guided') return;
+    const minute = Math.max(0, Math.min(59, cronMinute));
+    const hour = Math.max(0, Math.min(23, cronHour));
+    const everyHours = Math.max(1, Math.min(23, cronIntervalHours));
+    const weekday = Math.max(0, Math.min(6, cronWeekday));
+    const dayOfMonth = Math.max(1, Math.min(31, cronDayOfMonth));
+
+    let cron = '0 2 * * *';
+    if (cronFrequency === 'hourly') cron = `${minute} */${everyHours} * * *`;
+    if (cronFrequency === 'daily') cron = `${minute} ${hour} * * *`;
+    if (cronFrequency === 'weekly') cron = `${minute} ${hour} * * ${weekday}`;
+    if (cronFrequency === 'monthly') cron = `${minute} ${hour} ${dayOfMonth} * *`;
+    setForm((prev) => ({ ...prev, cron_expression: cron }));
+  }, [cronMode, cronFrequency, cronMinute, cronHour, cronIntervalHours, cronWeekday, cronDayOfMonth]);
 
   useEffect(() => {
     if (showRcloneConfig) {
@@ -640,6 +764,12 @@ export default function BackupManagerDashboard() {
     }
   };
 
+  const applyCronPreset = (cron: string, nextFrequency: CronFrequency) => {
+    setCronMode('guided');
+    setCronFrequency(nextFrequency);
+    setForm((prev) => ({ ...prev, cron_expression: cron }));
+  };
+
   const runStream = (profile: Profile) => {
     setStreamingProfile(profile);
     setStreamProgress(-1);
@@ -701,8 +831,8 @@ export default function BackupManagerDashboard() {
 
   // ---- Wizard ----
   const renderWizard = () => (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
-      <div className={`${modalBox} max-w-2xl`}>
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto backdrop-blur-sm bg-black/40">
+      <div className={`${modalBox} max-w-2xl max-h-[90vh] my-4`}>
         <div className={modalHeader}>
           <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.newProfile}</h3>
           <button onClick={() => setShowWizard(false)} className="text-slate-400 hover:text-red-500">
@@ -899,18 +1029,124 @@ export default function BackupManagerDashboard() {
           {/* Step 3: Schedule */}
           {wizardTab === 3 && (
             <div className="space-y-5">
-              <div className="space-y-1">
-                <label className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.cronLabel}</label>
-                <input
-                  type="text"
-                  value={form.cron_expression}
-                  onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
-                  placeholder="0 2 * * *"
-                  className={`${input} font-mono`}
-                />
-                <p className={`text-[10px] ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
-                  Tip: <code>0 2 * * *</code> = daily at 2:00 AM · <code>0 */6 * * *</code> = every 6 hours
-                </p>
+              <div className="space-y-3">
+                <label className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.scheduleMode}</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCronMode('guided')}
+                    className={`px-3 py-2 text-xs font-bold rounded-xl border transition ${
+                      cronMode === 'guided'
+                        ? 'bg-indigo-600 text-white border-indigo-500'
+                        : isDark
+                        ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                        : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {tr.guidedMode}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCronMode('advanced')}
+                    className={`px-3 py-2 text-xs font-bold rounded-xl border transition ${
+                      cronMode === 'advanced'
+                        ? 'bg-indigo-600 text-white border-indigo-500'
+                        : isDark
+                        ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                        : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {tr.advancedMode}
+                  </button>
+                </div>
+              </div>
+
+              {cronMode === 'guided' ? (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.quickPresets}</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button type="button" onClick={() => applyCronPreset('0 */6 * * *', 'hourly')} className={`px-3 py-2 text-xs rounded-xl border text-left ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-200' : 'border-slate-300 hover:bg-slate-100 text-slate-700'}`}>{tr.every6Hours}</button>
+                      <button type="button" onClick={() => applyCronPreset('0 2 * * *', 'daily')} className={`px-3 py-2 text-xs rounded-xl border text-left ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-200' : 'border-slate-300 hover:bg-slate-100 text-slate-700'}`}>{tr.dailyAt2}</button>
+                      <button type="button" onClick={() => applyCronPreset('0 2 * * 0', 'weekly')} className={`px-3 py-2 text-xs rounded-xl border text-left ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-200' : 'border-slate-300 hover:bg-slate-100 text-slate-700'}`}>{tr.weeklySunday}</button>
+                      <button type="button" onClick={() => applyCronPreset('0 2 1 * *', 'monthly')} className={`px-3 py-2 text-xs rounded-xl border text-left ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-200' : 'border-slate-300 hover:bg-slate-100 text-slate-700'}`}>{tr.monthlyFirst}</button>
+                    </div>
+                  </div>
+
+                  <div className={`space-y-3 rounded-xl border p-3 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
+                    <label className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.customSchedule}</label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.frequency}</label>
+                        <select value={cronFrequency} onChange={(e) => setCronFrequency(e.target.value as CronFrequency)} className={input}>
+                          <option value="hourly">{tr.freqHourly}</option>
+                          <option value="daily">{tr.freqDaily}</option>
+                          <option value="weekly">{tr.freqWeekly}</option>
+                          <option value="monthly">{tr.freqMonthly}</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.minute}</label>
+                        <input type="number" min={0} max={59} value={cronMinute} onChange={(e) => setCronMinute(parseInt(e.target.value) || 0)} className={input} />
+                      </div>
+                    </div>
+
+                    {cronFrequency !== 'hourly' && (
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.hour}</label>
+                        <input type="number" min={0} max={23} value={cronHour} onChange={(e) => setCronHour(parseInt(e.target.value) || 0)} className={input} />
+                      </div>
+                    )}
+                    {cronFrequency === 'hourly' && (
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.everyNHours}</label>
+                        <input type="number" min={1} max={23} value={cronIntervalHours} onChange={(e) => setCronIntervalHours(parseInt(e.target.value) || 1)} className={input} />
+                      </div>
+                    )}
+                    {cronFrequency === 'weekly' && (
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.weekday}</label>
+                        <select value={cronWeekday} onChange={(e) => setCronWeekday(parseInt(e.target.value) || 0)} className={input}>
+                          <option value={0}>{tr.weekdaySun}</option>
+                          <option value={1}>{tr.weekdayMon}</option>
+                          <option value={2}>{tr.weekdayTue}</option>
+                          <option value={3}>{tr.weekdayWed}</option>
+                          <option value={4}>{tr.weekdayThu}</option>
+                          <option value={5}>{tr.weekdayFri}</option>
+                          <option value={6}>{tr.weekdaySat}</option>
+                        </select>
+                      </div>
+                    )}
+                    {cronFrequency === 'monthly' && (
+                      <div className="space-y-1">
+                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.dayOfMonth}</label>
+                        <input type="number" min={1} max={31} value={cronDayOfMonth} onChange={(e) => setCronDayOfMonth(parseInt(e.target.value) || 1)} className={input} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <label className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.cronLabel}</label>
+                  <input
+                    type="text"
+                    value={form.cron_expression}
+                    onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
+                    placeholder="0 2 * * *"
+                    className={`${input} font-mono`}
+                  />
+                  <p className={`text-[10px] ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                    Tip: <code>0 2 * * *</code> = daily at 2:00 AM · <code>0 */6 * * *</code> = every 6 hours
+                  </p>
+                </div>
+              )}
+              <div className={`text-[11px] rounded-xl border px-3 py-2 font-mono ${isDark ? 'border-slate-800 bg-slate-950/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+                <span className="font-semibold mr-2">{tr.cronPreview}:</span>{form.cron_expression}
+                <div className={`mt-1 font-sans text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.cronHumanHint}</div>
+                <div className={`mt-1 font-sans text-[10px] ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                  {tr.cronHumanLabel}: {humanizeCron(String(form.cron_expression || ''), language || 'en')}
+                </div>
               </div>
 
               <div className={`space-y-3 pt-4 border-t ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
@@ -967,7 +1203,7 @@ export default function BackupManagerDashboard() {
         </div>
 
         {/* Footer */}
-        <div className={`p-5 border-t flex justify-between ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}>
+        <div className={`p-5 border-t flex justify-between shrink-0 ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}>
           {wizardTab > 1 ? (
             <button
               type="button"
@@ -1008,7 +1244,7 @@ export default function BackupManagerDashboard() {
     const isIndeterminate = streamProgress < 0;
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-sm bg-black/60">
-        <div className={`${modalBox} max-w-3xl`}>
+        <div className={`${modalBox} max-w-3xl max-h-[90vh] my-4`}>
           <div className={modalHeader}>
             <h3 className={`font-bold text-sm flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
               <Icons.Activity className={`w-5 h-5 text-indigo-500 ${!streamDone ? 'animate-pulse' : ''}`} />
@@ -1087,7 +1323,7 @@ export default function BackupManagerDashboard() {
 
     return (
       <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
-        <div className={`${modalBox} max-w-2xl h-[75vh]`}>
+        <div className={`${modalBox} max-w-2xl h-[75vh] max-h-[90vh] my-4`}>
           <div className={modalHeader}>
             <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.browseBtn}</h3>
             <button onClick={() => setShowExplorer(false)} className="text-slate-400 hover:text-red-500">
@@ -1193,6 +1429,13 @@ export default function BackupManagerDashboard() {
             onClick={() => {
               setForm({ profile_name: '', source_type: 'folder', source_path: '', remote_name: '', remote_path: '', cron_expression: '0 0 * * *', is_active: 1, realtime_sync: 0, rclone_flags: '{}' });
               setFlags({ inplace: false, metadata: false, size_only: false, sync_deletions: true, transfers: 4 });
+              setCronMode('guided');
+              setCronFrequency('daily');
+              setCronMinute(0);
+              setCronHour(2);
+              setCronIntervalHours(6);
+              setCronWeekday(0);
+              setCronDayOfMonth(1);
               setWizardTab(1);
               setWizardError('');
               setShowWizard(true);
@@ -1293,6 +1536,9 @@ export default function BackupManagerDashboard() {
                       {p.cron_expression || 'No cron'}
                     </span>
                   </div>
+                  <p className={`text-[11px] mb-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                    {humanizeCron(p.cron_expression || '', language || 'en')}
+                  </p>
 
                   <div className={`flex items-center gap-2 pt-4 border-t relative z-10 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
                     <button
@@ -1322,8 +1568,8 @@ export default function BackupManagerDashboard() {
 
       {/* Cloud Remote Setup Modal */}
       {showRcloneConfig && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
-          <div className={`${modalBox} max-w-2xl`}>
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto backdrop-blur-sm bg-black/40">
+          <div className={`${modalBox} max-w-2xl max-h-[90vh] my-4`}>
             <div className={modalHeader}>
               <div className="space-y-0.5">
                 <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.cloudSetup}</h3>
@@ -1334,7 +1580,7 @@ export default function BackupManagerDashboard() {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
               <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 Zero-CLI mode: enter Google OAuth app information and complete consent.
                 The backend will exchange token and update `rclone.conf` automatically.

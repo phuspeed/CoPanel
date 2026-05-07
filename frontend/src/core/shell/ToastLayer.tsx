@@ -14,6 +14,8 @@ const LEVEL_STYLES: Record<Level, { ring: string; icon: any; tint: string }> = {
 
 export default function ToastLayer() {
   const toasts = useToasts();
+  const language = (localStorage.getItem('copanel_lang') || 'en') === 'vi' ? 'vi' : 'en';
+  const dismissLabel = language === 'vi' ? 'Đóng thông báo' : 'Dismiss notification';
   if (!toasts.length) return null;
   return (
     <div className="fixed z-[9999] bottom-4 right-4 flex flex-col gap-3 pointer-events-none w-[min(360px,calc(100vw-32px))]">
@@ -40,7 +42,7 @@ export default function ToastLayer() {
             <button
               onClick={() => dismissToast(t.id)}
               className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              aria-label="Dismiss"
+              aria-label={dismissLabel}
             >
               <Icons.X className="w-4 h-4" />
             </button>

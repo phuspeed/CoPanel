@@ -12,13 +12,7 @@ interface Props {
   onClose: () => void;
 }
 
-const STATUS_LABEL: Record<Job['status'], string> = {
-  queued: 'Queued',
-  running: 'Running',
-  success: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
+type Lang = 'en' | 'vi';
 
 const STATUS_BADGE: Record<Job['status'], string> = {
   queued: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
@@ -42,10 +36,53 @@ export default function TaskCenter({ open, onClose }: Props) {
   const { jobs } = useJobs();
   const [selected, setSelected] = useState<string | null>(null);
   const [logs, setLogs] = useState<any[]>([]);
+  const [language, setLanguage] = useState<Lang>(() => (localStorage.getItem('copanel_lang') as Lang) || 'en');
+  const tr = language === 'vi'
+    ? {
+      title: 'Trung tâm tác vụ',
+      activeStats: 'đang chạy',
+      totalStats: 'tổng',
+      active: 'Đang hoạt động',
+      recent: 'Gần đây',
+      noActiveJobs: 'Không có tác vụ đang chạy.',
+      noRecentJobs: 'Chưa có tác vụ gần đây.',
+      logs: 'Nhật ký',
+      noLogs: 'Chưa có log.',
+      cancel: 'Hủy',
+      platform: 'nền tảng',
+      statusLabel: {
+        queued: 'Đang chờ',
+        running: 'Đang chạy',
+        success: 'Hoàn thành',
+        failed: 'Thất bại',
+        cancelled: 'Đã hủy',
+      } as Record<Job['status'], string>,
+    }
+    : {
+      title: 'Task Center',
+      activeStats: 'active',
+      totalStats: 'total',
+      active: 'Active',
+      recent: 'Recent',
+      noActiveJobs: 'No active jobs.',
+      noRecentJobs: 'No recent jobs.',
+      logs: 'Logs',
+      noLogs: 'No log entries yet.',
+      cancel: 'Cancel',
+      platform: 'platform',
+      statusLabel: {
+        queued: 'Queued',
+        running: 'Running',
+        success: 'Completed',
+        failed: 'Failed',
+        cancelled: 'Cancelled',
+      } as Record<Job['status'], string>,
+    };
 
   useEffect(() => {
     if (open) {
       jobsApi.refresh().catch(() => {});
+      setLanguage((localStorage.getItem('copanel_lang') as Lang) || 'en');
     }
   }, [open]);
 
@@ -80,8 +117,8 @@ export default function TaskCenter({ open, onClose }: Props) {
       >
         <header className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Task Center</h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">{active.length} active / {jobs.length} total</p>
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">{tr.title}</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">{active.length} {tr.activeStats} / {jobs.length} {tr.totalStats}</p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-200">
             <Icons.X className="w-4 h-4" />
@@ -89,21 +126,21 @@ export default function TaskCenter({ open, onClose }: Props) {
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          <Section title="Active">
+          <Section title={tr.active}>
             {active.length === 0 ? (
-              <div className="px-5 py-3 text-xs text-slate-500">No active jobs.</div>
+              <div className="px-5 py-3 text-xs text-slate-500">{tr.noActiveJobs}</div>
             ) : (
               active.map((j) => (
-                <JobRow key={j.id} job={j} active onSelect={() => setSelected(j.id)} />
+                <JobRow key={j.id} job={j} active onSelect={() => setSelected(j.id)} statusLabel={tr.statusLabel} platformLabel={tr.platform} cancelLabel={tr.cancel} />
               ))
             )}
           </Section>
-          <Section title="Recent">
+          <Section title={tr.recent}>
             {recent.length === 0 ? (
-              <div className="px-5 py-3 text-xs text-slate-500">No recent jobs.</div>
+              <div className="px-5 py-3 text-xs text-slate-500">{tr.noRecentJobs}</div>
             ) : (
               recent.map((j) => (
-                <JobRow key={j.id} job={j} onSelect={() => setSelected(j.id)} />
+                <JobRow key={j.id} job={j} onSelect={() => setSelected(j.id)} statusLabel={tr.statusLabel} platformLabel={tr.platform} cancelLabel={tr.cancel} />
               ))
             )}
           </Section>
@@ -112,7 +149,7 @@ export default function TaskCenter({ open, onClose }: Props) {
         {selected && (
           <div className="border-t border-slate-200 dark:border-slate-800 max-h-[40%] overflow-y-auto bg-slate-50 dark:bg-slate-950/40">
             <div className="flex items-center justify-between px-5 py-2">
-              <p className="text-[11px] uppercase tracking-wider text-slate-500">Logs</p>
+              <p className="text-[11px] uppercase tracking-wider text-slate-500">{tr.logs}</p>
               <button
                 onClick={() => setSelected(null)}
                 className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
@@ -121,7 +158,7 @@ export default function TaskCenter({ open, onClose }: Props) {
               </button>
             </div>
             <pre className="px-5 pb-4 text-[11px] font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-              {logs.length === 0 ? 'No log entries yet.' : logs.map((l, i) => `${new Date(l.ts).toLocaleTimeString()}  ${l.line}`).join('\n')}
+              {logs.length === 0 ? tr.noLogs : logs.map((l, i) => `${new Date(l.ts).toLocaleTimeString()}  ${l.line}`).join('\n')}
             </pre>
           </div>
         )}
@@ -139,7 +176,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function JobRow({ job, active, onSelect }: { job: Job; active?: boolean; onSelect: () => void }) {
+function JobRow({
+  job,
+  active,
+  onSelect,
+  statusLabel,
+  platformLabel,
+  cancelLabel,
+}: {
+  job: Job;
+  active?: boolean;
+  onSelect: () => void;
+  statusLabel: Record<Job['status'], string>;
+  platformLabel: string;
+  cancelLabel: string;
+}) {
   return (
     <button
       onClick={onSelect}
@@ -149,7 +200,7 @@ function JobRow({ job, active, onSelect }: { job: Job; active?: boolean; onSelec
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{job.title}</p>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {job.module || 'platform'} · {STATUS_LABEL[job.status]} · {formatDuration(job.started_at, job.finished_at)}
+            {job.module || platformLabel} · {statusLabel[job.status]} · {formatDuration(job.started_at, job.finished_at)}
           </p>
           {active && (
             <div className="mt-2 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
@@ -163,7 +214,7 @@ function JobRow({ job, active, onSelect }: { job: Job; active?: boolean; onSelec
           {job.error && <p className="text-[11px] text-red-500 mt-1 truncate">{job.error}</p>}
         </div>
         <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE[job.status]}`}>
-          {STATUS_LABEL[job.status]}
+          {statusLabel[job.status]}
         </span>
       </div>
       {active && (
@@ -175,7 +226,7 @@ function JobRow({ job, active, onSelect }: { job: Job; active?: boolean; onSelec
             }}
             className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-400"
           >
-            Cancel
+            {cancelLabel}
           </button>
         </div>
       )}

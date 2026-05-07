@@ -36,6 +36,53 @@ const store = createStore<State>({ inbox: [], unread: 0, toasts: [] });
 const TOAST_TTL_MS = 6000;
 let toastSeq = 1;
 
+type Lang = 'en' | 'vi';
+
+function getCurrentLang(): Lang {
+  return (localStorage.getItem('copanel_lang') as Lang) === 'vi' ? 'vi' : 'en';
+}
+
+function pickLocalizedFromValue(value: any, lang: Lang): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    return value[lang] || value.en || value.vi || value.default;
+  }
+  return undefined;
+}
+
+function resolveLocalizedField(src: any, baseKey: string, lang: Lang): string | undefined {
+  if (!src || typeof src !== 'object') return undefined;
+  const direct = pickLocalizedFromValue(src[baseKey], lang);
+  if (direct) return direct;
+  const fromMap = pickLocalizedFromValue(src[`${baseKey}_i18n`], lang);
+  if (fromMap) return fromMap;
+  const fromLangSpecific = src[`${baseKey}_${lang}`];
+  if (typeof fromLangSpecific === 'string' && fromLangSpecific) return fromLangSpecific;
+  const fallbackEn = src[`${baseKey}_en`];
+  if (typeof fallbackEn === 'string' && fallbackEn) return fallbackEn;
+  const fallbackVi = src[`${baseKey}_vi`];
+  if (typeof fallbackVi === 'string' && fallbackVi) return fallbackVi;
+  return undefined;
+}
+
+function localizeNotification(raw: Notification | any): Notification {
+  const lang = getCurrentLang();
+  const payload = raw?.payload && typeof raw.payload === 'object' ? raw.payload : {};
+  const title = resolveLocalizedField(raw, 'title', lang)
+    || resolveLocalizedField(payload, 'title', lang)
+    || (raw?.title || '');
+  const body = resolveLocalizedField(raw, 'body', lang)
+    || resolveLocalizedField(payload, 'body', lang)
+    || raw?.body
+    || null;
+  return {
+    ...raw,
+    title,
+    body,
+  };
+}
+
 function pushToast(t: Toast) {
   store.setState((s) => ({ toasts: [t, ...s.toasts].slice(0, 6) }));
   if (t.ephemeral !== false) {
@@ -47,7 +94,7 @@ function pushToast(t: Toast) {
 
 events.on('notifications', (msg: any) => {
   if (msg?.event === 'new' && msg.notification) {
-    const n: Notification = msg.notification;
+    const n: Notification = localizeNotification(msg.notification);
     pushToast({ ...n, ephemeral: true });
     store.setState((s) => ({
       inbox: [n, ...s.inbox].slice(0, 200),
@@ -59,7 +106,7 @@ events.on('notifications', (msg: any) => {
 export const notificationsApi = {
   async refresh() {
     const data = await api<{ items: Notification[]; unread: number }>(`/api/platform/notifications?limit=50`);
-    store.setState({ inbox: data.items || [], unread: data.unread || 0 });
+    store.setState({ inbox: (data.items || []).map(localizeNotification), unread: data.unread || 0 });
   },
   async markAllRead() {
     await api(`/api/platform/notifications/read-all`, { method: 'POST' });

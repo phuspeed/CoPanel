@@ -31,12 +31,60 @@ interface State {
 
 const store = createStore<State>({ jobs: {}, order: [], lastFetch: 0 });
 
+type Lang = 'en' | 'vi';
+
+function getCurrentLang(): Lang {
+  return (localStorage.getItem('copanel_lang') as Lang) === 'vi' ? 'vi' : 'en';
+}
+
+function pickLocalizedFromValue(value: any, lang: Lang): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value[lang] || value.en || value.vi || value.default;
+  return undefined;
+}
+
+function resolveLocalizedField(src: any, baseKey: string, lang: Lang): string | undefined {
+  if (!src || typeof src !== 'object') return undefined;
+  const direct = pickLocalizedFromValue(src[baseKey], lang);
+  if (direct) return direct;
+  const fromMap = pickLocalizedFromValue(src[`${baseKey}_i18n`], lang);
+  if (fromMap) return fromMap;
+  const fromLangSpecific = src[`${baseKey}_${lang}`];
+  if (typeof fromLangSpecific === 'string' && fromLangSpecific) return fromLangSpecific;
+  const fallbackEn = src[`${baseKey}_en`];
+  if (typeof fallbackEn === 'string' && fallbackEn) return fallbackEn;
+  const fallbackVi = src[`${baseKey}_vi`];
+  if (typeof fallbackVi === 'string' && fallbackVi) return fallbackVi;
+  return undefined;
+}
+
+function localizeJob(raw: Job | any): Job {
+  const lang = getCurrentLang();
+  const payload = raw?.payload && typeof raw.payload === 'object' ? raw.payload : {};
+  return {
+    ...raw,
+    title: resolveLocalizedField(raw, 'title', lang)
+      || resolveLocalizedField(payload, 'title', lang)
+      || raw?.title
+      || '',
+    message: resolveLocalizedField(raw, 'message', lang)
+      || resolveLocalizedField(payload, 'message', lang)
+      || raw?.message,
+    error: resolveLocalizedField(raw, 'error', lang)
+      || resolveLocalizedField(payload, 'error', lang)
+      || raw?.error
+      || null,
+  };
+}
+
 function upsert(job: Job) {
+  const localized = localizeJob(job);
   store.setState((s) => {
-    const next = { ...s.jobs, [job.id]: { ...s.jobs[job.id], ...job } };
+    const next = { ...s.jobs, [localized.id]: { ...s.jobs[localized.id], ...localized } };
     let order = s.order;
-    if (!order.includes(job.id)) {
-      order = [job.id, ...order].slice(0, 200);
+    if (!order.includes(localized.id)) {
+      order = [localized.id, ...order].slice(0, 200);
     }
     return { jobs: next, order };
   });
@@ -58,7 +106,8 @@ export const jobsApi = {
     store.setState(() => {
       const map: Record<string, Job> = {};
       const order: string[] = [];
-      for (const j of list) {
+      for (const raw of list) {
+        const j = localizeJob(raw);
         map[j.id] = j;
         order.push(j.id);
       }
@@ -66,7 +115,8 @@ export const jobsApi = {
     });
   },
   async get(id: string): Promise<Job> {
-    return api<Job>(`/api/platform/jobs/${id}`);
+    const data = await api<Job>(`/api/platform/jobs/${id}`);
+    return localizeJob(data);
   },
   async cancel(id: string) {
     return api(`/api/platform/jobs/${id}/cancel`, { method: 'POST' });

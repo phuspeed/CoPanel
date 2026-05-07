@@ -88,49 +88,113 @@ command_exists() {
 }
 
 # -----------------------------------------------------------------------------
-# APT: robust apt-get update when Launchpad PPAs are unreachable (common with
-# ondrej/php behind strict firewalls or regional mirror issues).
-# Ubuntu 22.04+ ship php-fpm in main/universe; Ondrej PPA is optional for CoPanel.
+# APT: avoid hanging forever on ppa.launchpadcontent.net (slow/failed TLS, firewalls).
+# - Short Acquire timeouts via apt.conf.d (applies to all apt in this install step)
+# - GNU timeout(1) caps total apt-get update wall time
+# - Disable Ondrej PHP PPA first, then any remaining Launchpad PPA files
+# Ubuntu 22.04+ ship php-fpm in main/universe; Launchpad PPAs are optional for CoPanel.
 # -----------------------------------------------------------------------------
-apt_update_or_recover() {
-    if ! command_exists apt-get; then
-        return 0
+
+COPANEL_APT_TIMEOUT_CONF="/etc/apt/apt.conf.d/99-copanel-install-timeouts"
+
+copanel_write_apt_timeouts() {
+    cat > "$COPANEL_APT_TIMEOUT_CONF" <<'EOF'
+// CoPanel install: do not hang indefinitely on unreachable mirrors
+Acquire::http::Timeout "20";
+Acquire::https::Timeout "20";
+Acquire::ftp::Timeout "20";
+Acquire::Retries "2";
+EOF
+}
+
+copanel_remove_apt_timeouts() {
+    rm -f "$COPANEL_APT_TIMEOUT_CONF"
+}
+
+apt_get_update_timed() {
+    # Exit 124 = GNU timeout — treat as failure and run recovery
+    if command_exists timeout; then
+        timeout 240 apt-get update
+        return $?
     fi
-    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    return $?
+}
 
-    if apt-get update; then
-        return 0
-    fi
-
-    log_warning "apt-get update failed. Common cause: unreachable PPA (e.g. ppa:ondrej/php → launchpadcontent.net)."
-    log_warning "CoPanel does not require Ondrej PHP on Ubuntu 22.04+ (use ubuntu-provided php*-fpm)."
-
+disable_ondrej_php_launchpad_sources() {
     local disabled_any=false
     shopt -s nullglob
     for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [[ -f "$ppa_f" ]] || continue
-        # Only the Ondrej *PHP* PPA (Launchpad); other ondrej/* PPAs are left alone
+        case "$ppa_f" in *.copanel-bak) continue ;; esac
         if grep -q 'ondrej/php' "$ppa_f" 2>/dev/null && grep -qE 'ppa\.launchpad(content)?\.net|ppa\.launchpad\.net' "$ppa_f" 2>/dev/null; then
-            log_warning "Temporarily disabling $(basename "$ppa_f") — restore later with:"
-            log_warning "  sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
+            log_warning "Temporarily disabling $(basename "$ppa_f") (Ondrej PHP / Launchpad)"
+            log_warning "  Restore: sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
             mv "$ppa_f" "${ppa_f}.copanel-bak"
             disabled_any=true
         fi
     done
     shopt -u nullglob
-
-    if [[ "$disabled_any" != true ]]; then
-        log_error "apt-get update failed and no Ondrej PHP list file was found to disable."
-        log_error "Fix network/firewall to Launchpad or remove broken entries under /etc/apt/sources.list.d/ then re-run."
-        return 1
+    if [[ "$disabled_any" == true ]]; then
+        return 0
     fi
+    return 1
+}
 
-    if apt-get update; then
-        log_success "apt-get update succeeded after disabling unreachable Ondrej PHP PPA"
+disable_all_launchpad_ppa_files() {
+    log_warning "Disabling all PPA files under sources.list.d that use Launchpad (ppa.launchpad*)…"
+    local disabled_any=false
+    shopt -s nullglob
+    for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "$ppa_f" ]] || continue
+        case "$ppa_f" in *.copanel-bak) continue ;; esac
+        if grep -qE 'ppa\.launchpad(content)?\.net|ppa\.launchpad\.net' "$ppa_f" 2>/dev/null; then
+            log_warning "  disabling $(basename "$ppa_f")"
+            mv "$ppa_f" "${ppa_f}.copanel-bak"
+            disabled_any=true
+        fi
+    done
+    shopt -u nullglob
+    if [[ "$disabled_any" == true ]]; then
+        return 0
+    fi
+    return 1
+}
+
+apt_update_or_recover() {
+    if ! command_exists apt-get; then
+        return 0
+    fi
+    export DEBIAN_FRONTEND=noninteractive
+    copanel_write_apt_timeouts
+
+    log_info "Running apt-get update (timeouts: 20s per mirror, max ~4m total if timeout(1) is available)…"
+
+    if apt_get_update_timed; then
         return 0
     fi
 
-    log_error "apt-get update still failing. Inspect: ls /etc/apt/sources.list.d/"
+    log_warning "apt-get update failed or timed out (common: ppa.launchpadcontent.net unreachable)."
+    log_warning "CoPanel does not require Ondrej PHP on Ubuntu 22.04+ (use ubuntu-provided php*-fpm)."
+
+    if disable_ondrej_php_launchpad_sources; then
+        if apt_get_update_timed; then
+            log_success "apt-get update succeeded after disabling Ondrej PHP PPA"
+            return 0
+        fi
+    else
+        log_warning "No Ondrej PHP Launchpad list found to disable; trying broader Launchpad cleanup…"
+    fi
+
+    if disable_all_launchpad_ppa_files; then
+        if apt_get_update_timed; then
+            log_success "apt-get update succeeded after disabling Launchpad-based PPAs"
+            return 0
+        fi
+    fi
+
+    log_error "apt-get update still failing. Inspect: ls -la /etc/apt/sources.list.d/"
+    log_error "Fix network/DNS/firewall or remove broken third-party entries manually, then re-run."
     return 1
 }
 
@@ -143,7 +207,7 @@ install_dependencies() {
     
     # Detect package manager
     if command_exists apt-get; then
-        apt_update_or_recover || exit 1
+        apt_update_or_recover || { copanel_remove_apt_timeouts; exit 1; }
         apt-get install -y \
             python3 python3-pip python3-venv \
             nginx \
@@ -197,6 +261,9 @@ install_dependencies() {
         systemctl start docker || true
         systemctl enable docker || true
     fi
+
+    # Remove CoPanel apt timeout snippet so normal apt behavior returns after install
+    copanel_remove_apt_timeouts
     
     log_success "Dependencies installed"
 }
