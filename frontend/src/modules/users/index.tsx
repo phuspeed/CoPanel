@@ -138,7 +138,7 @@ export default function UsersDashboard() {
 
   const fetchAvailableModules = async () => {
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const [coreRes, pkgRes] = await Promise.all([
         fetch('/api/modules', { headers }),
         fetch('/api/package_manager/list', { headers }),
