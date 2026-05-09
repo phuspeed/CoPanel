@@ -60,6 +60,8 @@ interface SystemStats {
     platform: string;
     hostname: string;
     processor: string;
+    cpu_model?: string;
+    machine?: string;
     boot_time: number;
     uptime_seconds: number;
   };
@@ -95,6 +97,13 @@ interface SystemStats {
       free: number;
       percent: number;
     }>;
+    aggregate?: {
+      total: number;
+      used: number;
+      free: number;
+      percent: number;
+      filesystems_count: number;
+    };
   };
   network: {
     bytes_sent: number;
@@ -137,6 +146,11 @@ const TEXT: Record<Language, Record<string, string>> = {
     connections: 'Connections',
     hostname: 'Hostname',
     os: 'OS',
+    arch: 'Arch',
+    cpuModel: 'CPU',
+    ramTotal: 'RAM total',
+    diskTotal: 'Disk capacity',
+    diskUsedFreeOf: '{used} used · {free} free · {total} total ({n} vol.)',
     resources: 'Resources',
     activeProcesses: 'Processes',
     pm2Manager: 'PM2',
@@ -210,12 +224,17 @@ const TEXT: Record<Language, Record<string, string>> = {
     loadingRealtime: 'Đang tải thống kê thời gian thực...',
     errorLabel: 'Lỗi',
     heroTitle: 'Giám sát tài nguyên hệ thống',
-    heroSubtitle: 'Theo dõi tài nguyên, tiến trình và PM2. Superadmin có thể kết thúc PID bị kẹt.',
+    heroSubtitle: 'Theo dõi tài nguyên, tiến trình hệ thống và PM2.',
     uptime: 'Thời gian hoạt động',
     cpuCores: 'Số nhân CPU',
     connections: 'Kết nối',
     hostname: 'Tên máy',
     os: 'Hệ điều hành',
+    arch: 'Kiến trúc',
+    cpuModel: 'CPU',
+    ramTotal: 'Tổng RAM',
+    diskTotal: 'Dung lượng ổ đĩa',
+    diskUsedFreeOf: '{used} đã dùng · {free} trống · {total} tổng ({n} phân vùng)',
     resources: 'Tài nguyên',
     activeProcesses: 'Tiến trình',
     pm2Manager: 'PM2',
@@ -305,6 +324,25 @@ const formatUptime = (seconds: number) => {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 };
+
+function diskAggregateFromPartitions(
+  parts: SystemStats['disk']['partitions']
+): NonNullable<SystemStats['disk']['aggregate']> {
+  const seen = new Set<string>();
+  let total = 0;
+  let used = 0;
+  let free = 0;
+  for (const p of parts) {
+    const key = p.device || p.mountpoint;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    total += p.total || 0;
+    used += p.used || 0;
+    free += p.free || 0;
+  }
+  const percent = total > 0 ? Math.round((used / total) * 1000) / 10 : 0;
+  return { total, used, free, percent, filesystems_count: seen.size };
+}
 
 export default function SystemMonitorDashboard() {
   const outlet = useOutletContext<{ language?: Language; theme?: ThemeMode } | null>();
@@ -552,6 +590,13 @@ export default function SystemMonitorDashboard() {
     ? diskData.reduce((max, p) => ((p.percent || 0) > (max.percent || 0) ? p : max), diskData[0])
     : null;
 
+  const diskAgg =
+    stats.disk.aggregate && stats.disk.aggregate.total > 0
+      ? stats.disk.aggregate
+      : diskAggregateFromPartitions(diskData);
+
+  const cpuDisplayName = (stats.system.cpu_model || stats.system.processor || '').trim();
+
   const usedFill = isDark ? '#ef4444' : '#dc2626';
   const freeFill = isDark ? '#10b981' : '#059669';
   const memoryChartData = [
@@ -599,6 +644,61 @@ export default function SystemMonitorDashboard() {
             {tr.heroTitle}
           </h2>
           <p className={cn('text-xs sm:text-sm leading-relaxed', textMuted)}>{tr.heroSubtitle}</p>
+          {(cpuDisplayName || stats.memory.total > 0 || diskAgg.total > 0) && (
+            <div
+              className={cn(
+                'rounded-xl border p-3 sm:p-4 space-y-2 sm:space-y-2.5 text-[11px] sm:text-sm',
+                isDark ? 'border-slate-700/80 bg-slate-950/45' : 'border-slate-200/90 bg-white/65'
+              )}
+            >
+              {cpuDisplayName && (
+                <p className="min-w-0">
+                  <span
+                    className={cn(
+                      'font-bold uppercase tracking-wide text-[10px] block sm:inline sm:mr-2',
+                      isDark ? 'text-slate-400' : 'text-slate-600'
+                    )}
+                  >
+                    {tr.cpuModel}
+                  </span>
+                  <span className={cn('font-medium break-words', isDark ? 'text-slate-200' : 'text-slate-800')}>{cpuDisplayName}</span>
+                </p>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <p className="min-w-0">
+                  <span
+                    className={cn(
+                      'font-bold uppercase tracking-wide text-[10px] block mb-0.5',
+                      isDark ? 'text-slate-400' : 'text-slate-600'
+                    )}
+                  >
+                    {tr.ramTotal}
+                  </span>
+                  <span className={cn('font-mono font-semibold tabular-nums', isDark ? 'text-slate-100' : 'text-slate-900')}>
+                    {formatBytes(stats.memory.total)}
+                  </span>
+                </p>
+                <p className="min-w-0">
+                  <span
+                    className={cn(
+                      'font-bold uppercase tracking-wide text-[10px] block mb-0.5',
+                      isDark ? 'text-slate-400' : 'text-slate-600'
+                    )}
+                  >
+                    {tr.diskTotal}
+                  </span>
+                  <span className={cn('font-mono font-semibold leading-snug break-words', isDark ? 'text-slate-100' : 'text-slate-900')}>
+                    {trf('diskUsedFreeOf', {
+                      used: formatBytes(diskAgg.used),
+                      free: formatBytes(diskAgg.free),
+                      total: formatBytes(diskAgg.total),
+                      n: diskAgg.filesystems_count,
+                    })}
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 text-[10px] sm:text-xs pt-1">
             <span
               className={cn(
@@ -624,6 +724,16 @@ export default function SystemMonitorDashboard() {
             >
               {tr.connections}: {stats.network.connections}
             </span>
+            {stats.system.machine && (
+              <span
+                className={cn(
+                  'px-2.5 py-1 rounded-full border font-medium font-mono',
+                  isDark ? 'border-slate-700 bg-slate-900/60 text-slate-300' : 'border-slate-200 bg-white/80 text-slate-700'
+                )}
+              >
+                {tr.arch}: {stats.system.machine}
+              </span>
+            )}
           </div>
         </div>
         <div

@@ -15,6 +15,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import psutil
 
+# Skip virtual / pseudo filesystems when aggregating disk capacity
+_SKIP_DISK_FSTYPES = frozenset({
+    "", "tmpfs", "devtmpfs", "proc", "sysfs", "cgroup", "cgroup2",
+    "pstore", "bpf", "tracefs", "fusectl", "mqueue", "overlay",
+    "rpc_pipefs", "autofs", "binfmt_misc", "securityfs", "debugfs",
+    "hugetlbfs", "configfs", "squashfs", "fuse.portal", "fuse.gvfsd-fuse",
+})
+
 
 class SystemMonitor:
     """System monitoring functionality."""
@@ -24,6 +32,38 @@ class SystemMonitor:
         """PIDs that must not receive signals from the panel (avoid self-destruct)."""
         protected = {1, os.getpid()}
         return protected
+
+    @staticmethod
+    def _read_cpu_model() -> str:
+        """Human-readable CPU name (Linux /proc/cpuinfo; macOS sysctl; else platform)."""
+        sysname = platform.system()
+        if sysname == "Linux":
+            try:
+                with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        low = line.lower()
+                        if low.startswith("model name") or low.startswith("cpu model\t") or low.startswith("hardware\t"):
+                            parts = line.split(":", 1)
+                            if len(parts) == 2:
+                                name = parts[1].strip()
+                                if name and not name.isdigit():
+                                    return name
+            except OSError:
+                pass
+        if sysname == "Darwin":
+            try:
+                res = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.strip()
+            except Exception:
+                pass
+        proc = (platform.processor() or "").strip()
+        return proc
 
     @staticmethod
     def get_cpu_usage() -> Dict[str, Any]:
@@ -73,7 +113,17 @@ class SystemMonitor:
         """Get disk usage information."""
         try:
             partitions = []
+            seen_devices: set = set()
+            agg_total = 0
+            agg_used = 0
+            agg_free = 0
             for partition in psutil.disk_partitions():
+                fst = (partition.fstype or "").lower()
+                if fst in _SKIP_DISK_FSTYPES:
+                    continue
+                mp = partition.mountpoint or ""
+                if mp in ("/proc", "/sys", "/dev", "/run") or mp.startswith("/proc/") or mp.startswith("/sys/"):
+                    continue
                 try:
                     usage = psutil.disk_usage(partition.mountpoint)
                     partitions.append({
@@ -85,10 +135,26 @@ class SystemMonitor:
                         "free": usage.free,
                         "percent": usage.percent,
                     })
+                    dev_key = partition.device or mp
+                    if dev_key not in seen_devices:
+                        seen_devices.add(dev_key)
+                        agg_total += int(usage.total)
+                        agg_used += int(usage.used)
+                        agg_free += int(usage.free)
                 except PermissionError:
                     continue
 
-            return {"partitions": partitions}
+            agg_percent = round((agg_used / agg_total) * 100, 1) if agg_total > 0 else 0.0
+            return {
+                "partitions": partitions,
+                "aggregate": {
+                    "total": agg_total,
+                    "used": agg_used,
+                    "free": agg_free,
+                    "percent": agg_percent,
+                    "filesystems_count": len(seen_devices),
+                },
+            }
         except Exception as e:
             return {"error": str(e)}
 
@@ -137,11 +203,15 @@ class SystemMonitor:
         """Get system information."""
         try:
             boot_time = psutil.boot_time()
+            cpu_model = SystemMonitor._read_cpu_model()
+            proc = platform.processor()
             return {
                 "system": platform.system(),
                 "platform": platform.platform(),
                 "hostname": platform.node(),
-                "processor": platform.processor(),
+                "processor": proc,
+                "cpu_model": cpu_model or proc or "",
+                "machine": platform.machine(),
                 "boot_time": boot_time,
                 "uptime_seconds": int(time.time() - boot_time),
             }
