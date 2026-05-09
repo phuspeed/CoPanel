@@ -501,13 +501,17 @@ class BackupTaskEngine:
     @staticmethod
     def export_mysql(db_name: str, out_file: Path) -> Tuple[bool, str]:
         """
-        Dump one MySQL/MariaDB schema to a .sql file (same auth style as database_manager: sudo -u root).
+        Dump one MySQL/MariaDB schema to a .sql.gz file (same pipeline as database_manager: sudo, pipe gzip).
         Returns (success, error_message). error_message is empty on success.
         """
         if os.name == "nt":
             try:
+                import gzip as _gzip
+
                 out_file.parent.mkdir(parents=True, exist_ok=True)
-                out_file.write_text("-- Mock SQL dump (Windows dev)\n", encoding="utf-8")
+                out_file.write_bytes(
+                    _gzip.compress(b"-- Mock SQL dump (Windows dev)\n", compresslevel=6)
+                )
                 return True, ""
             except Exception as e:
                 return False, str(e)
@@ -526,6 +530,8 @@ class BackupTaskEngine:
         dump_bin = shutil.which("mysqldump") or shutil.which("mariadb-dump")
         if not dump_bin:
             return False, "mysqldump / mariadb-dump not found on PATH."
+        if not shutil.which("gzip"):
+            return False, "gzip not found on PATH (required for compressed SQL backups)."
 
         try:
             out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -537,7 +543,8 @@ class BackupTaskEngine:
         quoted_out = shlex.quote(str(out_file))
         cmd = (
             f"sudo {quoted_dump} -u root --single-transaction --quick "
-            f"--routines --events --triggers {quoted_name} > {quoted_out}"
+            f"--routines --events --triggers {quoted_name} "
+            f"| gzip -c > {quoted_out}"
         )
         try:
             res = subprocess.run(
@@ -562,7 +569,7 @@ class BackupTaskEngine:
                     pass
                 return (
                     False,
-                    "mysqldump produced an empty file. Check that the database exists and root can access it (sudo mysql).",
+                    "mysqldump produced an empty archive. Check that the database exists and root can access it (sudo mysql).",
                 )
             return True, ""
         except subprocess.TimeoutExpired:
@@ -597,7 +604,7 @@ class BackupTaskEngine:
         if profile["source_type"] == "mysql":
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", source_path)[:80] or "db"
-            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql"
+            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql.gz"
             ok, err = BackupTaskEngine.export_mysql(source_path, dump_file)
             if not ok:
                 print(f"MySQL dump failed: {err}")

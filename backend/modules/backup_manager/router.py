@@ -239,7 +239,7 @@ async def stream_task(profile_id: int):
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", source_path)[:80] or "db"
-            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql"
+            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql.gz"
             ok, err_msg = BackupTaskEngine.export_mysql(source_path, dump_file)
 
             if not ok:
