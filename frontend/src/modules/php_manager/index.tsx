@@ -43,7 +43,7 @@ export default function PHPManagerDashboard() {
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState<string|null>(null);
   const [togglingMod, setTogglingMod] = useState<string|null>(null);
-  const [msg, setMsg] = useState<{text:string;isError:boolean}|null>(null);
+  const [msg, setMsg] = useState<{ text: string; tone: 'ok' | 'err' | 'warn' } | null>(null);
 
   const tr = {
     en: {
@@ -55,6 +55,8 @@ export default function PHPManagerDashboard() {
       modSearch:'Search extensions...', enabled:'Enabled', disabled:'Disabled',
       allMods:'All', enabledMods:'Enabled', disabledMods:'Disabled',
       loading:'Loading...', noVersions:'No versions found.',
+      extNeedInstall:'Install this PHP version on the Versions tab before managing extensions.',
+      activeLabel:'Active',
     },
     vi: {
       title:'Quản lý PHP', desc:'Cài đặt phiên bản PHP, bật/tắt extension, chỉnh php.ini.',
@@ -65,6 +67,8 @@ export default function PHPManagerDashboard() {
       modSearch:'Tìm extension...', enabled:'Bật', disabled:'Tắt',
       allMods:'Tất cả', enabledMods:'Đang bật', disabledMods:'Đang tắt',
       loading:'Đang tải...', noVersions:'Chưa có phiên bản nào.',
+      extNeedInstall:'Hãy cài phiên bản PHP này ở tab Phiên bản trước khi quản lý extension.',
+      activeLabel:'Đang dùng',
     }
   }[language || 'en'];
 
@@ -73,9 +77,9 @@ export default function PHPManagerDashboard() {
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   }), [token]);
 
-  const showMsg = (text: string, isError = false) => {
-    setMsg({ text, isError });
-    setTimeout(() => setMsg(null), 4000);
+  const showMsg = (text: string, tone: 'ok' | 'err' | 'warn' = 'ok') => {
+    setMsg({ text, tone });
+    setTimeout(() => setMsg(null), tone === 'warn' ? 6500 : 4000);
   };
 
   // Fetch versions list
@@ -86,12 +90,12 @@ export default function PHPManagerDashboard() {
       if (res.ok) {
         const data = await res.json();
         const installed: string[] = data.versions || [];
-        const active: string = data.active || installed[0] || '';
+        const active: string = (data.active && installed.includes(data.active) ? data.active : '') || installed[0] || '';
         setVersions(INSTALLABLE_VERSIONS.map(v => ({
           version: v,
-          status: v === active ? 'active' : installed.includes(v) ? 'installed' : 'available'
+          status: v === active && installed.includes(v) ? 'active' : installed.includes(v) ? 'installed' : 'available'
         })));
-        if (!selectedVersion) setSelectedVersion(active || '8.2');
+        if (!selectedVersion) setSelectedVersion(active || installed[0] || '8.2');
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -139,9 +143,14 @@ export default function PHPManagerDashboard() {
         method: 'POST', headers: authHeaders, body: JSON.stringify({ version: ver })
       });
       const d = await res.json();
-      showMsg(d.message || 'Done.', !res.ok);
-      if (res.ok) fetchVersions();
-    } catch { showMsg('Connection error.', true); }
+      const detail = typeof d?.detail === 'string' ? d.detail : d?.message;
+      showMsg(detail || (res.ok ? 'Done.' : 'Failed.'), res.ok ? 'ok' : 'err');
+      if (res.ok) {
+        await fetchVersions();
+        if (tab === 'modules') fetchModules(selectedVersion);
+        if (tab === 'ini') fetchIni(selectedVersion);
+      }
+    } catch { showMsg('Connection error.', 'err'); }
     finally { setInstalling(null); }
   };
 
@@ -152,9 +161,14 @@ export default function PHPManagerDashboard() {
         method: 'DELETE', headers: authHeaders
       });
       const d = await res.json();
-      showMsg(d.message || 'Done.', !res.ok);
-      if (res.ok) fetchVersions();
-    } catch { showMsg('Connection error.', true); }
+      const detail = typeof d?.detail === 'string' ? d.detail : d?.message;
+      showMsg(detail || (res.ok ? 'Done.' : 'Failed.'), res.ok ? 'ok' : 'err');
+      if (res.ok) {
+        await fetchVersions();
+        if (tab === 'modules') fetchModules(selectedVersion);
+        if (tab === 'ini') fetchIni(selectedVersion);
+      }
+    } catch { showMsg('Connection error.', 'err'); }
   };
 
   const handleSetActive = async (ver: string) => {
@@ -163,9 +177,10 @@ export default function PHPManagerDashboard() {
         method: 'POST', headers: authHeaders, body: JSON.stringify({ version: ver })
       });
       const d = await res.json();
-      showMsg(d.message || 'Done.', !res.ok);
+      const detail = typeof d?.detail === 'string' ? d.detail : d?.message;
+      showMsg(detail || (res.ok ? 'Done.' : 'Failed.'), res.ok ? 'ok' : 'err');
       if (res.ok) fetchVersions();
-    } catch { showMsg('Connection error.', true); }
+    } catch { showMsg('Connection error.', 'err'); }
   };
 
   const handleToggleModule = async (mod: string, enable: boolean) => {
@@ -177,14 +192,21 @@ export default function PHPManagerDashboard() {
         method: 'POST', headers: authHeaders,
         body: JSON.stringify({ version: selectedVersion, module: mod, enable })
       });
+      const d = await res.json().catch(() => ({}));
       if (!res.ok) {
         setModuleStates(s => ({ ...s, [mod]: prev }));
-        const d = await res.json();
-        showMsg(d.detail || 'Failed.', true);
+        showMsg(typeof d?.detail === 'string' ? d.detail : 'Failed.', 'err');
+        return;
       }
+      if (d.status === 'warning' && d.message) {
+        showMsg(d.message, 'warn');
+        await fetchModules(selectedVersion);
+        return;
+      }
+      await fetchModules(selectedVersion);
     } catch {
       setModuleStates(s => ({ ...s, [mod]: prev }));
-      showMsg('Connection error.', true);
+      showMsg('Connection error.', 'err');
     }
     finally { setTogglingMod(null); }
   };
@@ -197,8 +219,8 @@ export default function PHPManagerDashboard() {
         body: JSON.stringify({ content: phpIniContent })
       });
       const d = await res.json();
-      showMsg(d.message || 'Saved.', !res.ok);
-    } catch { showMsg('Connection error.', true); }
+      showMsg(d.message || 'Saved.', res.ok ? 'ok' : 'err');
+    } catch { showMsg('Connection error.', 'err'); }
     finally { setSaving(false); }
   };
 
@@ -208,6 +230,11 @@ export default function PHPManagerDashboard() {
       const matchFilter = moduleFilter === 'all' || (moduleFilter === 'enabled' ? moduleStates[m] : !moduleStates[m]);
       return matchSearch && matchFilter;
     }), [moduleSearch, moduleFilter, moduleStates]);
+
+  const selectedPhpInstalled = useMemo(() => {
+    const row = versions.find((v) => v.version === selectedVersion);
+    return row?.status === 'installed' || row?.status === 'active';
+  }, [versions, selectedVersion]);
 
   // ─── Styles helpers ───
   const card = `rounded-2xl border p-5 md:p-6 ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'} shadow-sm`;
@@ -252,11 +279,19 @@ export default function PHPManagerDashboard() {
       {/* Message */}
       {msg && (
         <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${
-          msg.isError
+          msg.tone === 'err'
             ? (isDark ? 'bg-red-950/20 border-red-600/30 text-red-400' : 'bg-red-50 border-red-200 text-red-600')
+            : msg.tone === 'warn'
+            ? (isDark ? 'bg-amber-950/25 border-amber-600/30 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-900')
             : (isDark ? 'bg-green-950/20 border-green-600/30 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
         }`}>
-          {msg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />}
+          {msg.tone === 'err' ? (
+            <Icons.AlertCircle className="w-4 h-4 shrink-0" />
+          ) : msg.tone === 'warn' ? (
+            <Icons.AlertTriangle className="w-4 h-4 shrink-0" />
+          ) : (
+            <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />
+          )}
           {msg.text}
         </div>
       )}
@@ -329,9 +364,17 @@ export default function PHPManagerDashboard() {
                             </>
                           )}
                           {status === 'active' && (
-                            <span className={`text-[10px] font-semibold flex items-center gap-1 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                              <Icons.CheckCircle2 className="w-3.5 h-3.5" /> Active
-                            </span>
+                            <div className="flex items-center gap-2 justify-end flex-wrap">
+                              <span className={`text-[10px] font-semibold flex items-center gap-1 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                                <Icons.CheckCircle2 className="w-3.5 h-3.5" /> {tr.activeLabel}
+                              </span>
+                              <button
+                                onClick={() => handleUninstall(version)}
+                                className={btn(isDark ? 'bg-red-600/20 border-red-600/40 text-red-400 hover:bg-red-600/30' : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100')}
+                              >
+                                <Icons.Trash2 className="w-3.5 h-3.5" /> {tr.uninstall}
+                              </button>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -347,6 +390,14 @@ export default function PHPManagerDashboard() {
       {/* ── MODULES TAB ── */}
       {tab === 'modules' && (
         <div className={`${card} space-y-4`}>
+          {!selectedPhpInstalled && (
+            <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs ${
+              isDark ? 'border-amber-500/30 bg-amber-950/20 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-900'
+            }`}>
+              <Icons.Info className="w-4 h-4 shrink-0 mt-0.5" />
+              {tr.extNeedInstall}
+            </div>
+          )}
           {/* Toolbar */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border flex-1 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
@@ -412,7 +463,7 @@ export default function PHPManagerDashboard() {
                     </div>
                     <button
                       onClick={() => handleToggleModule(mod, !enabled)}
-                      disabled={toggling}
+                      disabled={toggling || !selectedPhpInstalled}
                       title={enabled ? 'Disable' : 'Enable'}
                       className={`relative w-9 h-5 rounded-full border transition-all shrink-0 ml-2 ${
                         toggling ? 'opacity-50' : ''

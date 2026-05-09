@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 IS_WINDOWS = os.name == 'nt'
-SUPPORTED_VERSIONS = ["8.3", "8.2", "8.1", "8.0", "7.4"]
+# Keep in sync with frontend INSTALLABLE_VERSIONS (newest first for display preference)
+SUPPORTED_VERSIONS = ["8.4", "8.3", "8.2", "8.1", "8.0", "7.4"]
 DEFAULT_MODULES = ["mysqli", "curl", "mbstring", "gd", "zip", "xml", "redis", "intl", "soap", "bcmath"]
 
 
@@ -19,39 +20,80 @@ def _run(cmd: List[str]) -> subprocess.CompletedProcess:
 
 
 def get_active_php_version() -> str:
-    """Best-effort detect active system PHP CLI version."""
+    """Best-effort detect active system PHP CLI version (must be actually installed)."""
     if IS_WINDOWS:
         return SUPPORTED_VERSIONS[0]
+    installed = set(get_php_versions())
     try:
         if shutil.which("php"):
             res = _run(["php", "-v"])
             if res.returncode == 0 and res.stdout:
                 m = re.search(r"PHP\s+(\d+\.\d+)", res.stdout)
                 if m:
-                    return m.group(1)
+                    ver = m.group(1)
+                    if ver in installed:
+                        return ver
     except Exception:
         pass
-    installed = get_php_versions()
-    return installed[0] if installed else "8.2"
+    return sorted(installed, key=lambda x: tuple(map(int, x.split("."))), reverse=True)[0] if installed else ""
+
+
+def _is_php_version_installed(version: str) -> bool:
+    """True only when this PHP stream is clearly present (avoid empty /etc/php/X.Y leftovers)."""
+    if IS_WINDOWS:
+        return False
+    php_bin = shutil.which(f"php{version}")
+    if php_bin:
+        res = _run([php_bin, "-v"])
+        if res.returncode == 0 and res.stdout and version in res.stdout.splitlines()[0]:
+            return True
+    fpm = shutil.which(f"php-fpm{version}")
+    if fpm:
+        return True
+    cli_ini = Path(f"/etc/php/{version}/cli/php.ini")
+    fpm_ini = Path(f"/etc/php/{version}/fpm/php.ini")
+    if cli_ini.is_file() or fpm_ini.is_file():
+        return True
+    return False
+
+
+def _debian_packages_for_php_version(version: str) -> List[str]:
+    """Installed dpkg packages belonging to a PHP X.Y stream (for apt remove)."""
+    res = _run(["dpkg-query", "-W", "-f=${Package}\n"])
+    if res.returncode != 0 or not res.stdout.strip():
+        return []
+    prefix = f"php{version}"
+    out: List[str] = []
+    for line in res.stdout.splitlines():
+        pkg = line.strip()
+        if not pkg:
+            continue
+        if pkg == prefix or pkg.startswith(f"{prefix}-"):
+            out.append(pkg)
+    return sorted(set(out))
+
 
 def get_php_versions() -> List[str]:
-    """Retrieves all available PHP versions."""
+    """PHP versions actually installed on the system (never pretend all are installed)."""
     if IS_WINDOWS:
-        return SUPPORTED_VERSIONS
-    
-    installed = []
+        return list(SUPPORTED_VERSIONS)
+
+    installed: List[str] = []
     for v in SUPPORTED_VERSIONS:
-        # Check if FPM exists
-        if shutil.which(f"php-fpm{v}") or os.path.exists(f"/etc/php/{v}"):
+        if _is_php_version_installed(v):
             installed.append(v)
-    return installed if installed else SUPPORTED_VERSIONS
+    return sorted(installed, key=lambda x: tuple(map(int, x.split("."))), reverse=True)
 
 
 def get_php_versions_meta() -> Dict[str, Any]:
     installed = get_php_versions()
+    active = get_active_php_version()
+    if active and active not in installed:
+        active = installed[0] if installed else ""
     return {
         "versions": installed,
-        "active": get_active_php_version(),
+        "active": active,
+        "supported": list(SUPPORTED_VERSIONS),
     }
 
 def get_php_modules() -> List[str]:
@@ -59,21 +101,53 @@ def get_php_modules() -> List[str]:
     return DEFAULT_MODULES
 
 
+def _normalize_mods_enabled_stem(stem: str) -> str:
+    """20-curl.ini -> curl; xml.ini -> xml."""
+    name = stem.replace(".ini", "")
+    return re.sub(r"^\d+-", "", name).strip().lower()
+
+
 def get_enabled_modules(version: str) -> List[str]:
-    """Return enabled extensions for a specific PHP version."""
+    """Return loaded extension names for a specific PHP version (phpX.Y -m when possible)."""
     if IS_WINDOWS:
-        return DEFAULT_MODULES
-    enabled_dir = Path(f"/etc/php/{version}/mods-enabled")
-    if enabled_dir.exists():
-        modules = []
-        for ini in enabled_dir.glob("*.ini"):
-            modules.append(ini.stem.replace(".ini", ""))
-        return sorted(set(modules))
-    php_bin = shutil.which(f"php{version}") or shutil.which("php")
+        return list(DEFAULT_MODULES)
+
+    def _parse_php_m(stdout: str) -> set[str]:
+        out: set[str] = set()
+        for ln in stdout.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("["):
+                continue
+            low = s.lower()
+            if low == "zend opcache":
+                out.add("opcache")
+                continue
+            if s[0].isalpha() and " " not in s:
+                out.add(low)
+        return out
+
+    php_bin = shutil.which(f"php{version}")
     if php_bin:
         res = _run([php_bin, "-m"])
-        if res.returncode == 0:
-            return sorted([ln.strip().lower() for ln in res.stdout.splitlines() if ln.strip() and ln.strip()[0].isalpha()])
+        if res.returncode == 0 and res.stdout.strip():
+            return sorted(_parse_php_m(res.stdout))
+
+    modules_set: set[str] = set()
+    enabled_dir = Path(f"/etc/php/{version}/mods-enabled")
+    if enabled_dir.is_dir():
+        for ini in enabled_dir.glob("*.ini"):
+            modules_set.add(_normalize_mods_enabled_stem(ini.stem))
+    if modules_set:
+        return sorted(modules_set)
+
+    fallback = shutil.which("php")
+    if fallback:
+        res = _run([fallback, "-v"])
+        if res.returncode == 0 and res.stdout and version in res.stdout.splitlines()[0]:
+            resm = _run([fallback, "-m"])
+            if resm.returncode == 0:
+                return sorted(_parse_php_m(resm.stdout))
+
     return []
 
 def install_php_version(version: str) -> Dict[str, Any]:
@@ -113,13 +187,31 @@ def uninstall_php_version(version: str) -> Dict[str, Any]:
     try:
         pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
         if pkg_manager == "apt-get":
-            cmd = ["sudo", "apt-get", "remove", "-y", f"php{version}", f"php{version}-*"]
-            subprocess.run(cmd, check=False, capture_output=True, text=True)
+            pkgs = _debian_packages_for_php_version(version)
+            if not pkgs:
+                if _is_php_version_installed(version):
+                    subprocess.run(
+                        ["sudo", "apt-get", "remove", "-y", f"php{version}", f"php{version}-common", f"php{version}-cli", f"php{version}-fpm"],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                else:
+                    return {"status": "success", "message": f"PHP {version} is not installed (nothing to remove)."}
+            else:
+                r = subprocess.run(["sudo", "apt-get", "remove", "-y", *pkgs], check=False, capture_output=True, text=True)
+                if r.returncode != 0 and r.stderr:
+                    tail = (r.stderr + r.stdout)[-500:]
+                    return {"status": "error", "message": f"apt-get remove failed: {tail}"}
             subprocess.run(["sudo", "apt-get", "autoremove", "-y"], check=False, capture_output=True, text=True)
-            return {"status": "success", "message": f"PHP {version} removed."}
+            return {"status": "success", "message": f"PHP {version} packages removed."}
         if pkg_manager == "yum":
-            cmd = ["sudo", "yum", "remove", "-y", f"php{version}*", f"php-fpm{version}"]
-            subprocess.run(cmd, check=False, capture_output=True, text=True)
+            subprocess.run(
+                ["sudo", "yum", "remove", "-y", f"php{version}*", f"php-fpm{version}"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
             return {"status": "success", "message": f"PHP {version} removed."}
         return {"status": "error", "message": "No recognized package manager found."}
     except Exception as e:
@@ -151,13 +243,28 @@ def toggle_php_module(version: str, module: str, enable: bool) -> Dict[str, Any]
         return {"status": "success", "message": f"Module {module} {'enabled' if enable else 'disabled'} (Mock mode)."}
     try:
         if shutil.which("phpenmod") and shutil.which("phpdismod"):
+            before = set(get_enabled_modules(version))
             cmd = ["sudo", "phpenmod" if enable else "phpdismod", "-v", version, module]
             res = _run(cmd)
-            if res.returncode != 0 and res.stderr:
-                # A few modules may not have INI link but are built-in.
-                if "not found" in res.stderr.lower() or "doesn't exist" in res.stderr.lower():
+            err = (res.stderr or "") + (res.stdout or "")
+            if res.returncode != 0:
+                low = err.lower()
+                if "not found" in low or "doesn't exist" in low or "cannot find" in low:
                     return {"status": "error", "message": f"Module '{module}' not found for PHP {version}."}
+                return {"status": "error", "message": err.strip() or f"phpenmod/phpdismod exited {res.returncode}"}
             _run(["sudo", "systemctl", "restart", f"php{version}-fpm"])
+            after = set(get_enabled_modules(version))
+            mod_l = module.lower()
+            if enable and mod_l not in after:
+                return {
+                    "status": "error",
+                    "message": f"Module '{module}' did not appear loaded after enable (may need php{version}-{module} package via apt).",
+                }
+            if not enable and mod_l in after and mod_l in before:
+                return {
+                    "status": "warning",
+                    "message": f"'{module}' is still loaded (often built into PHP or required by other extensions). Toggle may not apply.",
+                }
             return {"status": "success", "message": f"Module {module} {'enabled' if enable else 'disabled'}."}
         return {"status": "error", "message": "phpenmod/phpdismod not found on this system."}
     except Exception as e:
