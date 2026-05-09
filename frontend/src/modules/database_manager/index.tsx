@@ -37,6 +37,10 @@ export default function DatabaseManager() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [downloadingDb, setDownloadingDb] = useState<string | null>(null);
+
+  const token = typeof window !== 'undefined' ? localStorage.getItem('copanel_token') : null;
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   const hostEnabled = engine === 'mysql';
 
@@ -96,6 +100,39 @@ export default function DatabaseManager() {
       refresh(engine);
     } catch (err: any) {
       setError(err?.message || 'Failed to delete database');
+    }
+  }
+
+  async function downloadDatabaseGzip(name: string) {
+    setDownloadingDb(name);
+    setError(null);
+    try {
+      const url = `/api/database_manager/dump-gzip?name=${encodeURIComponent(name)}`;
+      const response = await fetch(url, { headers: authHeaders });
+      if (!response.ok) {
+        let msg = await response.text();
+        try {
+          const j = JSON.parse(msg) as { detail?: string };
+          if (j.detail) msg = j.detail;
+        } catch {
+          /* plain text */
+        }
+        throw new Error(msg || 'Download failed');
+      }
+      const blob = await response.blob();
+      const href = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${name}.sql.gz`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(href);
+      setMessage(`Downloaded ${name}.sql.gz`);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to download dump');
+    } finally {
+      setDownloadingDb(null);
     }
   }
 
@@ -219,9 +256,22 @@ export default function DatabaseManager() {
                   <p className="font-mono text-sm truncate">{d.name}</p>
                   <p className="text-[11px] text-slate-500">{d.size || 'N/A'}</p>
                 </div>
-                <button onClick={() => deleteDatabase(d.name)} className="text-slate-400 hover:text-red-500">
-                  <Icons.Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  {engine === 'mysql' && (
+                    <button
+                      type="button"
+                      onClick={() => downloadDatabaseGzip(d.name)}
+                      disabled={!!downloadingDb}
+                      className="text-slate-400 hover:text-blue-500 disabled:opacity-40"
+                      title="Download .sql.gz (mysqldump)"
+                    >
+                      <Icons.Download className={`w-4 h-4 ${downloadingDb === d.name ? 'animate-pulse' : ''}`} />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => deleteDatabase(d.name)} className="text-slate-400 hover:text-red-500" title="Delete database">
+                    <Icons.Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </li>
             ))}
             {!loading && databases.length === 0 && <li className="py-2 text-xs text-slate-500">No databases found.</li>}
