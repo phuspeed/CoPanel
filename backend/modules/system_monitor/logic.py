@@ -212,14 +212,64 @@ class SystemMonitor:
             return []
 
     @staticmethod
+    def _status_to_str(status: Any) -> Optional[str]:
+        if status is None:
+            return None
+        if isinstance(status, str):
+            return status
+        try:
+            return str(status)
+        except Exception:
+            return None
+
+    @staticmethod
     def get_process_detail(pid: int) -> Optional[Dict[str, Any]]:
-        """Single process snapshot for drawer / drill-down."""
+        """Single process snapshot for drawer / drill-down. Returns sparse dict on partial access."""
+        if pid <= 0:
+            return None
         try:
             p = psutil.Process(pid)
-            with p.oneshot():
-                cpu = p.cpu_percent(interval=None)
-            time.sleep(0.08)
-            cpu = p.cpu_percent(interval=None)
+        except psutil.NoSuchProcess:
+            return None
+        except (psutil.Error, OSError):
+            return None
+
+        out: Dict[str, Any] = {
+            "pid": pid,
+            "name": "",
+            "username": None,
+            "cpu_percent": 0.0,
+            "memory_percent": 0.0,
+            "rss": 0,
+            "vms": 0,
+            "status": None,
+            "num_threads": None,
+            "create_time": None,
+            "ppid": None,
+            "exe": None,
+            "cwd": None,
+            "cmdline": [],
+            "connections_tcp_udp": None,
+        }
+
+        try:
+            out["name"] = p.name() or ""
+        except (psutil.Error, OSError):
+            pass
+
+        try:
+            out["username"] = p.username()
+        except (psutil.Error, OSError):
+            pass
+
+        try:
+            p.cpu_percent(interval=None)
+            time.sleep(0.05)
+            out["cpu_percent"] = float(p.cpu_percent(interval=None) or 0.0)
+        except (psutil.Error, OSError):
+            out["cpu_percent"] = 0.0
+
+        try:
             with p.oneshot():
                 info = p.as_dict(
                     attrs=[
@@ -227,40 +277,45 @@ class SystemMonitor:
                         "num_threads", "create_time", "ppid", "exe", "cwd",
                     ]
                 )
-            mi = p.memory_info()
-            rss = int(mi.rss) if mi else 0
-            vms = int(mi.vms) if mi else 0
+            if info.get("name"):
+                out["name"] = str(info["name"])
+            out["memory_percent"] = float(info.get("memory_percent") or 0.0)
+            out["status"] = SystemMonitor._status_to_str(info.get("status"))
+            out["num_threads"] = info.get("num_threads")
+            out["create_time"] = info.get("create_time")
+            out["ppid"] = info.get("ppid")
+            if info.get("exe"):
+                out["exe"] = info.get("exe")
+            if info.get("cwd"):
+                out["cwd"] = info.get("cwd")
+        except (psutil.AccessDenied, psutil.Error, OSError):
             try:
-                cmdline = p.cmdline() or []
-            except (psutil.AccessDenied, psutil.NoSuchProcess):
-                cmdline = []
-            try:
-                nc = getattr(p, "net_connections", None) or getattr(p, "connections", None)
-                connections = len(nc(kind="inet")) if nc else None
-            except (psutil.AccessDenied, psutil.NoSuchProcess):
-                connections = None
+                out["memory_percent"] = float(p.memory_percent() or 0.0)
+            except Exception:
+                pass
 
-            return {
-                "pid": info.get("pid"),
-                "name": info.get("name") or "",
-                "username": info.get("username"),
-                "cpu_percent": float(cpu or 0.0),
-                "memory_percent": float(info.get("memory_percent") or 0.0),
-                "rss": rss,
-                "vms": vms,
-                "status": info.get("status"),
-                "num_threads": info.get("num_threads"),
-                "create_time": info.get("create_time"),
-                "ppid": info.get("ppid"),
-                "exe": info.get("exe"),
-                "cwd": info.get("cwd"),
-                "cmdline": cmdline,
-                "connections_tcp_udp": connections,
-            }
-        except psutil.NoSuchProcess:
-            return None
-        except psutil.AccessDenied:
-            return None
+        try:
+            mi = p.memory_info()
+            if mi:
+                out["rss"] = int(mi.rss)
+                out["vms"] = int(mi.vms)
+        except (psutil.Error, OSError):
+            pass
+
+        try:
+            out["cmdline"] = list(p.cmdline() or [])
+        except (psutil.Error, OSError):
+            out["cmdline"] = []
+
+        try:
+            conns = p.net_connections(kind="inet")
+            out["connections_tcp_udp"] = len(conns) if conns is not None else 0
+        except (psutil.AccessDenied, psutil.NoSuchProcess, PermissionError, OSError, AttributeError):
+            out["connections_tcp_udp"] = None
+
+        if not out["name"]:
+            out["name"] = f"pid-{pid}"
+        return out
 
     @staticmethod
     def send_process_signal(pid: int, sig_name: str) -> Tuple[bool, str]:

@@ -200,6 +200,8 @@ const TEXT: Record<Language, Record<string, string>> = {
     adminPidHint: 'Only superadmins can send signals to processes.',
     close: 'Close',
     searchPlaceholder: 'Filter by name or PID…',
+    detailFromList: 'From process list (snapshot)',
+    detailBadResponse: 'Invalid response from server.',
   },
   vi: {
     fetchStatsFailed: 'Không thể lấy thống kê',
@@ -277,6 +279,8 @@ const TEXT: Record<Language, Record<string, string>> = {
     adminPidHint: 'Chỉ superadmin mới gửi tín hiệu tới tiến trình.',
     close: 'Đóng',
     searchPlaceholder: 'Lọc theo tên hoặc PID…',
+    detailFromList: 'Từ danh sách (ảnh chụp)',
+    detailBadResponse: 'Phản hồi từ máy chủ không hợp lệ.',
   },
 };
 
@@ -327,8 +331,10 @@ export default function SystemMonitorDashboard() {
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [procFilter, setProcFilter] = useState('');
   const [detailPid, setDetailPid] = useState<number | null>(null);
+  const [detailPreview, setDetailPreview] = useState<ProcessInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailData, setDetailData] = useState<ProcessDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [signalModal, setSignalModal] = useState<{
     pid: number;
     name: string;
@@ -387,20 +393,64 @@ export default function SystemMonitorDashboard() {
   }, [fetchStats]);
 
   useEffect(() => {
-    if (!detailPid || !token) {
+    if (detailPid === null) {
       setDetailData(null);
+      setDetailError(null);
+      setDetailPreview(null);
       return;
     }
+    const ac = new AbortController();
+    const t = TEXT[language];
     setDetailLoading(true);
-    fetch(`/api/system_monitor/process/${detailPid}`, { headers: { ...authHeaders } })
-      .then((r) => {
-        if (!r.ok) throw new Error('404');
-        return r.json();
+    setDetailError(null);
+    setDetailData(null);
+
+    const parseDetail = (body: unknown): ProcessDetail => {
+      if (!body || typeof body !== 'object') throw new Error(t.detailBadResponse);
+      const o = body as Record<string, unknown>;
+      if (o.status === 'success' && o.data && typeof o.data === 'object') {
+        return o.data as ProcessDetail;
+      }
+      if (o.data && typeof o.data === 'object') return o.data as ProcessDetail;
+      throw new Error(t.detailBadResponse);
+    };
+
+    const isAbort = (e: unknown) =>
+      (e instanceof DOMException && e.name === 'AbortError') ||
+      (typeof e === 'object' && e !== null && 'name' in e && (e as { name: string }).name === 'AbortError');
+
+    fetch(`/api/system_monitor/process/${detailPid}`, { headers: { ...authHeaders }, signal: ac.signal })
+      .then(async (r) => {
+        const text = await r.text();
+        let body: unknown = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch {
+          body = null;
+        }
+        if (!r.ok) {
+          const b = body as Record<string, unknown> | null;
+          const det = b?.detail;
+          let msg: string;
+          if (typeof det === 'string') msg = det;
+          else if (Array.isArray(det))
+            msg = det.map((x: { msg?: string }) => x?.msg || '').filter(Boolean).join('; ') || `HTTP ${r.status}`;
+          else msg = `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        setDetailData(parseDetail(body));
       })
-      .then((d) => setDetailData(d.data as ProcessDetail))
-      .catch(() => setDetailData(null))
-      .finally(() => setDetailLoading(false));
-  }, [detailPid, token, authHeaders]);
+      .catch((e: unknown) => {
+        if (isAbort(e)) return;
+        setDetailData(null);
+        setDetailError(e instanceof Error ? e.message : t.unknownError);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setDetailLoading(false);
+      });
+
+    return () => ac.abort();
+  }, [detailPid, authHeaders, language]);
 
   useEffect(() => {
     if (!toast) return;
@@ -850,7 +900,10 @@ export default function SystemMonitorDashboard() {
                         <div className="flex flex-wrap justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => setDetailPid(proc.pid)}
+                            onClick={() => {
+                              setDetailPreview(proc);
+                              setDetailPid(proc.pid);
+                            }}
                             className={cn(
                               'px-2 py-1 rounded-lg text-[10px] font-bold border',
                               isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-100 border-slate-200 text-slate-800'
@@ -1070,7 +1123,12 @@ export default function SystemMonitorDashboard() {
       {/* Process detail drawer */}
       {detailPid !== null && (
         <div className="fixed inset-0 z-[125] flex justify-end">
-          <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={() => setDetailPid(null)} />
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label={tr.close}
+            onClick={() => setDetailPid(null)}
+          />
           <div
             className={cn(
               'relative h-full w-full sm:max-w-md border-l shadow-2xl overflow-y-auto p-4 sm:p-6',
@@ -1083,7 +1141,16 @@ export default function SystemMonitorDashboard() {
                 <Icons.X className="w-5 h-5" />
               </button>
             </div>
-            {detailLoading && <Icons.Loader className="w-8 h-8 animate-spin text-blue-500 mx-auto" />}
+            {detailLoading && (
+              <div className="flex flex-col items-center gap-2 py-6">
+                <Icons.Loader className="w-8 h-8 animate-spin text-blue-500" />
+                {detailPreview && (
+                  <p className={cn('text-center text-[11px]', textMuted)}>
+                    PID {detailPreview.pid} · {detailPreview.name}
+                  </p>
+                )}
+              </div>
+            )}
             {!detailLoading && detailData && (
               <div className={cn('space-y-3 text-xs', textMuted)}>
                 <div className="flex flex-wrap gap-2">
@@ -1180,8 +1247,53 @@ export default function SystemMonitorDashboard() {
                 )}
               </div>
             )}
-            {!detailLoading && !detailData && (
-              <p className="text-xs text-red-500">{tr.unknownError}</p>
+            {!detailLoading && !detailData && detailError && (
+              <div className="space-y-3">
+                <p className="text-xs text-red-500 font-medium">{detailError}</p>
+                {detailPreview && (
+                  <div
+                    className={cn(
+                      'rounded-xl border p-3 space-y-2 text-[11px]',
+                      isDark ? 'border-slate-700 bg-slate-950/50' : 'border-slate-200 bg-slate-50'
+                    )}
+                  >
+                    <p className={cn('font-bold uppercase tracking-wide text-[10px]', textMuted)}>{tr.detailFromList}</p>
+                    <p className={cn('font-mono font-bold', isDark ? 'text-indigo-400' : 'text-indigo-600')}>
+                      PID {detailPreview.pid}
+                    </p>
+                    <p className={cn('font-semibold', isDark ? 'text-slate-100' : 'text-slate-900')}>{detailPreview.name}</p>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div>
+                        <span className={cn('block uppercase', textMuted)}>{tr.cpuPercent}</span>
+                        <span className="font-mono">{(detailPreview.cpu_percent ?? 0).toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className={cn('block uppercase', textMuted)}>{tr.memPercent}</span>
+                        <span className="font-mono">{(detailPreview.memory_percent ?? 0).toFixed(1)}%</span>
+                      </div>
+                      {detailPreview.username && (
+                        <div className="col-span-2">
+                          <span className={cn('block uppercase', textMuted)}>{tr.user}</span>
+                          <span>{detailPreview.username}</span>
+                        </div>
+                      )}
+                      {detailPreview.cmdline_preview && (
+                        <div className="col-span-2">
+                          <span className={cn('block uppercase mb-0.5', textMuted)}>{tr.cmdline}</span>
+                          <pre
+                            className={cn(
+                              'whitespace-pre-wrap break-all rounded p-2 font-mono max-h-24 overflow-y-auto',
+                              isDark ? 'bg-slate-900 border border-slate-800' : 'bg-white border border-slate-200'
+                            )}
+                          >
+                            {detailPreview.cmdline_preview}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
