@@ -5,7 +5,7 @@
  * Center drawer, Notification Center drawer, and a global ToastLayer fed
  * by the platform event hub.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { moduleRegistry } from './registry';
 import * as Icons from 'lucide-react';
@@ -71,6 +71,22 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const { running } = useJobs();
   const { unread } = useInbox();
 
+  const [footerVersion, setFooterVersion] = useState<string>('…');
+  const [panelUpdate, setPanelUpdate] = useState<{
+    local_version: string;
+    remote_version: string | null;
+    update_available: boolean;
+    changelog: string | null;
+    release_url: string;
+    fetch_error: string | null;
+  } | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeRunning, setUpgradeRunning] = useState(false);
+  const [upgradeLog, setUpgradeLog] = useState('');
+  const [upgradeProgress, setUpgradeProgress] = useState(0);
+  const [upgradeSuccess, setUpgradeSuccess] = useState(false);
+  const upgradeLogRef = useRef<HTMLPreElement>(null);
+
   const isDark = theme === 'dark';
 
   const t = {
@@ -87,6 +103,23 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       cancel: 'Cancel',
       language: 'English',
       themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark',
+      upgradeAvailable: 'Update available',
+      upgradeTitle: 'Upgrade CoPanel',
+      upgradeIntro:
+        'The installer pulls the latest code from GitHub, rebuilds the frontend, and restarts services. This may take several minutes.',
+      startUpgrade: 'Start upgrade',
+      close: 'Close',
+      changelog: 'Release notes',
+      liveLog: 'Installer output',
+      progress: 'Progress',
+      reloading: 'Reloading…',
+      upgradeRunning: 'Installation running…',
+      upgradeDone: 'Upgrade finished successfully. Reloading the page…',
+      upgradeFailed: 'Upgrade reported an error. Review the log below.',
+      streamEnded: 'Connection closed — the service may be restarting. Waiting until the panel is healthy again…',
+      checkUpdateFailed: 'Could not reach GitHub to check for updates.',
+      upToDate: 'You are on the latest version.',
+      viewReleases: 'View on GitHub',
       modulesNames: {
         'appstore_manager': 'App Store',
         'app_store': 'App Store',
@@ -116,6 +149,23 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       cancel: 'Hủy',
       language: 'Tiếng Việt',
       themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối',
+      upgradeAvailable: 'Có bản cập nhật',
+      upgradeTitle: 'Nâng cấp CoPanel',
+      upgradeIntro:
+        'Trình cài đặt sẽ kéo mã mới nhất từ GitHub, build lại frontend và khởi động lại dịch vụ. Quá trình có thể mất vài phút.',
+      startUpgrade: 'Bắt đầu nâng cấp',
+      close: 'Đóng',
+      changelog: 'Nhật ký phiên bản',
+      liveLog: 'Nhật ký cài đặt',
+      progress: 'Tiến trình',
+      reloading: 'Đang tải lại…',
+      upgradeRunning: 'Đang chạy cài đặt…',
+      upgradeDone: 'Nâng cấp thành công. Đang tải lại trang…',
+      upgradeFailed: 'Nâng cấp báo lỗi. Xem nhật ký bên dưới.',
+      streamEnded: 'Kết nối đã đóng — dịch vụ có thể đang khởi động lại. Đang chờ panel hoạt động trở lại…',
+      checkUpdateFailed: 'Không kiểm tra được bản cập nhật từ GitHub.',
+      upToDate: 'Bạn đang dùng phiên bản mới nhất.',
+      viewReleases: 'Xem trên GitHub',
       modulesNames: {
         'appstore_manager': 'Kho ứng dụng',
         'app_store': 'Kho ứng dụng',
@@ -135,6 +185,117 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   };
 
   const tr = t[language];
+
+  const pollHealthUntilVersion = useCallback(
+    (want: string) => {
+      let n = 0;
+      const iv = window.setInterval(async () => {
+        n += 1;
+        try {
+          const h = await fetch('/health');
+          const j = await h.json();
+          if (j?.version && want && String(j.version) === want) {
+            window.clearInterval(iv);
+            setUpgradeProgress(100);
+            setUpgradeSuccess(true);
+            setUpgradeRunning(false);
+            window.setTimeout(() => window.location.reload(), 1600);
+          }
+        } catch {
+          /* ignore */
+        }
+        if (n >= 45) window.clearInterval(iv);
+      }, 2000);
+    },
+    []
+  );
+
+  const runPanelUpgrade = useCallback(async () => {
+    const token = localStorage.getItem('copanel_token');
+    if (!token) return;
+    setUpgradeRunning(true);
+    setUpgradeSuccess(false);
+    setUpgradeLog('');
+    setUpgradeProgress(6);
+    let buf = '';
+    let sawExit = false;
+    try {
+      const res = await fetch('/api/platform/panel-update/run', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setUpgradeLog(`HTTP ${res.status}\n${text}\n`);
+        setUpgradeRunning(false);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setUpgradeRunning(false);
+        return;
+      }
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = dec.decode(value, { stream: true });
+        buf += chunk;
+        setUpgradeLog((prev) => prev + chunk);
+        const lines = chunk.split('\n').length;
+        setUpgradeProgress((p) => Math.min(90, p + lines * 0.35));
+        const m = buf.match(/__COPANEL_EXIT__:(-?\d+)/);
+        if (m) {
+          sawExit = true;
+          const code = parseInt(m[1], 10);
+          setUpgradeRunning(false);
+          if (code === 0) {
+            setUpgradeProgress(100);
+            setUpgradeSuccess(true);
+            window.setTimeout(() => window.location.reload(), 2800);
+          }
+          break;
+        }
+      }
+      if (!sawExit) {
+        setUpgradeLog((prev) => `${prev}\n\n${tr.streamEnded}\n`);
+        const want = panelUpdate?.remote_version;
+        if (want) pollHealthUntilVersion(want);
+        else window.setTimeout(() => window.location.reload(), 10000);
+      }
+    } catch (e) {
+      setUpgradeLog((prev) => `${prev}\n${String(e)}`);
+      setUpgradeRunning(false);
+    }
+  }, [panelUpdate?.remote_version, pollHealthUntilVersion, tr.streamEnded]);
+
+  useEffect(() => {
+    upgradeLogRef.current?.scrollTo({ top: upgradeLogRef.current.scrollHeight });
+  }, [upgradeLog]);
+
+  useEffect(() => {
+    fetch('/health')
+      .then((r) => r.json())
+      .then((j) => setFooterVersion(j?.version ? String(j.version) : '…'))
+      .catch(() => setFooterVersion('…'));
+  }, []);
+
+  useEffect(() => {
+    if (user?.role !== 'superadmin') return;
+    const check = () => {
+      const token = localStorage.getItem('copanel_token');
+      if (!token) return;
+      fetch('/api/platform/panel-update/check', { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((body) => {
+          if (body?.status === 'success' && body.data) setPanelUpdate(body.data);
+        })
+        .catch(() => {});
+    };
+    check();
+    const id = window.setInterval(check, 30 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [user?.role]);
 
   useEffect(() => {
     localStorage.setItem('copanel_theme', theme);
@@ -203,6 +364,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         setLauncherOpen(false);
         setTasksOpen(false);
         setNotificationsOpen(false);
+        if (!upgradeRunning) setUpgradeOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -372,7 +534,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
           {/* Footer */}
           <div className={`p-4 border-t text-xs ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'}`}>
-            <p>v1.0.0</p>
+            <p className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+              <span className="font-mono">v{footerVersion}</span>
+              {user?.role === 'superadmin' && panelUpdate?.update_available && (
+                <button
+                  type="button"
+                  onClick={() => setUpgradeOpen(true)}
+                  className={`font-bold underline-offset-2 hover:underline ${isDark ? 'text-amber-400' : 'text-amber-600'}`}
+                >
+                  · {tr.upgradeAvailable}
+                </button>
+              )}
+            </p>
+            {user?.role === 'superadmin' && panelUpdate?.fetch_error && (
+              <p className={`mt-1 text-[10px] ${isDark ? 'text-amber-500/90' : 'text-amber-700'}`}>{tr.checkUpdateFailed}</p>
+            )}
           </div>
         </div>
       </aside>
@@ -456,6 +632,116 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             )}
           </div>
         </header>
+
+        {/* Panel upgrade (superadmin, GitHub main vs local VERSION) */}
+        {upgradeOpen && user?.role === 'superadmin' && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-fade-in">
+            <div
+              className={`flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border shadow-2xl ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'
+                }`}
+            >
+              <div className={`flex items-start justify-between gap-3 border-b px-5 py-4 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                <div>
+                  <h3 className={`text-base font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{tr.upgradeTitle}</h3>
+                  <p className={`mt-1 text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.upgradeIntro}</p>
+                  {panelUpdate && (
+                    <p className="mt-2 font-mono text-[11px] text-blue-400">
+                      {panelUpdate.local_version}
+                      {panelUpdate.remote_version ? ` → ${panelUpdate.remote_version}` : ''}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={upgradeRunning}
+                  onClick={() => !upgradeRunning && setUpgradeOpen(false)}
+                  className="shrink-0 text-slate-500 hover:text-slate-300 disabled:opacity-40"
+                >
+                  <Icons.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                {!panelUpdate?.update_available && !upgradeRunning && !upgradeLog && (
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.upToDate}</p>
+                )}
+                {panelUpdate?.changelog ? (
+                  <div>
+                    <div className={`mb-1 text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                      {tr.changelog}
+                    </div>
+                    <pre
+                      className={`max-h-40 overflow-auto whitespace-pre-wrap rounded-xl border p-3 text-[11px] leading-relaxed ${isDark ? 'border-slate-800 bg-slate-950/50 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'
+                        }`}
+                    >
+                      {panelUpdate.changelog}
+                    </pre>
+                  </div>
+                ) : null}
+                {panelUpdate?.release_url && (
+                  <a
+                    href={panelUpdate.release_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-blue-500 hover:text-blue-400"
+                  >
+                    {tr.viewReleases}
+                    <Icons.ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+
+                <div>
+                  <div className={`mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                    <span>{tr.progress}</span>
+                    <span className="font-mono normal-case">{Math.round(upgradeProgress)}%</span>
+                  </div>
+                  <div className={`h-2 w-full overflow-hidden rounded-full ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-blue-600 to-indigo-500 transition-[width] duration-300 ease-out"
+                      style={{ width: `${upgradeProgress}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className={`mb-1 text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.liveLog}</div>
+                  <pre
+                    ref={upgradeLogRef}
+                    className={`max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border p-3 font-mono text-[10px] leading-snug ${isDark ? 'border-slate-800 bg-black/40 text-green-400/90' : 'border-slate-200 bg-slate-900 text-green-200'
+                      }`}
+                  >
+                    {upgradeLog || (upgradeRunning ? tr.upgradeRunning : '—')}
+                  </pre>
+                </div>
+
+                {upgradeSuccess && <p className="text-center text-xs font-bold text-emerald-500">{tr.upgradeDone}</p>}
+                {!upgradeSuccess && upgradeLog && !upgradeRunning && /__COPANEL_EXIT__:(?!0)/.test(upgradeLog) && (
+                  <p className="text-center text-xs font-bold text-red-400">{tr.upgradeFailed}</p>
+                )}
+              </div>
+
+              <div className={`flex justify-end gap-2 border-t px-5 py-4 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                <button
+                  type="button"
+                  disabled={upgradeRunning}
+                  onClick={() => setUpgradeOpen(false)}
+                  className={`rounded-xl px-4 py-2 text-xs font-bold transition-all ${isDark ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    } disabled:opacity-50`}
+                >
+                  {tr.close}
+                </button>
+                <button
+                  type="button"
+                  disabled={upgradeRunning || upgradeSuccess || !panelUpdate?.update_available}
+                  onClick={runPanelUpgrade}
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {tr.startUpgrade}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Change Password Modal */}
         {changePwdOpen && (

@@ -6,6 +6,9 @@ to the frontend Task Center, Notification Center and Audit pages.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -18,8 +21,10 @@ from core.auth import require_admin, require_user
 from core.events import sse_stream
 from core.jobs import jobs
 from core import notifications as notif
+from core import panel_update
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -141,6 +146,65 @@ def list_audit(
 
 
 # ----- Observability ------------------------------------------------------
+
+@router.get("/panel-update/check")
+def check_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    """Compare local VERSION with GitHub main (superadmin only)."""
+    return ok(panel_update.check_for_update())
+
+
+@router.post("/panel-update/run")
+async def run_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> StreamingResponse:
+    """Stream `scripts/install.sh` stdout (root/VPS installs only). Superadmin only."""
+    script = panel_update.install_script_path()
+    if not script.is_file():
+        raise ApiError(
+            "NOT_FOUND",
+            f"Upgrade script not found at {script}. Panel self-upgrade runs only on Linux installs under /opt/copanel.",
+            http_status=404,
+        )
+    record_audit(
+        "panel.upgrade",
+        module="platform",
+        target=str(script),
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+    )
+
+    async def stream_stdout() -> Any:
+        env = os.environ.copy()
+        env["COPANEL_NONINTERACTIVE"] = "1"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "/bin/bash",
+                str(script),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+        except OSError as e:
+            logger.exception("Failed to start panel upgrade subprocess")
+            yield f"\n__COPANEL_EXIT__:-1\n{e}\n"
+            return
+
+        if proc.stdout:
+            while True:
+                chunk = await proc.stdout.readline()
+                if not chunk:
+                    break
+                yield chunk.decode("utf-8", errors="replace")
+        rc = await proc.wait()
+        yield f"\n__COPANEL_EXIT__:{rc}\n"
+
+    return StreamingResponse(
+        stream_stdout(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @router.get("/metrics")
 def metrics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:

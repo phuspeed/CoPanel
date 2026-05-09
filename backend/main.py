@@ -28,6 +28,28 @@ BASE_DIR = Path(__file__).parent
 MODULES_DIR = BASE_DIR / "modules"
 
 
+def _read_app_version() -> str:
+    """Prefer /opt/copanel/VERSION (or COPANEL_HOME), then repo root VERSION."""
+    import os
+
+    for base in (
+        Path(os.environ.get("COPANEL_HOME", "/opt/copanel")),
+        BASE_DIR.parent,
+    ):
+        vf = base / "VERSION"
+        if vf.is_file():
+            try:
+                v = vf.read_text(encoding="utf-8").strip().split()[0]
+                if v:
+                    return v
+            except OSError:
+                continue
+    return "1.1.0"
+
+
+APP_VERSION = _read_app_version()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler."""
@@ -42,7 +64,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CoPanel API",
     description="Lightweight Linux VPS Management Panel",
-    version="1.1.0",
+    version=APP_VERSION,
     lifespan=lifespan
 )
 

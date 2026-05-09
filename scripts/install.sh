@@ -60,6 +60,60 @@ log_step() {
     echo -e "   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
+# -----------------------------------------------------------------------------
+# Panel version for banner / summary (no hardcoded semver).
+# Order: repo VERSION → /opt/copanel/VERSION → git tag in repo → git in install dir → fallback.
+# -----------------------------------------------------------------------------
+copanel_read_version_file() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    local line
+    line="$(grep -v '^[[:space:]]*#' "$f" 2>/dev/null | head -1 | tr -d '\r')"
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)"
+    [[ -n "$line" ]] || return 1
+    printf '%s' "$line"
+}
+
+copanel_git_version_nearest_tag() {
+    local dir="$1"
+    [[ -d "$dir/.git" ]] || return 1
+    local t
+    t="$(git -C "$dir" describe --tags --match 'v*' --abbrev=0 2>/dev/null)"
+    [[ -n "$t" ]] || return 1
+    t="${t#v}"
+    printf '%s' "$t"
+}
+
+copanel_git_version_describe() {
+    local dir="$1"
+    [[ -d "$dir/.git" ]] || return 1
+    local t
+    t="$(git -C "$dir" describe --tags --always 2>/dev/null)"
+    [[ -n "$t" ]] || return 1
+    t="${t#v}"
+    printf '%s' "$t"
+}
+
+copanel_resolve_panel_version() {
+    local script_dir repo_dir v=""
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    repo_dir="$(dirname "$script_dir")"
+
+    v="$(copanel_read_version_file "$repo_dir/VERSION" || true)"
+    [[ -n "$v" ]] || v="$(copanel_read_version_file "$CoPanel_HOME/VERSION" || true)"
+    [[ -n "$v" ]] || v="$(copanel_git_version_nearest_tag "$repo_dir" || true)"
+    [[ -n "$v" ]] || v="$(copanel_git_version_nearest_tag "$CoPanel_HOME" || true)"
+    [[ -n "$v" ]] || v="$(copanel_git_version_describe "$repo_dir" || true)"
+    [[ -n "$v" ]] || v="$(copanel_git_version_describe "$CoPanel_HOME" || true)"
+
+    if [[ -z "$v" ]]; then
+        v="1.0.0"
+    fi
+    v="${v#v}"
+    printf '%s' "$v"
+}
+
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run as root (use sudo)"
@@ -656,6 +710,7 @@ ${GREEN}╚═══════════════════════
 
 ${BLUE}Installation Summary:${NC}
 
+📦 Panel version:    ${GREEN}v${COPANEL_VER:-?}${NC}
 📍 Admin Password:   ${GREEN}${ADMIN_PWD}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
@@ -694,7 +749,13 @@ EOF
 ###############################################################################
 
 main() {
-    clear
+    # When the panel streams this script (COPANEL_NONINTERACTIVE=1), skip `clear`
+    # so the browser log view is not wiped by ANSI.
+    if [[ -z "${COPANEL_NONINTERACTIVE:-}" ]]; then
+        clear
+    fi
+
+    COPANEL_VER="$(copanel_resolve_panel_version)"
     
     echo -e "${PURPLE}${BOLD}"
     cat << 'EOF'
@@ -707,7 +768,7 @@ EOF
     echo -e "${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "   ${CYAN}${BOLD}CoPanel - Advanced Linux VPS Management System${NC}"
-    echo -e "   ${BOLD}v1.0.0 - Premium Pluggable Architecture${NC}"
+    echo -e "   ${BOLD}v${COPANEL_VER} - Premium Pluggable Architecture${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
@@ -739,6 +800,8 @@ EOF
     verify_installation
     
     echo ""
+    # Re-read after clone/rsync so summary matches on-disk VERSION / git.
+    COPANEL_VER="$(copanel_resolve_panel_version)"
     print_summary
 }
 
