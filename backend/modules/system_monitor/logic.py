@@ -2,18 +2,29 @@
 System Monitor Module Logic
 Provides system resource monitoring using psutil, listing processes, and PM2 management.
 """
-import psutil
-from typing import Dict, Any, List
+from __future__ import annotations
+
+import json
+import os
 import platform
 import shutil
+import signal
 import subprocess
-import json
 import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import psutil
 
 
 class SystemMonitor:
     """System monitoring functionality."""
-    
+
+    @staticmethod
+    def _protected_pids() -> set:
+        """PIDs that must not receive signals from the panel (avoid self-destruct)."""
+        protected = {1, os.getpid()}
+        return protected
+
     @staticmethod
     def get_cpu_usage() -> Dict[str, Any]:
         """Get CPU usage information."""
@@ -21,7 +32,7 @@ class SystemMonitor:
             cpu_percent = psutil.cpu_percent(interval=1)
             cpu_count = psutil.cpu_count()
             cpu_freq = psutil.cpu_freq()
-            
+
             return {
                 "percent": cpu_percent,
                 "count": cpu_count,
@@ -33,14 +44,14 @@ class SystemMonitor:
             }
         except Exception as e:
             return {"error": str(e)}
-    
+
     @staticmethod
     def get_memory_usage() -> Dict[str, Any]:
         """Get memory usage information."""
         try:
             memory = psutil.virtual_memory()
             swap = psutil.swap_memory()
-            
+
             return {
                 "total": memory.total,
                 "used": memory.used,
@@ -56,7 +67,7 @@ class SystemMonitor:
             }
         except Exception as e:
             return {"error": str(e)}
-    
+
     @staticmethod
     def get_disk_usage() -> Dict[str, Any]:
         """Get disk usage information."""
@@ -76,18 +87,18 @@ class SystemMonitor:
                     })
                 except PermissionError:
                     continue
-            
+
             return {"partitions": partitions}
         except Exception as e:
             return {"error": str(e)}
-    
+
     @staticmethod
     def get_network_stats() -> Dict[str, Any]:
         """Get network statistics."""
         try:
             net_io = psutil.net_io_counters()
             connections = len(psutil.net_connections())
-            
+
             return {
                 "bytes_sent": net_io.bytes_sent,
                 "bytes_recv": net_io.bytes_recv,
@@ -97,7 +108,7 @@ class SystemMonitor:
             }
         except Exception as e:
             return {"error": str(e)}
-    
+
     @staticmethod
     def get_process_count() -> Dict[str, Any]:
         """Get process count."""
@@ -120,7 +131,7 @@ class SystemMonitor:
             }
         except Exception as e:
             return {"error": str(e)}
-    
+
     @staticmethod
     def get_system_info() -> Dict[str, Any]:
         """Get system information."""
@@ -138,19 +149,161 @@ class SystemMonitor:
             return {"error": str(e)}
 
     @staticmethod
-    def get_top_processes() -> List[Dict[str, Any]]:
-        """Get the top 20 active processes by CPU/Memory."""
-        processes = []
+    def get_top_processes(limit: int = 48) -> List[Dict[str, Any]]:
+        """Top processes by CPU + memory with richer fields (Linux-oriented)."""
+        processes: List[Dict[str, Any]] = []
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_percent']):
+            procs: List[psutil.Process] = []
+            for proc in psutil.process_iter():
                 try:
-                    processes.append(proc.info)
+                    procs.append(proc)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-            processes.sort(key=lambda p: (p.get('cpu_percent') or 0) + (p.get('memory_percent') or 0), reverse=True)
-            return processes[:20]
+
+            for p in procs:
+                try:
+                    p.cpu_percent(interval=None)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            time.sleep(0.12)
+
+            for p in procs:
+                try:
+                    cpu = p.cpu_percent(interval=None)
+                    with p.oneshot():
+                        info = p.as_dict(
+                            attrs=[
+                                "pid", "name", "username", "memory_percent",
+                                "status", "num_threads", "create_time", "ppid",
+                            ]
+                        )
+                    mi = p.memory_info()
+                    rss = int(mi.rss) if mi else 0
+                    cmdline: List[str] = []
+                    try:
+                        cmdline = p.cmdline() or []
+                    except (psutil.AccessDenied, psutil.NoSuchProcess):
+                        cmdline = []
+                    preview = " ".join(cmdline)[:220] if cmdline else ""
+
+                    processes.append({
+                        "pid": info.get("pid"),
+                        "name": info.get("name") or "",
+                        "username": info.get("username"),
+                        "cpu_percent": float(cpu or 0.0),
+                        "memory_percent": float(info.get("memory_percent") or 0.0),
+                        "rss": rss,
+                        "status": info.get("status"),
+                        "num_threads": info.get("num_threads"),
+                        "create_time": info.get("create_time"),
+                        "ppid": info.get("ppid"),
+                        "cmdline_preview": preview,
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            processes.sort(
+                key=lambda x: (x.get("cpu_percent") or 0) + (x.get("memory_percent") or 0),
+                reverse=True,
+            )
+            return processes[: max(1, min(limit, 100))]
         except Exception:
             return []
+
+    @staticmethod
+    def get_process_detail(pid: int) -> Optional[Dict[str, Any]]:
+        """Single process snapshot for drawer / drill-down."""
+        try:
+            p = psutil.Process(pid)
+            with p.oneshot():
+                cpu = p.cpu_percent(interval=None)
+            time.sleep(0.08)
+            cpu = p.cpu_percent(interval=None)
+            with p.oneshot():
+                info = p.as_dict(
+                    attrs=[
+                        "pid", "name", "username", "memory_percent", "status",
+                        "num_threads", "create_time", "ppid", "exe", "cwd",
+                    ]
+                )
+            mi = p.memory_info()
+            rss = int(mi.rss) if mi else 0
+            vms = int(mi.vms) if mi else 0
+            try:
+                cmdline = p.cmdline() or []
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                cmdline = []
+            try:
+                nc = getattr(p, "net_connections", None) or getattr(p, "connections", None)
+                connections = len(nc(kind="inet")) if nc else None
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                connections = None
+
+            return {
+                "pid": info.get("pid"),
+                "name": info.get("name") or "",
+                "username": info.get("username"),
+                "cpu_percent": float(cpu or 0.0),
+                "memory_percent": float(info.get("memory_percent") or 0.0),
+                "rss": rss,
+                "vms": vms,
+                "status": info.get("status"),
+                "num_threads": info.get("num_threads"),
+                "create_time": info.get("create_time"),
+                "ppid": info.get("ppid"),
+                "exe": info.get("exe"),
+                "cwd": info.get("cwd"),
+                "cmdline": cmdline,
+                "connections_tcp_udp": connections,
+            }
+        except psutil.NoSuchProcess:
+            return None
+        except psutil.AccessDenied:
+            return None
+
+    @staticmethod
+    def send_process_signal(pid: int, sig_name: str) -> Tuple[bool, str]:
+        """
+        Send SIGTERM (graceful) or SIGKILL (force) to a process.
+        Returns (ok, code) where code is ok|protected_pid|invalid|no_such_process|permission_denied|unsupported.
+        """
+        if pid <= 0:
+            return False, "invalid"
+
+        if pid in SystemMonitor._protected_pids():
+            return False, "protected_pid"
+
+        if sig_name not in ("term", "kill"):
+            return False, "invalid_signal"
+        sig_map = {"term": signal.SIGTERM, "kill": signal.SIGKILL}
+        sig = sig_map[sig_name]
+
+        if platform.system() == "Windows":
+            # psutil fallback for Windows dev machines
+            try:
+                proc = psutil.Process(pid)
+                if sig_name == "kill":
+                    proc.kill()
+                else:
+                    proc.terminate()
+                return True, "ok"
+            except psutil.NoSuchProcess:
+                return False, "no_such_process"
+            except psutil.AccessDenied:
+                return False, "permission_denied"
+            except Exception:
+                return False, "error"
+
+        try:
+            os.kill(pid, sig)
+            return True, "ok"
+        except ProcessLookupError:
+            return False, "no_such_process"
+        except PermissionError:
+            return False, "permission_denied"
+        except OSError:
+            return False, "error"
 
     @staticmethod
     def get_pm2_processes() -> List[Dict[str, Any]]:
@@ -177,7 +330,7 @@ class SystemMonitor:
             return res.returncode == 0
         except Exception:
             return False
-    
+
     @staticmethod
     def get_all_stats() -> Dict[str, Any]:
         """Get all system statistics."""
