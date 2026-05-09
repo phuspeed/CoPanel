@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import subprocess
 from pathlib import Path
@@ -237,11 +238,13 @@ async def stream_task(profile_id: int):
             await asyncio.sleep(0.3)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dump_file = BACKUP_DIR / f"{source_path}_{timestamp}.sql"
-            success = BackupTaskEngine.export_mysql(source_path, dump_file)
+            safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", source_path)[:80] or "db"
+            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql"
+            ok, err_msg = BackupTaskEngine.export_mysql(source_path, dump_file)
 
-            if not success:
-                yield f"data: {json.dumps({'error': 'MySQL dump failed. Aborting.', 'progress': 0, 'done': True})}\n\n"
+            if not ok:
+                detail = (err_msg or "MySQL dump failed.").strip()
+                yield f"data: {json.dumps({'error': detail, 'progress': 0, 'done': True})}\n\n"
                 return
 
             source_path = str(dump_file)

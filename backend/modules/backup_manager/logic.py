@@ -2,6 +2,7 @@ import os
 import re
 import json
 import sqlite3
+import shlex
 import subprocess
 import shutil
 import threading
@@ -13,6 +14,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime
+from typing import Tuple
 
 DB_PATH = Path("/opt/copanel/config/backup_manager.db")
 CRON_TAG_START = "# BEGIN COPANEL BACKUP"
@@ -497,23 +499,84 @@ class ProfileManager:
 
 class BackupTaskEngine:
     @staticmethod
-    def export_mysql(db_name: str, out_file: Path) -> bool:
-        if os.name == 'nt':
-            out_file.write_text("Mock SQL dump data")
-            return True
+    def export_mysql(db_name: str, out_file: Path) -> Tuple[bool, str]:
+        """
+        Dump one MySQL/MariaDB schema to a .sql file (same auth style as database_manager: sudo -u root).
+        Returns (success, error_message). error_message is empty on success.
+        """
+        if os.name == "nt":
+            try:
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+                out_file.write_text("-- Mock SQL dump (Windows dev)\n", encoding="utf-8")
+                return True, ""
+            except Exception as e:
+                return False, str(e)
+
         try:
-            with open(out_file, "w") as f:
-                res = subprocess.run(
-                    ["mysqldump", db_name],
-                    stdout=f, stderr=subprocess.PIPE, text=True
+            from modules.database_manager.logic import DBManager
+
+            if not DBManager.validate_mysql_db_name(db_name):
+                return False, "Invalid or reserved database name."
+        except Exception:
+            if not db_name or not re.match(r"^[a-zA-Z0-9_]{1,64}$", db_name):
+                return False, "Invalid database name."
+            if db_name.lower() in ("information_schema", "performance_schema", "mysql", "sys"):
+                return False, "Cannot dump system schemas."
+
+        dump_bin = shutil.which("mysqldump") or shutil.which("mariadb-dump")
+        if not dump_bin:
+            return False, "mysqldump / mariadb-dump not found on PATH."
+
+        try:
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return False, f"Cannot create backup directory: {e}"
+
+        quoted_dump = shlex.quote(dump_bin)
+        quoted_name = shlex.quote(db_name)
+        quoted_out = shlex.quote(str(out_file))
+        cmd = (
+            f"sudo {quoted_dump} -u root --single-transaction --quick "
+            f"--routines --events --triggers {quoted_name} > {quoted_out}"
+        )
+        try:
+            res = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            if res.returncode != 0:
+                err = (res.stderr or res.stdout or "").strip() or f"mysqldump exited with code {res.returncode}"
+                try:
+                    out_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return False, err
+
+            if not out_file.is_file() or out_file.stat().st_size == 0:
+                try:
+                    out_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return (
+                    False,
+                    "mysqldump produced an empty file. Check that the database exists and root can access it (sudo mysql).",
                 )
-                if res.returncode != 0:
-                    print(f"MySQL Dump Error: {res.stderr}")
-                    return False
-            return True
+            return True, ""
+        except subprocess.TimeoutExpired:
+            try:
+                out_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False, "mysqldump timed out after 1 hour."
         except Exception as e:
-            print(f"Exception during mysql dump: {e}")
-            return False
+            try:
+                out_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False, str(e)
 
     @staticmethod
     def run_sync_task(profile_id: int):
@@ -533,9 +596,11 @@ class BackupTaskEngine:
 
         if profile["source_type"] == "mysql":
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dump_file = BACKUP_DIR / f"{source_path}_{timestamp}.sql"
-            success = BackupTaskEngine.export_mysql(source_path, dump_file)
-            if not success:
+            safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", source_path)[:80] or "db"
+            dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql"
+            ok, err = BackupTaskEngine.export_mysql(source_path, dump_file)
+            if not ok:
+                print(f"MySQL dump failed: {err}")
                 return
             source_path = str(dump_file)
 
