@@ -6,11 +6,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as Icons from 'lucide-react';
+import { accentForPackageId, packageIdFromModulePath } from '../appStoreAccent';
 import { ModuleConfig, moduleRegistry } from '../registry';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Matches AppStore card accents per theme */
+  theme?: 'dark' | 'light';
 }
 
 const ICONS: Record<string, any> = Icons as unknown as Record<string, any>;
@@ -36,7 +39,8 @@ function getIcon(name: string) {
   return Comp;
 }
 
-export default function AppLauncher({ open, onClose }: Props) {
+export default function AppLauncher({ open, onClose, theme = 'dark' }: Props) {
+  const isDark = theme === 'dark';
   const [query, setQuery] = useState('');
   const [language, setLanguage] = useState<Lang>(() => (localStorage.getItem('copanel_lang') as Lang) || 'en');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -94,7 +98,7 @@ export default function AppLauncher({ open, onClose }: Props) {
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1">
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 pb-2">
               {filtered.map((m) => (
-                <AppTile key={m.path} module={m} onSelect={onClose} />
+                <AppTile key={m.path} module={m} onSelect={onClose} isDark={isDark} />
               ))}
               {filtered.length === 0 && (
                 <p className="col-span-full text-center text-sm text-slate-300">{tr.noMatch}</p>
@@ -107,16 +111,30 @@ export default function AppLauncher({ open, onClose }: Props) {
   );
 }
 
-function AppTile({ module, onSelect }: { module: ModuleConfig; onSelect: () => void }) {
+function AppTile({
+  module,
+  onSelect,
+  isDark,
+}: {
+  module: ModuleConfig;
+  onSelect: () => void;
+  isDark: boolean;
+}) {
   const Icon = getIcon(module.icon);
+  const pkgId = packageIdFromModulePath(module.path);
+  const accent = accentForPackageId(pkgId);
+  const accentClasses = isDark ? accent.dark : accent.light;
+
   return (
     <Link
       to={module.path}
       onClick={onSelect}
       className="group flex flex-col items-center text-center gap-2 p-4 rounded-2xl hover:bg-white/10 transition-colors"
     >
-      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-        <Icon className="w-8 h-8 text-white" />
+      <div
+        className={`relative w-16 h-16 rounded-2xl bg-gradient-to-br flex items-center justify-center shadow-inner ring-2 transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 ${accentClasses}`}
+      >
+        <Icon className="relative z-10 w-8 h-8 text-white drop-shadow-md" aria-hidden />
       </div>
       <span className="text-xs font-semibold text-white max-w-full truncate">{module.name}</span>
     </Link>

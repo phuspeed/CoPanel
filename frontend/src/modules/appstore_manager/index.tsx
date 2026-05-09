@@ -5,6 +5,7 @@
 import { useState, useEffect, type ComponentType } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
+import { accentForPackageId } from '../../core/appStoreAccent';
 
 type UpdateStatus = 'not_installed' | 'up_to_date' | 'update_available' | 'ahead';
 
@@ -41,22 +42,6 @@ function formatApiDetail(detail: unknown): string {
 function pkgIdFromZipName(filename: string): string {
   const base = filename.replace(/^.*[/\\]/, '').replace(/\.zip$/i, '');
   return base.split('-v')[0].split('_v')[0].split('.')[0].trim().toLowerCase() || 'custom_module';
-}
-
-const CARD_ACCENT: { dark: string; light: string }[] = [
-  { dark: 'from-sky-500/25 to-indigo-600/30 ring-sky-500/20', light: 'from-sky-500 to-indigo-600 ring-sky-200/60' },
-  { dark: 'from-emerald-500/25 to-teal-600/30 ring-emerald-500/20', light: 'from-emerald-500 to-teal-600 ring-emerald-200/60' },
-  { dark: 'from-violet-500/25 to-fuchsia-600/30 ring-violet-500/20', light: 'from-violet-500 to-fuchsia-600 ring-violet-200/60' },
-  { dark: 'from-amber-500/25 to-orange-600/30 ring-amber-500/20', light: 'from-amber-500 to-orange-600 ring-amber-200/60' },
-  { dark: 'from-cyan-500/25 to-blue-600/30 ring-cyan-500/20', light: 'from-cyan-500 to-blue-600 ring-cyan-200/60' },
-];
-
-function accentForPackageId(id: string): { dark: string; light: string } {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) | 0;
-  }
-  return CARD_ACCENT[Math.abs(h) % CARD_ACCENT.length];
 }
 
 function CatalogIcon({

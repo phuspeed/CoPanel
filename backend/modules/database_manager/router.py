@@ -6,9 +6,14 @@ backwards compatibility, while /engines/{engine}/* routes expose the
 unified API (mysql / postgres) consumed by the new dashboard widgets and
 Site Wizard.
 """
-from fastapi import APIRouter, HTTPException
-from typing import Dict, Any
+import os
+from typing import Any, Dict
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
+
 from .logic import DBManager
 from .postgres import PostgresManager
 
@@ -51,6 +56,33 @@ def list_databases() -> Dict[str, Any]:
         return {"status": "success", "databases": dbs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dump-gzip")
+def dump_database_gzip(name: str = Query(..., min_length=1, max_length=64)) -> FileResponse:
+    """Download a gzip-compressed mysqldump of the given MySQL/MariaDB schema."""
+    if not DBManager.validate_mysql_db_name(name):
+        raise HTTPException(status_code=400, detail="Invalid or reserved database name.")
+    try:
+        path = DBManager.dump_database_gzip_file(name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    def _cleanup(p: str) -> None:
+        try:
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
+
+    return FileResponse(
+        path,
+        filename=f"{name}.sql.gz",
+        media_type="application/gzip",
+        background=BackgroundTask(_cleanup, path),
+    )
 
 @router.post("/create")
 def create_database(req: CreateDBRequest) -> Dict[str, Any]:

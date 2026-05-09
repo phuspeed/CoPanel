@@ -46,6 +46,8 @@ export default function TaskCenter({ open, onClose }: Props) {
       recent: 'Gần đây',
       noActiveJobs: 'Không có tác vụ đang chạy.',
       noRecentJobs: 'Chưa có tác vụ gần đây.',
+      taskCenterScope:
+        'Chỉ hiển thị tác vụ nền do CoPanel tạo (ví dụ Site Wizard, triển khai Docker). Tiến trình hệ thống (systemd, cron…) không nằm trong danh sách này.',
       logs: 'Nhật ký',
       noLogs: 'Chưa có log.',
       cancel: 'Hủy',
@@ -66,6 +68,8 @@ export default function TaskCenter({ open, onClose }: Props) {
       recent: 'Recent',
       noActiveJobs: 'No active jobs.',
       noRecentJobs: 'No recent jobs.',
+      taskCenterScope:
+        'Only background work started through CoPanel appears here (e.g. Site Wizard, Docker compose deploy). OS-level processes (systemd, cron, etc.) are not listed.',
       logs: 'Logs',
       noLogs: 'No log entries yet.',
       cancel: 'Cancel',
@@ -126,6 +130,9 @@ export default function TaskCenter({ open, onClose }: Props) {
         </header>
 
         <div className="flex-1 overflow-y-auto">
+          <p className="px-5 py-2 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800/80">
+            {tr.taskCenterScope}
+          </p>
           <Section title={tr.active}>
             {active.length === 0 ? (
               <div className="px-5 py-3 text-xs text-slate-500">{tr.noActiveJobs}</div>

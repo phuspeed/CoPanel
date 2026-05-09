@@ -9,9 +9,21 @@ import Widget from './Widget';
 
 export default function RecentTasksWidget() {
   const { jobs } = useJobs();
+  const emptyHint =
+    localStorage.getItem('copanel_lang') === 'vi'
+      ? 'Chưa có tác vụ gần đây. Tác vụ từ Site Wizard hoặc triển khai Docker sẽ hiện ở đây.'
+      : 'No recent panel jobs. Tasks from Site Wizard or Docker deploy appear here.';
 
   useEffect(() => {
     jobsApi.refresh(20).catch(() => {});
+  }, []);
+  // Avoid stale store when navigating back to dashboard
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') jobsApi.refresh(20).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
   const recent = jobs.slice(0, 6);
@@ -23,7 +35,7 @@ export default function RecentTasksWidget() {
   return (
     <Widget title="Recent Tasks" icon="ListChecks" status={status as any}>
       {recent.length === 0 ? (
-        <p className="text-xs text-slate-500">No recent tasks.</p>
+        <p className="text-xs text-slate-500">{emptyHint}</p>
       ) : (
         <ul className="space-y-1.5">
           {recent.map((j) => (

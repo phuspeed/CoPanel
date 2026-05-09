@@ -90,6 +90,26 @@ class EventHub {
       this.source = null;
     }
   }
+
+  /** Drop the SSE connection and open a new one if handlers exist and a token is present. */
+  reconnect() {
+    if (this.source) {
+      this.source.close();
+      this.source = null;
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.handlers.size > 0) {
+      this.ensureConnected();
+    }
+  }
 }
 
 export const events = new EventHub();
+
+/** Call after login so EventSource connects (first subscribe may have run before token existed). */
+export function reconnectPlatformEvents() {
+  events.reconnect();
+}

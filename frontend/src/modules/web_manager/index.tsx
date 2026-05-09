@@ -1,5 +1,5 @@
 /**
- * Web Manager — Nginx & Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM, databases.
+ * Web Manager — Nginx & Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM overview, databases.
  */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -15,7 +15,7 @@ interface SiteItem {
 }
 
 export default function WebManagerDashboard() {
-  const [activeTab, setActiveTab] = useState<'sites' | 'services' | 'databases' | 'php'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'services' | 'databases'>('sites');
 
   // Tab 1: Sites States
   const [sites, setSites] = useState<SiteItem[]>([]);
@@ -87,22 +87,13 @@ export default function WebManagerDashboard() {
   const [pmaPassEdit, setPmaPassEdit] = useState<string>('');
   const [isEditingPma, setIsEditingPma] = useState<boolean>(false);
 
-
-  // Tab 4: PHP Manager States
-  const [phpManagerVersion, setPhpManagerVersion] = useState<string>('8.2');
-  const [phpIniContent, setPhpIniContent] = useState<string>('');
-  const [savingPhpIni, setSavingPhpIni] = useState<boolean>(false);
-  const [phpIniStatus, setPhpIniStatus] = useState<{ msg: string; isError: boolean } | null>(null);
-  const [newPhpVersionToInstall, setNewPhpVersionToInstall] = useState<string>('8.3');
-
   const t = {
     en: {
-      title: 'Web & PHP Manager',
-      desc: 'Control website domains, underlying server software, PHP versions/configurations, and database services.',
+      title: 'Web Manager',
+      desc: 'Control website domains, web server stack (Nginx / Apache, PHP-FPM summary), and SQL database services. Use the PHP Manager module for php.ini and PHP versions.',
       tabSites: 'Website Management',
       tabServices: 'Web Services Status',
       tabDbs: 'SQL Database Manager',
-      tabPhp: 'PHP Version & ini Manager',
       createBtn: 'Create New Site',
       loadingSites: 'Loading Nginx sites...',
       colFilename: 'Filename',
@@ -162,7 +153,8 @@ export default function WebManagerDashboard() {
       dbNameLabel: 'New Database Name',
       dbNamePlaceholder: 'e.g. blog_database',
       colDb: 'Database Name',
-      colDbSize: 'Size',
+      colDbSize: 'Size (on disk)',
+      downloadDbGzip: 'Download .sql.gz',
       noDbs: 'No databases found on your server.',
       pmaTip: 'Fast shortcut to phpMyAdmin on this server:',
       openPmaBtn: 'Access phpMyAdmin',
@@ -178,22 +170,13 @@ export default function WebManagerDashboard() {
       colService: 'Service Name',
       colServiceStatus: 'Status',
       colInstalled: 'Installed',
-
-      // PHP Manager
-      phpTitle: 'Advanced PHP Manager',
-      phpDesc: 'Manage, install new PHP versions, and edit their php.ini server configurations directly.',
-      colPhpVersion: 'PHP Version',
-      installPhpBtn: 'Install PHP Version',
-      editIniBtn: 'Edit php.ini Config',
-      saveIniBtn: 'Save php.ini'
     },
     vi: {
-      title: 'Quản lý Web & PHP',
-      desc: 'Quản lý toàn diện trang web, cấu hình nginx, dịch vụ web, phiên bản PHP/php.ini và các cơ sở dữ liệu SQL.',
+      title: 'Quản lý Web',
+      desc: 'Quản lý tên miền, stack web (Nginx / Apache, tóm tắt PHP-FPM) và dịch vụ SQL. Dùng module PHP Manager để chỉnh php.ini và phiên bản PHP.',
       tabSites: 'Quản lý Website',
       tabServices: 'Dịch vụ Web',
       tabDbs: 'Dịch vụ Database & User',
-      tabPhp: 'Dịch vụ PHP & php.ini',
       createBtn: 'Tạo website mới',
       loadingSites: 'Đang tải danh sách website...',
       colFilename: 'Tên tệp cấu hình',
@@ -230,7 +213,8 @@ export default function WebManagerDashboard() {
       dbNameLabel: 'Tên Database',
       dbNamePlaceholder: 'VD: dulieu_blog',
       colDb: 'Tên Database',
-      colDbSize: 'Kích thước',
+      colDbSize: 'Dung lượng (đĩa)',
+      downloadDbGzip: 'Tải .sql.gz',
       noDbs: 'Chưa có database nào được tìm thấy.',
       pmaTip: 'Đường dẫn truy cập nhanh phpMyAdmin trên máy chủ của bạn:',
       openPmaBtn: 'Truy cập phpMyAdmin',
@@ -268,14 +252,6 @@ export default function WebManagerDashboard() {
       colService: 'Tên dịch vụ',
       colServiceStatus: 'Trạng thái',
       colInstalled: 'Đã cài đặt',
-
-      // PHP Manager
-      phpTitle: 'Quản lý PHP Nâng Cao',
-      phpDesc: 'Cài đặt các phiên bản PHP mới và tùy chỉnh cấu hình tệp php.ini trực tiếp cho từng phiên bản.',
-      colPhpVersion: 'Phiên bản PHP',
-      installPhpBtn: 'Cài đặt PHP',
-      editIniBtn: 'Sửa php.ini',
-      saveIniBtn: 'Lưu php.ini'
     }
   };
 
@@ -423,18 +399,6 @@ export default function WebManagerDashboard() {
   };
 
 
-  const fetchPhpIni = async (version: string) => {
-    try {
-      const response = await fetch(`/api/php_manager/php_ini/${version}`, { headers: authHeaders });
-      if (response.ok) {
-        const d = await response.json();
-        if (d.content) setPhpIniContent(d.content);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   useEffect(() => {
     if (activeTab === 'sites') fetchSites();
     if (activeTab === 'services') fetchWebServices();
@@ -444,8 +408,7 @@ export default function WebManagerDashboard() {
       fetchPmaCredentials();
       fetchDbEngines();
     }
-    if (activeTab === 'php') fetchPhpIni(phpManagerVersion);
-  }, [activeTab, phpManagerVersion]);
+  }, [activeTab]);
 
 
   // PHP version/module options fetching
@@ -487,7 +450,7 @@ export default function WebManagerDashboard() {
       }
     };
     fetchPhpOptions();
-  }, [showCreateModal, activeTab]);
+  }, []);
 
   // Actions
   const handleToggleStatus = async (item: SiteItem) => {
@@ -712,6 +675,34 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const handleDownloadDbGzip = async (dbname: string) => {
+    try {
+      const url = `/api/database_manager/dump-gzip?name=${encodeURIComponent(dbname)}`;
+      const response = await fetch(url, { headers: authHeaders });
+      if (!response.ok) {
+        let msg = await response.text();
+        try {
+          const j = JSON.parse(msg) as { detail?: string };
+          if (j.detail) msg = j.detail;
+        } catch {
+          /* plain text */
+        }
+        throw new Error(msg || 'Download failed');
+      }
+      const blob = await response.blob();
+      const href = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${dbname}.sql.gz`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(href);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Download failed');
+    }
+  };
+
   const handleDeleteDatabase = async (dbname: string) => {
     if (!confirm(language === 'vi' ? `Bạn có chắc muốn xóa database ${dbname}?` : `Delete database ${dbname}?`)) return;
     try {
@@ -769,49 +760,6 @@ export default function WebManagerDashboard() {
       }
     } catch (err) {
       console.error(err);
-    }
-  };
-
-  const handleInstallPhp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const response = await fetch('/api/php_manager/install', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ version: newPhpVersionToInstall })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        alert(data.message || 'PHP version installed successfully.');
-        fetchSites();
-      } else {
-        alert(data.detail || 'Failed to install PHP');
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSavePhpIni = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingPhpIni(true);
-    setPhpIniStatus(null);
-    try {
-      const response = await fetch(`/api/php_manager/php_ini/${phpManagerVersion}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ content: phpIniContent })
-      });
-      const d = await response.json();
-      if (response.ok) {
-        setPhpIniStatus({ msg: d.message || 'php.ini saved successfully.', isError: false });
-      } else {
-        setPhpIniStatus({ msg: d.detail || 'Failed to save php.ini config', isError: true });
-      }
-    } catch (err) {
-      setPhpIniStatus({ msg: 'Communication error.', isError: true });
-    } finally {
-      setSavingPhpIni(false);
     }
   };
 
@@ -902,16 +850,6 @@ export default function WebManagerDashboard() {
           }`}
         >
           <Icons.Database className="w-4 h-4" /> {tr.tabDbs}
-        </button>
-        <button
-          onClick={() => setActiveTab('php')}
-          className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'php'
-              ? 'border-blue-500 text-blue-500 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-        >
-          <Icons.Code className="w-4 h-4" /> {tr.tabPhp}
         </button>
       </div>
 
@@ -1451,16 +1389,31 @@ export default function WebManagerDashboard() {
                           <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[150px]" title={db.name}>
                             {db.name}
                           </td>
-                          <td className="p-4">{db.size}</td>
+                          <td className="p-4 whitespace-nowrap" title={typeof db.size_bytes === 'number' ? `${db.size_bytes} B` : undefined}>
+                            {db.size ?? '—'}
+                          </td>
                           <td className="p-4 text-center">
-                            <button
-                              onClick={() => handleDeleteDatabase(db.name)}
-                              className={`p-2 rounded-xl border transition mx-auto flex items-center justify-center gap-1 ${
-                                isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-800' : 'bg-slate-50 hover:bg-red-50 border-slate-200 hover:border-red-200'
-                              }`}
-                            >
-                              <Icons.Trash2 className="w-3.5 h-3.5 text-red-500" />
-                            </button>
+                            <div className="flex items-center justify-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                title={tr.downloadDbGzip}
+                                onClick={() => handleDownloadDbGzip(db.name)}
+                                className={`p-2 rounded-xl border transition flex items-center justify-center gap-1 ${
+                                  isDark ? 'bg-slate-800 hover:bg-emerald-950/30 border-slate-700 hover:border-emerald-700' : 'bg-slate-50 hover:bg-emerald-50 border-slate-200 hover:border-emerald-200'
+                                }`}
+                              >
+                                <Icons.FileArchive className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDatabase(db.name)}
+                                className={`p-2 rounded-xl border transition flex items-center justify-center gap-1 ${
+                                  isDark ? 'bg-slate-800 hover:bg-red-950/40 border-slate-700 hover:border-red-800' : 'bg-slate-50 hover:bg-red-50 border-slate-200 hover:border-red-200'
+                                }`}
+                              >
+                                <Icons.Trash2 className="w-3.5 h-3.5 text-red-500" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1596,100 +1549,6 @@ export default function WebManagerDashboard() {
                 {tr.noUsers}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'php' && (
-        <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <div className="space-y-2">
-            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-              <Icons.Code className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.phpTitle}
-            </h3>
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.phpDesc}</p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <form onSubmit={handleInstallPhp} className={`border p-5 rounded-2xl space-y-4 h-fit transition duration-200 ${
-              isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
-            }`}>
-              <h4 className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                {tr.installPhpBtn}
-              </h4>
-              <div className="flex flex-col md:flex-row items-center gap-3">
-                <select
-                  value={newPhpVersionToInstall}
-                  onChange={(e) => setNewPhpVersionToInstall(e.target.value)}
-                  className={`flex-1 w-full border px-3 py-2.5 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition-all ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                  }`}
-                >
-                  {['8.3', '8.2', '8.1', '8.0', '7.4'].map((v) => (
-                    <option key={v} value={v}>PHP {v}</option>
-                  ))}
-                </select>
-                <button
-                  type="submit"
-                  className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm"
-                >
-                  <Icons.Download className="w-4 h-4" />
-                  {tr.create}
-                </button>
-              </div>
-            </form>
-
-            <form onSubmit={handleSavePhpIni} className={`border p-5 rounded-2xl space-y-4 transition duration-200 ${
-              isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
-            }`}>
-              <div className="flex items-center justify-between">
-                <h4 className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                  {tr.editIniBtn}
-                </h4>
-                <select
-                  value={phpManagerVersion}
-                  onChange={(e) => setPhpManagerVersion(e.target.value)}
-                  className={`border px-3 py-1.5 rounded-xl font-mono text-[11px] outline-none focus:border-blue-500 transition ${
-                    isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                  }`}
-                >
-                  {availablePhpVersions.map((v) => (
-                    <option key={v} value={v}>PHP {v} ini</option>
-                  ))}
-                </select>
-              </div>
-
-              {phpIniStatus && (
-                <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${
-                  phpIniStatus.isError ? (isDark ? 'bg-red-950/20 border-red-800/40 text-red-400' : 'bg-red-50 border-red-200 text-red-600')
-                  : (isDark ? 'bg-blue-950/20 border-blue-800/40 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-600')
-                }`}>
-                  {phpIniStatus.isError ? <Icons.AlertCircle className="w-3.5 h-3.5 shrink-0" /> : <Icons.CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
-                  <span>{phpIniStatus.msg}</span>
-                </div>
-              )}
-
-              <textarea
-                value={phpIniContent}
-                onChange={(e) => setPhpIniContent(e.target.value)}
-                rows={10}
-                className={`w-full border p-3 rounded-xl outline-none focus:border-blue-500 font-mono text-[11px] transition resize-none ${
-                  isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
-                }`}
-              />
-
-              <div className="flex items-center justify-end">
-                <button
-                  type="submit"
-                  disabled={savingPhpIni}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
-                >
-                  {savingPhpIni ? <Icons.Loader className="w-3.5 h-3.5 animate-spin" /> : <Icons.Save className="w-3.5 h-3.5" />}
-                  {savingPhpIni ? tr.saving : tr.saveIniBtn}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

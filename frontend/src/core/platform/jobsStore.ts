@@ -91,11 +91,19 @@ function upsert(job: Job) {
 }
 
 events.on('jobs', (msg: any) => {
-  if (msg?.job) upsert(msg.job);
-  else if (msg?.job_id && msg?.event === 'update') {
+  if (msg?.job) {
+    upsert(msg.job);
+    return;
+  }
+  if (msg?.job_id && msg?.event === 'update') {
     const existing = store.getState().jobs[msg.job_id];
     if (existing) {
-      upsert({ ...existing, progress: msg.progress, message: msg.message, status: msg.status });
+      upsert({
+        ...existing,
+        progress: msg.progress ?? existing.progress,
+        message: msg.message ?? existing.message,
+        status: msg.status ?? existing.status,
+      });
     }
   }
 });
@@ -103,10 +111,12 @@ events.on('jobs', (msg: any) => {
 export const jobsApi = {
   async refresh(limit = 50) {
     const list = await api<Job[]>(`/api/platform/jobs?limit=${limit}`);
+    const rows = Array.isArray(list) ? list : [];
     store.setState(() => {
       const map: Record<string, Job> = {};
       const order: string[] = [];
-      for (const raw of list) {
+      for (const raw of rows) {
+        if (!raw || typeof raw !== 'object' || !(raw as Job).id) continue;
         const j = localizeJob(raw);
         map[j.id] = j;
         order.push(j.id);

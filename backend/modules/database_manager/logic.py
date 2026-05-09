@@ -3,20 +3,135 @@ Database Manager Logic
 Exposes commands to create, list, and remove MySQL/MariaDB databases and users.
 Supports Mock mode on Windows.
 """
-import os
-import shutil
-import subprocess
 import json
+import os
 import secrets
+import shlex
+import shutil
 import string
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import List, Dict, Any
+import re
+from typing import Any, Dict, List
+
+_DB_NAME_SAFE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
+_FORBIDDEN_DUMPS = frozenset(
+    {"information_schema", "performance_schema", "mysql", "sys"}
+)
 
 IS_WINDOWS = os.name == 'nt'
 MOCK_DB_FILE = Path("./test_nginx/databases.json") if IS_WINDOWS else Path("/var/lib/copanel/databases.json")
 MOCK_USER_FILE = Path("./test_nginx/database_users.json") if IS_WINDOWS else Path("/var/lib/copanel/database_users.json")
 
+def _format_storage_size(size_bytes: float) -> str:
+    """Human-readable size from bytes (MySQL data_length + index_length)."""
+    if size_bytes >= 1024**3:
+        return f"{size_bytes / (1024 ** 3):.2f} GB"
+    if size_bytes >= 1024**2:
+        return f"{size_bytes / (1024 ** 2):.2f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    if size_bytes > 0:
+        return f"{int(size_bytes)} B"
+    return "0 B"
+
+
 class DBManager:
+    @staticmethod
+    def validate_mysql_db_name(name: str) -> bool:
+        if not name or not _DB_NAME_SAFE.match(name):
+            return False
+        return name.lower() not in _FORBIDDEN_DUMPS
+
+    @staticmethod
+    def _mysql_schema_sizes_bytes() -> Dict[str, int]:
+        """Disk usage per schema from information_schema (data + indexes)."""
+        if IS_WINDOWS or not shutil.which("mysql"):
+            return {}
+        sql = """
+SELECT s.schema_name,
+       COALESCE(SUM(t.data_length + t.index_length), 0) AS sz
+FROM information_schema.schemata s
+LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name
+WHERE s.schema_name NOT IN ('information_schema','performance_schema','mysql','sys')
+GROUP BY s.schema_name;
+"""
+        try:
+            res = subprocess.run(
+                ["sudo", "mysql", "-u", "root", "-N", "-B", "-e", sql],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=120,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            return {}
+        sizes: Dict[str, int] = {}
+        for line in (res.stdout or "").strip().splitlines():
+            line = line.strip()
+            if not line or "\t" not in line:
+                continue
+            name, _, rest = line.partition("\t")
+            name = name.strip()
+            rest = rest.strip()
+            try:
+                sizes[name] = int(float(rest))
+            except ValueError:
+                continue
+        return sizes
+
+    @staticmethod
+    def dump_database_gzip_file(db_name: str) -> str:
+        """Run mysqldump | gzip into a temp file. Caller must delete the path."""
+        if IS_WINDOWS:
+            raise RuntimeError("Database dump is not available in Windows mock mode.")
+        if not DBManager.validate_mysql_db_name(db_name):
+            raise ValueError("Invalid or reserved database name.")
+        dump_bin = shutil.which("mysqldump") or shutil.which("mariadb-dump")
+        if not dump_bin:
+            raise RuntimeError("mysqldump / mariadb-dump not found on PATH.")
+
+        fd, path = tempfile.mkstemp(suffix=".sql.gz")
+        os.close(fd)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        quoted_dump = shlex.quote(dump_bin)
+        quoted_name = shlex.quote(db_name)
+        quoted_path = shlex.quote(path)
+        cmd = (
+            f"sudo {quoted_dump} -u root --single-transaction --quick "
+            f"--routines --events --triggers {quoted_name} "
+            f"| gzip -c > {quoted_path}"
+        )
+        try:
+            res = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            if res.returncode != 0 or not os.path.isfile(path) or os.path.getsize(path) == 0:
+                try:
+                    if os.path.isfile(path):
+                        os.unlink(path)
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    (res.stderr or res.stdout or "mysqldump failed.").strip() or "mysqldump failed."
+                )
+        except Exception:
+            try:
+                if os.path.isfile(path):
+                    os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
+
     @staticmethod
     def detect_status() -> Dict[str, Any]:
         mysql_bin = shutil.which("mysql")
@@ -47,8 +162,8 @@ class DBManager:
         if not MOCK_DB_FILE.exists():
             MOCK_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
             default_dbs = [
-                {"name": "wordpress_db", "size": "2.4 MB"},
-                {"name": "ecommerce_prod", "size": "15.1 MB"},
+                {"name": "wordpress_db", "size": "2.40 MB", "size_bytes": 2516582},
+                {"name": "ecommerce_prod", "size": "15.10 MB", "size_bytes": 15833498},
             ]
             MOCK_DB_FILE.write_text(json.dumps(default_dbs), encoding="utf-8")
             return default_dbs
@@ -92,16 +207,28 @@ class DBManager:
             return DBManager._load_mock_dbs()
 
         try:
+            sizes = DBManager._mysql_schema_sizes_bytes()
             res = subprocess.run(
                 ["sudo", "mysql", "-u", "root", "-e", "SHOW DATABASES;"],
-                capture_output=True, text=True, check=True
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=60,
             )
             lines = res.stdout.strip().splitlines()
             dbs = []
+            skip = {"Database", "information_schema", "performance_schema", "mysql", "sys"}
             for line in lines:
                 dbname = line.strip()
-                if dbname and dbname not in ["Database", "information_schema", "performance_schema", "mysql", "sys"]:
-                    dbs.append({"name": dbname, "size": "N/A"})
+                if dbname and dbname not in skip:
+                    b = int(sizes.get(dbname, 0))
+                    dbs.append(
+                        {
+                            "name": dbname,
+                            "size": _format_storage_size(b),
+                            "size_bytes": b,
+                        }
+                    )
             return dbs
         except Exception:
             return DBManager._load_mock_dbs()
@@ -116,7 +243,7 @@ class DBManager:
             dbs = DBManager._load_mock_dbs()
             if any(db["name"] == name for db in dbs):
                 return {"status": "error", "message": "Database already exists."}
-            dbs.append({"name": name, "size": "0 MB"})
+            dbs.append({"name": name, "size": "0 B", "size_bytes": 0})
             DBManager._save_mock_dbs(dbs)
             return {"status": "success", "message": f"Database '{name}' created successfully (Mock mode)."}
 
@@ -124,7 +251,7 @@ class DBManager:
             dbs = DBManager._load_mock_dbs()
             if any(db["name"] == name for db in dbs):
                 return {"status": "error", "message": "Database already exists."}
-            dbs.append({"name": name, "size": "0 MB"})
+            dbs.append({"name": name, "size": "0 B", "size_bytes": 0})
             DBManager._save_mock_dbs(dbs)
             return {"status": "success", "message": f"Database '{name}' created successfully (Mock fallback)."}
 

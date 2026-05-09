@@ -14,7 +14,7 @@ import AppLauncher from './shell/AppLauncher';
 import NotificationCenter from './shell/NotificationCenter';
 import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
-import { jobsApi, notificationsApi, useInbox, useJobs } from './platform';
+import { jobsApi, notificationsApi, reconnectPlatformEvents, useInbox, useJobs } from './platform';
 
 interface IconProps {
   className?: string;
@@ -181,12 +181,16 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     }
   };
 
-  // Initial fetch of platform state (jobs, notifications) so badges are
-  // populated on first paint; SSE keeps them up to date afterwards.
+  // Fetch jobs / notifications when the authenticated session is known, and
+  // reconnect SSE so live updates work after login (handlers may have
+  // subscribed before `copanel_token` existed).
+  const sessionKey = user?.id ?? user?.username;
   useEffect(() => {
+    if (!sessionKey) return;
     jobsApi.refresh().catch(() => {});
     notificationsApi.refresh().catch(() => {});
-  }, []);
+    reconnectPlatformEvents();
+  }, [sessionKey]);
 
   // Global keyboard shortcut: Cmd/Ctrl+K opens the App Launcher
   useEffect(() => {
@@ -586,7 +590,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
         </div>
       </div>
 
-      <AppLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
+      <AppLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} theme={theme} />
       <TaskCenter open={tasksOpen} onClose={() => setTasksOpen(false)} />
       <NotificationCenter open={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
       <ToastLayer />
