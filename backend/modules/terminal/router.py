@@ -1,13 +1,51 @@
 """
 Terminal Management Router
 FastAPI WebSocket endpoint for a fully interactive Linux terminal via a pty shell.
+REST endpoints for saved command snippets (JSON per user).
 """
 import os
 import asyncio
-from typing import Dict, Any
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
+
+from core.api import ApiError, ok
+from core.auth import require_module
+
+from . import logic
 
 router = APIRouter()
+
+
+class SnippetItem(BaseModel):
+    id: str = Field(default="", max_length=128)
+    title: str = Field(..., min_length=1, max_length=200)
+    command: str = Field(..., min_length=1, max_length=8000)
+
+
+class SaveSnippetsRequest(BaseModel):
+    snippets: List[SnippetItem] = Field(default_factory=list)
+
+
+@router.get("/snippets")
+def get_snippets(user: Dict[str, Any] = Depends(require_module("terminal"))) -> Dict[str, Any]:
+    return ok(logic.list_snippets(int(user["id"])))
+
+
+@router.put("/snippets")
+def put_snippets(
+    req: SaveSnippetsRequest,
+    user: Dict[str, Any] = Depends(require_module("terminal")),
+) -> Dict[str, Any]:
+    try:
+        payload = logic.save_snippets(
+            int(user["id"]),
+            [s.model_dump() for s in req.snippets],
+        )
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    return ok(payload)
 
 IS_WINDOWS = os.name == 'nt'
 

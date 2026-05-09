@@ -181,8 +181,12 @@ export default function PackageManagerDashboard() {
       ? packages
       : packages.filter((p) => p.category === mapCatToEn(selectedCategory)));
 
+  /** Shared: touch-friendly height + visible focus for keyboard */
+  const actionBtnBase =
+    'min-h-[44px] px-3 py-2.5 text-xs font-bold rounded-xl transition-colors border focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none';
+
   return (
-    <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+    <div className={`p-3 sm:p-4 md:p-8 max-w-7xl mx-auto space-y-5 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
         isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
       }`}>
@@ -208,15 +212,26 @@ export default function PackageManagerDashboard() {
       </div>
 
       {!selectedPackageId && (
-        <div className={`flex flex-wrap items-center gap-2 border-b pb-1 select-none ${isDark ? 'border-slate-800/80' : 'border-slate-100'}`}>
+        <div
+          className={`-mx-3 sm:mx-0 px-3 sm:px-0 flex gap-1 overflow-x-auto pb-2 -mb-1 snap-x snap-mandatory select-none [scrollbar-width:thin] ${
+            isDark ? 'border-b border-slate-800/80' : 'border-b border-slate-200'
+          }`}
+        >
           {categories.map((cat) => (
             <button
               key={cat}
+              type="button"
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1.5 md:px-4 md:py-2 text-[10px] md:text-xs font-bold uppercase tracking-wider transition-all rounded-t-lg border-b-2 duration-200 ${
+              className={`shrink-0 snap-start min-h-[40px] px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
+              } ${
                 selectedCategory === cat
-                  ? 'border-blue-500 text-blue-400 bg-blue-500/5'
-                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  ? isDark
+                    ? 'border-blue-400 bg-blue-500/20 text-blue-200 shadow-sm'
+                    : 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                  : isDark
+                    ? 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 hover:border-slate-700'
+                    : 'border-transparent text-slate-700 hover:text-slate-900 hover:bg-slate-100 hover:border-slate-300'
               }`}
             >
               {cat}
@@ -226,16 +241,21 @@ export default function PackageManagerDashboard() {
       )}
 
       {selectedPackageId && (
-        <div className="flex items-center justify-between">
-          <div className={`flex items-center gap-2 text-xs px-3 py-2 border rounded-xl ${
-            isDark ? 'text-blue-400 bg-blue-950/40 border-blue-900/40' : 'text-blue-600 bg-blue-50 border-blue-100'
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className={`flex items-center gap-2 text-xs px-3 py-2.5 border rounded-xl min-h-[44px] ${
+            isDark ? 'text-blue-400 bg-blue-950/40 border-blue-900/40' : 'text-blue-800 bg-blue-50 border-blue-200'
           }`}>
-            <Icons.Eye className="w-4 h-4" />
+            <Icons.Eye className="w-4 h-4 shrink-0" />
             {tr.focusedPackage}
           </div>
           <button
+            type="button"
             onClick={() => window.history.replaceState(null, '', window.location.pathname)}
-            className={`text-xs transition ${isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
+            className={`min-h-[44px] px-3 rounded-lg text-xs font-semibold border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              isDark
+                ? 'text-slate-200 border-slate-600 bg-slate-800 hover:bg-slate-700'
+                : 'text-slate-900 border-slate-300 bg-white hover:bg-slate-50'
+            }`}
           >
             {tr.showAll}
           </button>
@@ -257,14 +277,16 @@ export default function PackageManagerDashboard() {
           <span className="text-xs text-slate-400 mt-4">{tr.loadingPkg}</span>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {filteredPackages.map((pkg) => (
             <div
               key={pkg.id}
-              className={`group relative flex flex-col justify-between p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5 hover:-translate-y-0.5 ${
+              className={`group relative flex flex-col justify-between p-4 sm:p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5 hover:-translate-y-0.5 ${
                 pkg.id === selectedPackageId
-                  ? 'border-blue-500 bg-blue-950/20 ring-1 ring-blue-500/40 shadow-xl'
-                  : isDark ? 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30' : 'bg-white border-slate-200 hover:border-blue-500/30 shadow-sm hover:bg-slate-50/20'
+                  ? isDark
+                    ? 'border-blue-500 bg-blue-950/20 ring-1 ring-blue-500/40 shadow-xl'
+                    : 'border-blue-500 bg-blue-50/90 ring-2 ring-blue-200 shadow-lg'
+                  : isDark ? 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30' : 'bg-white border-slate-200 hover:border-blue-400/60 shadow-sm hover:bg-slate-50/80'
               }`}
             >
               <div className="space-y-4">
@@ -307,8 +329,9 @@ export default function PackageManagerDashboard() {
                   <div className={`text-[11px] border rounded-xl px-2.5 py-2 ${isDark ? 'border-slate-700 bg-slate-800/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
                     <div className="font-semibold">{tr.phpmyadminPath}: `{mysqlCreds?.url || '/phpmyadmin/index.php'}`</div>
                     <button
+                      type="button"
                       onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}${mysqlCreds?.url || '/phpmyadmin/index.php'}`, '_blank')}
-                      className="mt-2 text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white"
+                      className="mt-2 w-full sm:w-auto min-h-[44px] text-xs px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 text-white font-semibold border border-blue-800 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                     >
                       {tr.openPhpMyAdmin}
                     </button>
@@ -316,17 +339,24 @@ export default function PackageManagerDashboard() {
                 )}
               </div>
 
-              <div className={`mt-6 pt-4 border-t flex flex-wrap items-center gap-2 ${isDark ? 'border-slate-800/80' : 'border-slate-100'}`}>
+              <div
+                className={`mt-5 pt-4 border-t flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch ${
+                  isDark ? 'border-slate-800/80' : 'border-slate-200'
+                }`}
+              >
                 {pkg.status === 'not_installed' ? (
                   <button
+                    type="button"
                     onClick={() => handleAction(pkg.id, 'install')}
                     disabled={actionLoading !== null}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl transition-all shadow-lg hover:shadow-blue-500/20"
+                    className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-blue-700 hover:bg-blue-600 border-blue-800 shadow-md focus-visible:ring-blue-500 ${
+                      isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
+                    }`}
                   >
                     {actionLoading === `${pkg.id}-install` ? (
-                      <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
                     ) : (
-                      <Icons.Download className="w-3.5 h-3.5" />
+                      <Icons.Download className="w-4 h-4 shrink-0" />
                     )}
                     {tr.install}
                   </button>
@@ -335,57 +365,69 @@ export default function PackageManagerDashboard() {
                     {pkg.status === 'running' ? (
                       <>
                         <button
+                          type="button"
                           onClick={() => handleAction(pkg.id, 'stop')}
                           disabled={actionLoading !== null}
-                          className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-all border ${
-                            isDark ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border-slate-700' : 'text-slate-600 hover:bg-slate-100 bg-slate-50 border-slate-200'
+                          className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 ${
+                            isDark
+                              ? 'text-white bg-slate-700 hover:bg-slate-600 border-slate-500 focus-visible:ring-slate-400 focus-visible:ring-offset-slate-950'
+                              : 'text-white bg-slate-800 hover:bg-slate-900 border-slate-900 focus-visible:ring-slate-700 focus-visible:ring-offset-white'
                           }`}
                         >
                           {actionLoading === `${pkg.id}-stop` ? (
-                            <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
                           ) : (
-                            <Icons.Square className="w-3.5 h-3.5" />
+                            <Icons.Square className="w-4 h-4 shrink-0" />
                           )}
                           {tr.stop}
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleAction(pkg.id, 'restart')}
                           disabled={actionLoading !== null}
-                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
+                          className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-indigo-700 hover:bg-indigo-600 border-indigo-800 shadow-md focus-visible:ring-indigo-500 ${
+                            isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
+                          }`}
                         >
                           {actionLoading === `${pkg.id}-restart` ? (
-                            <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
                           ) : (
-                            <Icons.RotateCw className="w-3.5 h-3.5" />
+                            <Icons.RotateCw className="w-4 h-4 shrink-0" />
                           )}
                           {tr.restart}
                         </button>
                       </>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => handleAction(pkg.id, 'restart')}
                         disabled={actionLoading !== null}
-                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-500 disabled:opacity-50 rounded-xl transition-all shadow-lg hover:shadow-green-500/20"
+                        className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-emerald-700 hover:bg-emerald-600 border-emerald-800 shadow-md focus-visible:ring-emerald-500 ${
+                          isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
+                        }`}
                       >
                         {actionLoading === `${pkg.id}-restart` ? (
-                          <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
                         ) : (
-                          <Icons.Play className="w-3.5 h-3.5" />
+                          <Icons.Play className="w-4 h-4 shrink-0" />
                         )}
                         {tr.start}
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={() => handleAction(pkg.id, 'remove')}
                       disabled={actionLoading !== null}
-                      className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold border rounded-xl transition-all ${
-                        isDark ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/40 border-red-900/40' : 'text-red-600 hover:bg-red-50 bg-red-50/50 border-red-100'
+                      className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 ${
+                        isDark
+                          ? 'text-white bg-red-700 hover:bg-red-600 border-red-600 focus-visible:ring-red-500 focus-visible:ring-offset-slate-950'
+                          : 'text-white bg-red-600 hover:bg-red-700 border-red-700 focus-visible:ring-red-600 focus-visible:ring-offset-white'
                       }`}
                     >
                       {actionLoading === `${pkg.id}-remove` ? (
-                        <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
                       ) : (
-                        <Icons.Trash2 className="w-3.5 h-3.5" />
+                        <Icons.Trash2 className="w-4 h-4 shrink-0" />
                       )}
                       {tr.remove}
                     </button>

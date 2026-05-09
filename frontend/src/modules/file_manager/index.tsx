@@ -15,6 +15,130 @@ interface FileItem {
   modified: number;
 }
 
+/** Per-row actions: distinct icons (rename ≠ cut) and larger tap targets when `touch` */
+function FileActionsBar({
+  item,
+  isDark,
+  touch,
+  tr,
+  onEdit,
+  onDownload,
+  onRename,
+  onCut,
+  onCopy,
+  onDelete,
+}: {
+  item: FileItem;
+  isDark: boolean;
+  touch: boolean;
+  tr: {
+    editFile: string;
+    renameItem: string;
+    cut: string;
+    copy: string;
+    deleteItem: string;
+    downloadFile: string;
+  };
+  onEdit: () => void;
+  onDownload: () => void;
+  onRename: () => void;
+  onCut: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
+  const pad = touch ? 'min-h-[44px] min-w-[44px] p-2.5 justify-center' : 'p-1.5';
+  const icon = touch ? 'w-5 h-5' : 'w-4 h-4';
+  const shell = (extra: string) =>
+    `${pad} rounded-xl border transition-all flex items-center gap-0 shrink-0 ${extra}`;
+
+  return (
+    <div className={`flex items-center justify-center gap-1.5 ${touch ? 'flex-wrap' : 'flex-wrap'}`}>
+      {!item.is_dir && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className={shell(
+            isDark
+              ? 'bg-slate-800/60 hover:bg-slate-700 text-blue-400 border-slate-700/60'
+              : 'bg-slate-100 hover:bg-slate-200 text-blue-600 border-slate-200'
+          )}
+          title={tr.editFile}
+          aria-label={tr.editFile}
+        >
+          <Icons.FileEdit className={icon} />
+        </button>
+      )}
+      {!item.is_dir && (
+        <button
+          type="button"
+          onClick={onDownload}
+          className={shell(
+            isDark
+              ? 'bg-slate-800/60 hover:bg-slate-700 text-emerald-400 border-slate-700/60'
+              : 'bg-slate-100 hover:bg-slate-200 text-emerald-600 border-slate-200'
+          )}
+          title={tr.downloadFile}
+          aria-label={tr.downloadFile}
+        >
+          <Icons.Download className={icon} />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onRename}
+        className={shell(
+          isDark
+            ? 'bg-slate-800/60 hover:bg-slate-700 text-violet-400 border-slate-700/60'
+            : 'bg-slate-100 hover:bg-slate-200 text-violet-600 border-slate-200'
+        )}
+        title={tr.renameItem}
+        aria-label={tr.renameItem}
+      >
+        <Icons.PencilLine className={icon} />
+      </button>
+      <button
+        type="button"
+        onClick={onCut}
+        className={shell(
+          isDark
+            ? 'bg-slate-800/60 hover:bg-slate-700 text-amber-400 border-slate-700/60'
+            : 'bg-slate-100 hover:bg-slate-200 text-amber-600 border-slate-200'
+        )}
+        title={tr.cut}
+        aria-label={tr.cut}
+      >
+        <Icons.Scissors className={icon} />
+      </button>
+      <button
+        type="button"
+        onClick={onCopy}
+        className={shell(
+          isDark
+            ? 'bg-slate-800/60 hover:bg-slate-700 text-indigo-400 border-slate-700/60'
+            : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-200'
+        )}
+        title={tr.copy}
+        aria-label={tr.copy}
+      >
+        <Icons.Copy className={icon} />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        className={shell(
+          isDark
+            ? 'bg-red-950/50 hover:bg-red-900/60 text-red-300 border-red-800/60'
+            : 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'
+        )}
+        title={tr.deleteItem}
+        aria-label={tr.deleteItem}
+      >
+        <Icons.Trash2 className={icon} />
+      </button>
+    </div>
+  );
+}
+
 export default function FileManagerDashboard() {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -105,6 +229,11 @@ export default function FileManagerDashboard() {
       chmodTitle: 'Change Permissions (Chmod)',
       chmodLabel: 'Mode String',
       chmodButton: 'Apply',
+      upload: 'Upload',
+      downloadFile: 'Download file',
+      selectAllTitle: 'Select or deselect all',
+      zipLabelShort: 'Zip',
+      chmodLabelShort: 'Chmod',
     },
     vi: {
       title: 'Quản lý File',
@@ -149,6 +278,11 @@ export default function FileManagerDashboard() {
       chmodTitle: 'Thay đổi quyền (Chmod)',
       chmodLabel: 'Mã quyền (Mode)',
       chmodButton: 'Áp dụng',
+      upload: 'Tải lên',
+      downloadFile: 'Tải xuống file',
+      selectAllTitle: 'Chọn / bỏ chọn tất cả',
+      zipLabelShort: 'Nén ZIP',
+      chmodLabelShort: 'Quyền',
     },
   };
 
@@ -566,55 +700,59 @@ export default function FileManagerDashboard() {
     : 'bg-slate-50 text-slate-900 min-h-screen';
 
   return (
-    <div className={`${containerStyle} p-8 max-w-7xl mx-auto space-y-8 select-none transition-colors duration-200`}>
+    <div className={`${containerStyle} p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-4 sm:space-y-8 select-none transition-colors duration-200 pb-24 md:pb-8`}>
       {/* Top Header */}
-      <div className={`relative overflow-hidden p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 border transition-colors duration-200 ${
+      <div className={`relative overflow-hidden p-4 sm:p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6 border transition-colors duration-200 ${
         isDark
           ? 'bg-gradient-to-br from-blue-600/20 via-slate-900 to-slate-950 border-slate-800'
           : 'bg-gradient-to-br from-blue-50/60 via-slate-50 to-white border-slate-200'
       }`}>
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h1 className={`text-3xl font-extrabold tracking-tight flex items-center gap-2 ${
+        <div className="space-y-2 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <h1 className={`text-xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2 min-w-0 ${
               isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'text-slate-900'
             }`}>
-              <Icons.Folder className={`w-8 h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-              {tr.title}
+              <Icons.Folder className={`w-7 h-7 sm:w-8 sm:h-8 shrink-0 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              <span className="truncate">{tr.title}</span>
             </h1>
           </div>
-          <p className={`${isDark ? 'text-slate-400' : 'text-slate-500'} text-sm md:text-base leading-relaxed max-w-xl`}>
+          <p className={`${isDark ? 'text-slate-400' : 'text-slate-500'} text-xs sm:text-sm md:text-base leading-relaxed max-w-xl line-clamp-4 sm:line-clamp-none`}>
             {tr.description}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2 w-full lg:w-auto lg:max-w-none">
           <button
+            type="button"
             onClick={() => setCreateType('file')}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs transition shadow-lg hover:shadow-blue-500/20 shrink-0"
+            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white px-3 sm:px-4 py-3 sm:py-2.5 rounded-xl font-bold text-xs transition shadow-lg hover:shadow-blue-500/20 min-h-[44px] sm:min-h-0"
           >
-            <Icons.FilePlus className="w-4 h-4" /> {tr.createFile}
+            <Icons.FilePlus className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.createFile}</span>
           </button>
           <button
+            type="button"
             onClick={() => setCreateType('dir')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition shrink-0 ${
+            className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-3 sm:py-2.5 rounded-xl font-bold text-xs transition min-h-[44px] sm:min-h-0 ${
               isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
             }`}
           >
-            <Icons.FolderPlus className="w-4 h-4" /> {tr.createDir}
+            <Icons.FolderPlus className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.createDir}</span>
           </button>
           <label
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer shrink-0 ${
+            className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-3 sm:py-2.5 rounded-xl font-bold text-xs transition cursor-pointer min-h-[44px] sm:min-h-0 col-span-2 sm:col-span-1 sm:flex-initial ${
               isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
             }`}
           >
-            <Icons.Upload className="w-4 h-4" /> Upload
+            <Icons.Upload className="w-4 h-4 shrink-0" /> {tr.upload}
             <input type="file" className="hidden" onChange={handleUploadFile} />
           </label>
           <button
+            type="button"
             onClick={() => fetchPath(currentPath)}
-            className={`flex items-center p-3 rounded-xl transition ${
+            className={`flex items-center justify-center p-3 rounded-xl transition min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 justify-self-center sm:justify-self-auto ${
               isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'
             }`}
             title={tr.refresh}
+            aria-label={tr.refresh}
           >
             <Icons.RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -623,35 +761,42 @@ export default function FileManagerDashboard() {
 
       {/* Path Bar & Paste Banner */}
       <div className="flex flex-col gap-4">
-        <div className={`border rounded-2xl p-4 flex flex-wrap md:flex-row items-center gap-2 backdrop-blur-sm ${
+        <div className={`border rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 backdrop-blur-sm ${
           isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm'
         }`}>
-          <button
-            onClick={handleGoUp}
-            disabled={!currentPath || currentPath === '/' || currentPath.includes(':')}
-            className={`p-2 rounded-xl disabled:opacity-50 transition ${
-              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'
-            }`}
-            title={tr.goUp}
-          >
-            <Icons.CornerUpLeft className="w-4 h-4" />
-          </button>
-          <span className="text-slate-500 px-1 font-semibold select-none">/</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleGoUp}
+              disabled={!currentPath || currentPath === '/' || currentPath.includes(':')}
+              className={`p-2.5 sm:p-2 rounded-xl disabled:opacity-50 transition min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center ${
+                isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'
+              }`}
+              title={tr.goUp}
+              aria-label={tr.goUp}
+            >
+              <Icons.CornerUpLeft className="w-5 h-5 sm:w-4 sm:h-4" />
+            </button>
+            <span className="text-slate-500 px-1 font-semibold select-none hidden sm:inline">/</span>
+          </div>
           <input
             type="text"
             value={currentPath}
             onChange={(e) => setCurrentPath(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchPath(currentPath)}
-            className={`flex-1 px-4 py-2 rounded-xl outline-none text-xs font-mono transition-all ${
+            className={`w-full sm:flex-1 min-w-0 px-4 py-3 sm:py-2 rounded-xl outline-none text-xs font-mono transition-all ${
               isDark
                 ? 'bg-slate-950/60 border border-slate-800/80 focus:border-blue-500 text-slate-200'
                 : 'bg-slate-50 border border-slate-200 focus:border-blue-500 text-slate-800'
             }`}
             placeholder="e.g. /home/user or C:\"
+            autoComplete="off"
+            spellCheck={false}
           />
           <button
+            type="button"
             onClick={() => fetchPath(currentPath)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold text-xs transition shadow-lg hover:shadow-blue-500/20"
+            className="px-4 py-3 sm:py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-xl text-white font-bold text-xs transition shadow-lg hover:shadow-blue-500/20 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
           >
             {tr.go}
           </button>
@@ -672,27 +817,33 @@ export default function FileManagerDashboard() {
         )}
 
         {clipboard && (
-          <div className={`p-4 rounded-xl flex items-center justify-between gap-4 backdrop-blur-sm animate-fade-in shadow-xl select-none border ${
+          <div className={`p-3 sm:p-4 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 backdrop-blur-sm animate-fade-in shadow-xl select-none border ${
             isDark ? 'bg-amber-950/30 border-amber-800/40' : 'bg-amber-50 border-amber-200 text-amber-900'
           }`}>
-            <div className="flex items-center gap-2.5">
-              <Icons.Clipboard className="w-5 h-5 text-amber-500 shrink-0" />
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+              {clipboard.action === 'cut' ? (
+                <Icons.Scissors className="w-6 h-6 text-amber-500 shrink-0 mt-0.5 sm:mt-0" aria-hidden />
+              ) : (
+                <Icons.Copy className="w-6 h-6 text-amber-500 shrink-0 mt-0.5 sm:mt-0" aria-hidden />
+              )}
               <span className={`text-xs font-semibold leading-relaxed ${isDark ? 'text-amber-100' : 'text-amber-800'}`}>
                 {clipboard.paths.length} {tr.itemsTo} {clipboard.action === 'cut' ? tr.cut : tr.copy}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
               <button
+                type="button"
                 onClick={handlePaste}
-                className={`flex items-center gap-1.5 px-3 py-1.5 font-bold rounded-lg transition shadow ${
+                className={`flex items-center justify-center gap-2 px-4 py-3 sm:py-1.5 font-bold rounded-lg transition shadow min-h-[44px] sm:min-h-0 ${
                   isDark ? 'bg-amber-600/30 hover:bg-amber-500/40 text-amber-100 border border-amber-500/30' : 'bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300'
                 }`}
               >
-                <Icons.Clipboard className="w-3.5 h-3.5" /> {tr.paste}
+                <Icons.ClipboardPaste className="w-5 h-5 sm:w-3.5 sm:h-3.5 shrink-0" /> {tr.paste}
               </button>
               <button
+                type="button"
                 onClick={() => setClipboard(null)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition duration-150 ${
+                className={`px-4 py-3 sm:py-1.5 rounded-lg text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
                   isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'
                 }`}
               >
@@ -705,76 +856,89 @@ export default function FileManagerDashboard() {
 
       {/* Multi Selection Actions Toolbar */}
       {selectedPaths.length > 0 && (
-        <div className={`p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 animate-fade-in select-none border ${
+        <div className={`p-3 sm:p-4 rounded-xl flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between animate-fade-in select-none border ${
           isDark ? 'bg-blue-950/40 border-blue-800/60' : 'bg-blue-50 border-blue-200 text-blue-900'
         }`}>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <Icons.CheckSquare className="w-5 h-5 text-blue-500 shrink-0" />
-            <span className={`text-xs font-semibold ${isDark ? 'text-blue-200' : 'text-blue-800'}`}>
+            <span className={`text-xs font-semibold truncate ${isDark ? 'text-blue-200' : 'text-blue-800'}`}>
               {selectedPaths.length} {tr.itemsSelected}
             </span>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
             <button
+              type="button"
               onClick={() => handleCut()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition duration-150 ${
-                isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
+                isDark ? 'bg-slate-800 hover:bg-slate-700 text-amber-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-amber-800 border-slate-300'
               }`}
             >
-              <Icons.Scissors className="w-3.5 h-3.5" /> {tr.cut}
+              <Icons.Scissors className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.cut}</span>
             </button>
             <button
+              type="button"
               onClick={() => handleCopy()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition duration-150 ${
-                isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
+                isDark ? 'bg-slate-800 hover:bg-slate-700 text-indigo-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-indigo-800 border-slate-300'
               }`}
             >
-              <Icons.Copy className="w-3.5 h-3.5" /> {tr.copy}
+              <Icons.Copy className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.copy}</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setZipArchiveName('archive.zip');
                 setZipModalOpen(true);
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition duration-150 ${
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
                 isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
               }`}
             >
-              <Icons.Archive className="w-3.5 h-3.5" /> Zip
+              <Icons.Archive className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.zipLabelShort}</span>
             </button>
             {selectedPaths.length === 1 && selectedPaths[0].toLowerCase().endsWith('.zip') && (
               <button
+                type="button"
                 onClick={() => {
                   setExtractTargetDir(currentPath);
                   setExtractModalOpen(true);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition duration-150 ${
+                className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 col-span-2 sm:col-span-1 ${
                   isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
                 }`}
               >
-                <Icons.FolderDown className="w-3.5 h-3.5" /> {tr.extractButton}
+                <Icons.FolderDown className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.extractButton}</span>
               </button>
             )}
             <button
+              type="button"
               onClick={() => {
                 setChmodValue('755');
                 setChmodModalOpen(true);
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition duration-150 ${
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
                 isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-700 border-slate-300'
               }`}
             >
-              <Icons.Lock className="w-3.5 h-3.5" /> Chmod
+              <Icons.Lock className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.chmodLabelShort}</span>
             </button>
             <button
+              type="button"
               onClick={() => handleDelete()}
-              className="flex items-center gap-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 hover:border-red-700 text-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition duration-150"
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 col-span-2 sm:col-span-1 ${
+                isDark
+                  ? 'bg-red-950/40 hover:bg-red-900/60 border-red-800/60 text-red-200'
+                  : 'bg-red-100 hover:bg-red-200 border-red-300 text-red-800'
+              }`}
             >
-              <Icons.Trash2 className="w-3.5 h-3.5" /> {tr.deleteItem}
+              <Icons.Trash2 className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.deleteItem}</span>
             </button>
             <button
+              type="button"
               onClick={() => setSelectedPaths([])}
-              className={`text-xs px-2 font-bold transition ${isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`col-span-2 sm:col-span-1 text-xs py-2 sm:py-0 font-bold transition min-h-[44px] sm:min-h-0 flex items-center justify-center sm:justify-start sm:px-2 ${
+                isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
               {tr.deselect}
             </button>
@@ -799,8 +963,150 @@ export default function FileManagerDashboard() {
         <div className={`border rounded-2xl overflow-hidden backdrop-blur-sm shadow-xl transition-colors duration-200 ${
           isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200'
         }`}>
-          {/* Table of items */}
-          <div className="overflow-x-auto">
+          {/* Mobile: card list */}
+          <div className={`md:hidden divide-y ${isDark ? 'divide-slate-800/50' : 'divide-slate-200'}`}>
+            {files.length > 0 && (
+              <div
+                className={`flex items-center justify-between gap-2 px-3 py-2.5 ${
+                  isDark ? 'bg-slate-950/40' : 'bg-slate-50'
+                }`}
+              >
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                  {tr.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className={`flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-semibold transition min-h-[40px] ${
+                    isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-200'
+                  }`}
+                  title={tr.selectAllTitle}
+                >
+                  {selectedPaths.length === files.length && files.length > 0 ? (
+                    <Icons.CheckSquare className="w-5 h-5 text-blue-500" />
+                  ) : (
+                    <Icons.Square className="w-5 h-5" />
+                  )}
+                  <span className="hidden min-[400px]:inline">{tr.selectAllTitle}</span>
+                </button>
+              </div>
+            )}
+            {files.length === 0 ? (
+              <div className={`p-10 text-center text-xs select-none ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                {tr.noFiles}
+              </div>
+            ) : (
+              files.map((item, idx) => {
+                const isChecked = selectedPaths.includes(item.path);
+                return (
+                  <div
+                    key={item.path || idx}
+                    className={`transition-colors ${
+                      isDark
+                        ? isChecked
+                          ? 'bg-blue-900/25'
+                          : ''
+                        : isChecked
+                          ? 'bg-blue-50'
+                          : ''
+                    }`}
+                  >
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleToggleSelect(item.path)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleToggleSelect(item.path);
+                        }
+                      }}
+                      className={`flex items-start gap-2 p-3 cursor-pointer active:opacity-90 ${
+                        isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-100/80'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleSelect(item.path);
+                        }}
+                        className={`shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition ${
+                          isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-200 text-slate-500'
+                        }`}
+                        aria-pressed={isChecked}
+                      >
+                        {isChecked ? (
+                          <Icons.CheckSquare className="w-5 h-5 text-blue-500" />
+                        ) : (
+                          <Icons.Square className="w-5 h-5" />
+                        )}
+                      </button>
+                      <div className="flex-1 min-w-0 pt-0.5">
+                        {item.is_dir ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenFolder(item.path);
+                            }}
+                            className={`flex items-center gap-2 text-left font-bold text-sm w-full min-w-0 select-none ${
+                              isDark ? 'text-blue-400 active:text-blue-300' : 'text-blue-600 active:text-blue-500'
+                            }`}
+                          >
+                            <Icons.Folder
+                              className={`w-6 h-6 shrink-0 ${isDark ? 'fill-blue-500/20 text-blue-400' : 'fill-blue-100 text-blue-600'}`}
+                            />
+                            <span className="truncate">{item.name}</span>
+                          </button>
+                        ) : (
+                          <div className={`flex items-center gap-2 text-sm font-medium min-w-0 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                            <Icons.File className="w-6 h-6 shrink-0 text-slate-500" />
+                            <span className="truncate">{item.name}</span>
+                          </div>
+                        )}
+                        <p className={`mt-1 text-[11px] font-mono leading-snug ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                          {item.is_dir ? '—' : formatSize(item.size)}
+                          <span className="mx-1 opacity-50">·</span>
+                          {item.modified > 0 ? formatDate(item.modified) : '—'}
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      className={`px-3 pb-3 pt-0 ${isDark ? 'border-slate-800/40' : 'border-slate-100'} border-t border-opacity-100`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <FileActionsBar
+                        item={item}
+                        isDark={isDark}
+                        touch
+                        tr={{
+                          editFile: tr.editFile,
+                          renameItem: tr.renameItem,
+                          cut: tr.cut,
+                          copy: tr.copy,
+                          deleteItem: tr.deleteItem,
+                          downloadFile: tr.downloadFile,
+                        }}
+                        onEdit={() => handleEditFile(item)}
+                        onDownload={() => handleDownloadFile(item)}
+                        onRename={() => {
+                          setRenameValue(item.name);
+                          setRenamingItem(item);
+                        }}
+                        onCut={() => handleCut(item)}
+                        onCopy={() => handleCopy(item)}
+                        onDelete={() => handleDelete(item)}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop: table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className={`border-b text-xs uppercase tracking-wider select-none ${
@@ -808,11 +1114,12 @@ export default function FileManagerDashboard() {
                 }`}>
                   <th className="p-4 w-12 select-none">
                     <button
+                      type="button"
                       onClick={handleSelectAll}
                       className={`p-1 rounded-lg transition-all duration-150 ${
                         isDark ? 'hover:bg-slate-800/80 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
                       }`}
-                      title="Select/Deselect all"
+                      title={tr.selectAllTitle}
                     >
                       {selectedPaths.length === files.length && files.length > 0 ? (
                         <Icons.CheckSquare className="w-4 h-4 text-blue-500" />
@@ -824,7 +1131,7 @@ export default function FileManagerDashboard() {
                   <th className="p-4 font-bold select-none">{tr.name}</th>
                   <th className="p-4 font-bold w-28 select-none">{tr.size}</th>
                   <th className="p-4 font-bold w-48 select-none">{tr.dateModified}</th>
-                  <th className="p-4 font-bold w-48 text-center select-none">{tr.actions}</th>
+                  <th className="p-4 font-bold min-w-[220px] text-center select-none">{tr.actions}</th>
                 </tr>
               </thead>
               <tbody className={`divide-y text-sm ${isDark ? 'divide-slate-800/30' : 'divide-slate-200'}`}>
@@ -839,7 +1146,7 @@ export default function FileManagerDashboard() {
                   const isChecked = selectedPaths.includes(item.path);
                   return (
                     <tr
-                      key={idx}
+                      key={item.path || idx}
                       onClick={() => handleToggleSelect(item.path)}
                       className={`transition-all duration-200 cursor-pointer ${
                         isDark
@@ -849,6 +1156,7 @@ export default function FileManagerDashboard() {
                     >
                       <td className="p-4" onClick={(e) => e.stopPropagation()}>
                         <button
+                          type="button"
                           onClick={() => handleToggleSelect(item.path)}
                           className={`p-1 rounded-lg transition-all duration-150 ${
                             isDark ? 'hover:bg-slate-800/80 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
@@ -864,6 +1172,7 @@ export default function FileManagerDashboard() {
                       <td className="p-4">
                         {item.is_dir ? (
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleOpenFolder(item.path);
@@ -889,68 +1198,29 @@ export default function FileManagerDashboard() {
                         {item.modified > 0 ? formatDate(item.modified) : '—'}
                       </td>
                       <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                          {!item.is_dir && (
-                            <button
-                              onClick={() => handleEditFile(item)}
-                              className={`p-1.5 rounded-xl border transition-all ${
-                                isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-blue-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-blue-600 border-slate-200'
-                              }`}
-                              title={tr.editFile}
-                            >
-                              <Icons.Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {!item.is_dir && (
-                            <button
-                              onClick={() => handleDownloadFile(item)}
-                              className={`p-1.5 rounded-xl border transition-all ${
-                                isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-green-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-green-600 border-slate-200'
-                              }`}
-                              title="Download file"
-                            >
-                              <Icons.Download className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => {
+                        <div className="flex items-center justify-center">
+                          <FileActionsBar
+                            item={item}
+                            isDark={isDark}
+                            touch={false}
+                            tr={{
+                              editFile: tr.editFile,
+                              renameItem: tr.renameItem,
+                              cut: tr.cut,
+                              copy: tr.copy,
+                              deleteItem: tr.deleteItem,
+                              downloadFile: tr.downloadFile,
+                            }}
+                            onEdit={() => handleEditFile(item)}
+                            onDownload={() => handleDownloadFile(item)}
+                            onRename={() => {
                               setRenameValue(item.name);
                               setRenamingItem(item);
                             }}
-                            className={`p-1.5 rounded-xl border transition-all ${
-                              isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-300 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                            }`}
-                            title={tr.renameItem}
-                          >
-                            <Icons.Scissors className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleCut(item)}
-                            className={`p-1.5 rounded-xl border transition-all ${
-                              isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-amber-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-amber-600 border-slate-200'
-                            }`}
-                            title={tr.cut}
-                          >
-                            <Icons.Scissors className="w-3.5 h-3.5 rotate-90" />
-                          </button>
-                          <button
-                            onClick={() => handleCopy(item)}
-                            className={`p-1.5 rounded-xl border transition-all ${
-                              isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-indigo-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-200'
-                            }`}
-                            title={tr.copy}
-                          >
-                            <Icons.Copy className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className={`p-1.5 rounded-xl border transition-all ${
-                              isDark ? 'bg-slate-800/60 hover:bg-slate-700 text-red-400 border-slate-700/60' : 'bg-slate-100 hover:bg-slate-200 text-red-600 border-slate-200'
-                            }`}
-                            title={tr.deleteItem}
-                          >
-                            <Icons.Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            onCut={() => handleCut(item)}
+                            onCopy={() => handleCopy(item)}
+                            onDelete={() => handleDelete(item)}
+                          />
                         </div>
                       </td>
                     </tr>
@@ -1028,7 +1298,7 @@ export default function FileManagerDashboard() {
             isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
           }`}>
             <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-              <Icons.Edit3 className="w-4 h-4 text-blue-400" /> {tr.renameTitle}
+              <Icons.PencilLine className="w-4 h-4 text-violet-400" /> {tr.renameTitle}
             </h3>
             <div className="space-y-1">
               <label className="text-slate-400 text-[10px] font-bold tracking-wider uppercase block">
@@ -1073,8 +1343,8 @@ export default function FileManagerDashboard() {
 
       {/* TEXT EDITOR MODAL */}
       {editingFile && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in">
-          <div className={`p-6 rounded-2xl w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl space-y-4 border ${
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[110] p-0 sm:p-4 animate-fade-in">
+          <div className={`p-4 sm:p-6 rounded-t-2xl sm:rounded-2xl w-full max-w-3xl h-[92dvh] sm:h-[80vh] max-h-[100dvh] flex flex-col shadow-2xl space-y-3 sm:space-y-4 border ${
             isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
           }`}>
             <div className="flex items-center justify-between flex-shrink-0">
