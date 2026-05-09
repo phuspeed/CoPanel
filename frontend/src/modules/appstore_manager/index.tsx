@@ -409,8 +409,15 @@ export default function AppStoreDashboard() {
       });
       const d = await res.json();
       if (res.ok) {
-        setMsg(`✓ ${pkg.name} removed successfully! System is rebuilding frontend.`);
+        if (d.status === 'partial') {
+          setMsg(`⚠ ${d.message || 'Files removed but frontend rebuild failed.'}`);
+        } else {
+          setMsg(`✓ ${d.message || `${pkg.name} removed.`}`);
+        }
         fetchCatalog();
+        setTimeout(() => {
+          window.location.reload();
+        }, d.status === 'partial' ? 2500 : 1200);
       } else {
         setMsg(`❌ Error uninstalling: ${d.detail || 'Request failed.'}`);
       }

@@ -4,6 +4,7 @@ Pulls package details from dynamic GitHub index file, handles on-demand installa
 """
 import urllib.request
 import json
+import re
 import platform
 import subprocess
 import shutil
@@ -159,11 +160,69 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.13",
+    "appstore_manager": "1.0.14",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
 }
+
+_PKG_ID_SAFE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
+PROTECTED_UNINSTALL_IDS = frozenset(CORE_PACKAGE_VERSIONS.keys())
+
+
+def _validate_uninstall_package_id(pkg_id: str) -> str:
+    pid = (pkg_id or "").strip()
+    if not _PKG_ID_SAFE.match(pid):
+        raise ValueError("Invalid package id.")
+    if pid in PROTECTED_UNINSTALL_IDS:
+        raise ValueError("Cannot uninstall a core panel module.")
+    return pid
+
+
+def remove_local_package_record(pkg_id: str) -> None:
+    """Remove pkg_id from installed_packages.json after uninstall."""
+    home = get_copanel_home()
+    for cfg_dir in [home / "config"]:
+        installed_file = cfg_dir / "installed_packages.json"
+        if not installed_file.exists():
+            continue
+        try:
+            with open(installed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or pkg_id not in data:
+                continue
+            del data[pkg_id]
+            with open(installed_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            pass
+
+
+def _run_frontend_build_sync() -> tuple:
+    """Run npm run build in CoPanel frontend. Returns (success: bool, error_snippet: str)."""
+    frontend_dir = get_copanel_home() / "frontend"
+    if not (frontend_dir / "package.json").exists():
+        return True, ""
+    is_win = platform.system() == "Windows"
+    try:
+        r = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=str(frontend_dir),
+            shell=is_win,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "npm run build timed out (600s)."
+    except Exception as e:
+        return False, str(e)
+    if r.returncode != 0:
+        tail = (r.stderr or r.stdout or "").strip()
+        if len(tail) > 1500:
+            tail = tail[-1500:]
+        return False, tail or f"exit code {r.returncode}"
+    return True, ""
 
 def get_local_version(pkg_id: str, modules_dir: Path) -> str:
     # 1. Check version.txt inside backend module directory first
@@ -638,29 +697,56 @@ class AppStoreManager:
 
     @staticmethod
     def uninstall_package(pkg_id: str) -> dict:
-        """Removes installed package directories."""
-        project_root = get_copanel_home()
-        if Path("/opt/copanel").exists():
-            dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
-            dst_frontend = Path(f"/opt/copanel/frontend/src/modules/{pkg_id}")
-            frontend_cwd = Path("/opt/copanel/frontend")
-        else:
-            dst_backend = project_root / "backend" / "modules" / pkg_id
-            dst_frontend = project_root / "frontend" / "src" / "modules" / pkg_id
-            frontend_cwd = project_root / "frontend"
-            
+        """Remove backend/frontend module dirs, clear install record, rebuild frontend bundle."""
+        try:
+            pid = _validate_uninstall_package_id(pkg_id)
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+
+        root = get_copanel_home()
+        dst_backend = root / "backend" / "modules" / pid
+        dst_frontend = root / "frontend" / "src" / "modules" / pid
+
+        removed_backend = False
+        removed_frontend = False
         try:
             if dst_backend.exists():
                 shutil.rmtree(dst_backend)
+                removed_backend = True
             if dst_frontend.exists():
                 shutil.rmtree(dst_frontend)
-                
-            # Trigger build to remove the module from the frontend bundle
-            subprocess.Popen(["npm", "run", "build"], cwd=frontend_cwd, shell=platform.system() == "Windows")
-            
-            return {"status": "success", "message": f"Package {pkg_id} uninstalled successfully."}
+                removed_frontend = True
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": f"Failed to remove module files: {e}"}
+
+        remove_local_package_record(pid)
+
+        rebuild_ok, rebuild_err = _run_frontend_build_sync()
+        parts = []
+        if removed_backend:
+            parts.append("Backend module removed.")
+        if removed_frontend:
+            parts.append("Frontend module removed.")
+        if not removed_backend and not removed_frontend:
+            parts.append("Module was not installed locally.")
+        base_msg = " ".join(parts)
+
+        if not rebuild_ok:
+            return {
+                "status": "partial",
+                "message": base_msg + f" Frontend rebuild failed: {rebuild_err}",
+                "rebuild_ok": False,
+                "removed_backend": removed_backend,
+                "removed_frontend": removed_frontend,
+            }
+
+        return {
+            "status": "success",
+            "message": base_msg + " Frontend rebuilt.",
+            "rebuild_ok": True,
+            "removed_backend": removed_backend,
+            "removed_frontend": removed_frontend,
+        }
 
     @staticmethod
     def install_local_zip(pkg_id: str, zip_path: Path) -> dict:
