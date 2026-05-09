@@ -41,6 +41,54 @@ BUILTIN_SNIPPETS: List[Dict[str, str]] = [
         "title_en": "CoPanel service status",
         "title_vi": "Trạng thái dịch vụ CoPanel",
     },
+    {
+        "id": "_systemd_daemon_reload",
+        "command": "sudo systemctl daemon-reload",
+        "title_en": "Reload systemd unit files (daemon-reload)",
+        "title_vi": "Nạp lại file unit systemd (daemon-reload)",
+    },
+    {
+        "id": "_nginx_reload",
+        "command": "sudo systemctl reload nginx",
+        "title_en": "Reload Nginx configuration",
+        "title_vi": "Nạp lại cấu hình Nginx",
+    },
+    {
+        "id": "_nginx_status",
+        "command": "sudo systemctl status nginx --no-pager -l",
+        "title_en": "Nginx service status",
+        "title_vi": "Trạng thái dịch vụ Nginx",
+    },
+    {
+        "id": "_ufw_reload",
+        "command": "sudo ufw reload",
+        "title_en": "Reload UFW firewall rules",
+        "title_vi": "Nạp lại quy tắc tường lửa UFW",
+    },
+    {
+        "id": "_ufw_status",
+        "command": "sudo ufw status verbose",
+        "title_en": "UFW status (verbose)",
+        "title_vi": "Trạng thái UFW (chi tiết)",
+    },
+    {
+        "id": "_ufw_restart",
+        "command": "sudo systemctl restart ufw",
+        "title_en": "Restart UFW service",
+        "title_vi": "Khởi động lại dịch vụ UFW",
+    },
+    {
+        "id": "_fail2ban_restart",
+        "command": "sudo systemctl restart fail2ban",
+        "title_en": "Restart Fail2Ban",
+        "title_vi": "Khởi động lại Fail2Ban",
+    },
+    {
+        "id": "_fail2ban_status",
+        "command": "sudo systemctl status fail2ban --no-pager -l",
+        "title_en": "Fail2Ban service status",
+        "title_vi": "Trạng thái dịch vụ Fail2Ban",
+    },
 ]
 
 _MAX_SNIPPETS_PER_USER = 200

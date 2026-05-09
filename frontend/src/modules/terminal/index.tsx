@@ -59,7 +59,8 @@ export default function TerminalDashboard() {
       error: 'WebSocket error occurred.',
       closed: 'Connection closed.',
       snippets: 'Snippets',
-      snippetsHint: 'Built-in CoPanel commands and your saved shortcuts (stored as JSON on the server).',
+      snippetsHint:
+        'Built-in shortcuts and your custom snippets. Custom snippets save automatically when you add or remove (stored as JSON on the server).',
       copanelBuiltin: 'CoPanel (built-in)',
       mySnippets: 'My snippets',
       run: 'Run',
@@ -67,7 +68,7 @@ export default function TerminalDashboard() {
       titleLabel: 'Title',
       commandLabel: 'Command',
       addSnippet: 'Add snippet',
-      saveSnippets: 'Save',
+      saveSnippets: 'Save now',
       saving: 'Saving…',
       savedOk: 'Saved.',
       remove: 'Remove',
@@ -85,7 +86,8 @@ export default function TerminalDashboard() {
       error: 'Có lỗi xảy ra với kết nối WebSocket.',
       closed: 'Đã đóng kết nối.',
       snippets: 'Snippet lệnh',
-      snippetsHint: 'Lệnh CoPanel có sẵn và lệnh tự lưu (lưu file JSON trên máy chủ).',
+      snippetsHint:
+        'Lệnh có sẵn và snippet tự thêm. Snippet của bạn được lưu tự động khi thêm hoặc xóa (file JSON trên máy chủ).',
       copanelBuiltin: 'CoPanel (có sẵn)',
       mySnippets: 'Của tôi',
       run: 'Chạy',
@@ -93,7 +95,7 @@ export default function TerminalDashboard() {
       titleLabel: 'Tiêu đề',
       commandLabel: 'Lệnh',
       addSnippet: 'Thêm snippet',
-      saveSnippets: 'Lưu',
+      saveSnippets: 'Lưu ngay',
       saving: 'Đang lưu…',
       savedOk: 'Đã lưu.',
       remove: 'Xóa',
@@ -160,42 +162,56 @@ export default function TerminalDashboard() {
     };
   }, [tr.loadError]);
 
-  const persistCustom = async () => {
-    setSaveState('saving');
-    try {
-      const res = await fetch('/api/terminal/snippets', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-        body: JSON.stringify({ snippets: customSnippets }),
-      });
-      const json = await res.json();
-      if (!res.ok || json.status !== 'success') {
-        throw new Error(json?.error?.message || tr.saveError);
+  const persistCustomList = useCallback(
+    async (snippets: CustomSnippet[], rollback: CustomSnippet[] | null) => {
+      setSaveState('saving');
+      try {
+        const res = await fetch('/api/terminal/snippets', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+          body: JSON.stringify({ snippets }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.status !== 'success') {
+          throw new Error(json?.error?.message || tr.saveError);
+        }
+        if (json.data?.custom) setCustomSnippets(json.data.custom);
+        setSaveState('ok');
+        setTimeout(() => setSaveState('idle'), 2000);
+      } catch {
+        if (rollback !== null) setCustomSnippets(rollback);
+        setSaveState('err');
+        setTimeout(() => setSaveState('idle'), 3000);
       }
-      if (json.data?.custom) setCustomSnippets(json.data.custom);
-      setSaveState('ok');
-      setTimeout(() => setSaveState('idle'), 2000);
-    } catch {
-      setSaveState('err');
-      setTimeout(() => setSaveState('idle'), 3000);
-    }
-  };
+    },
+    [tr.saveError]
+  );
 
-  const addDraftSnippet = () => {
+  const persistCustom = useCallback(() => {
+    void persistCustomList(customSnippets, null);
+  }, [persistCustomList, customSnippets]);
+
+  const addDraftSnippet = useCallback(() => {
     const title = draftTitle.trim();
     const command = draftCommand.trim();
     if (!title || !command) return;
-    setCustomSnippets((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), title, command },
-    ]);
+    const rollback = customSnippets;
+    const next = [...customSnippets, { id: crypto.randomUUID(), title, command }];
+    setCustomSnippets(next);
     setDraftTitle('');
     setDraftCommand('');
-  };
+    void persistCustomList(next, rollback);
+  }, [customSnippets, draftTitle, draftCommand, persistCustomList]);
 
-  const removeCustom = (id: string) => {
-    setCustomSnippets((prev) => prev.filter((s) => s.id !== id));
-  };
+  const removeCustom = useCallback(
+    (id: string) => {
+      const rollback = customSnippets;
+      const next = customSnippets.filter((s) => s.id !== id);
+      setCustomSnippets(next);
+      void persistCustomList(next, rollback);
+    },
+    [customSnippets, persistCustomList]
+  );
 
   const builtinTitle = (s: BuiltinSnippet) => (language === 'vi' ? s.title_vi : s.title_en);
 
