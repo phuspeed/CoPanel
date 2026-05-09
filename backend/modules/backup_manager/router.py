@@ -6,7 +6,13 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from typing import Dict, Any
-from .logic import ProfileManager, BackupTaskEngine, BACKUP_DIR, GoogleOAuthService
+from .logic import (
+    ProfileManager,
+    BackupTaskEngine,
+    BACKUP_DIR,
+    GoogleOAuthService,
+    _mysql_rclone_destination,
+)
 from datetime import datetime
 import asyncio
 
@@ -248,7 +254,10 @@ async def stream_task(profile_id: int):
                 return
 
             source_path = str(dump_file)
-            yield f"data: {json.dumps({'msg': 'MySQL dump completed.', 'progress': 10})}\n\n"
+            remote_path = _mysql_rclone_destination(
+                profile["remote_name"], profile["remote_path"], dump_file
+            )
+            yield f"data: {json.dumps({'msg': f'MySQL dump completed ({dump_file.name}). Uploading…', 'progress': 10})}\n\n"
 
         cmd = [
             "rclone",

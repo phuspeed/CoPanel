@@ -14,12 +14,43 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple
+from typing import Optional, Tuple
 
 DB_PATH = Path("/opt/copanel/config/backup_manager.db")
 CRON_TAG_START = "# BEGIN COPANEL BACKUP"
 CRON_TAG_END = "# END COPANEL BACKUP"
 BACKUP_DIR = Path("/opt/copanel/backups")
+
+
+def _mysql_rclone_destination(remote_name: str, remote_path_cfg: str, local_dump: Path) -> str:
+    """
+    rclone copy with a file source uses the *destination path's basename* when dest looks like a file.
+    If the user sets remote_path to '.../backup.sql', the cloud file becomes backup.sql even when the
+    local dump is '*.sql.gz'. Force dest to '.../<actual_dump_basename>' under the parent directory.
+    """
+    rp = (remote_path_cfg or "").strip().rstrip("/")
+    dump_name = local_dump.name
+    if not rp:
+        return f"{remote_name}:{dump_name}"
+    lower = rp.lower()
+    if lower.endswith(".sql") or lower.endswith(".sql.gz"):
+        parent = rp.rsplit("/", 1)[0] if "/" in rp else ""
+        dir_part = parent
+    else:
+        dir_part = rp
+    if dir_part:
+        return f"{remote_name}:{dir_part}/{dump_name}"
+    return f"{remote_name}:{dump_name}"
+
+
+def _resolve_gzip_bin() -> Optional[str]:
+    w = shutil.which("gzip")
+    if w:
+        return w
+    for p in ("/usr/bin/gzip", "/bin/gzip"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
 
 class ProfileManager:
@@ -530,8 +561,9 @@ class BackupTaskEngine:
         dump_bin = shutil.which("mysqldump") or shutil.which("mariadb-dump")
         if not dump_bin:
             return False, "mysqldump / mariadb-dump not found on PATH."
-        if not shutil.which("gzip"):
-            return False, "gzip not found on PATH (required for compressed SQL backups)."
+        gzip_bin = _resolve_gzip_bin()
+        if not gzip_bin:
+            return False, "gzip not found (install gzip or ensure /usr/bin/gzip exists)."
 
         try:
             out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -540,11 +572,12 @@ class BackupTaskEngine:
 
         quoted_dump = shlex.quote(dump_bin)
         quoted_name = shlex.quote(db_name)
+        quoted_gzip = shlex.quote(gzip_bin)
         quoted_out = shlex.quote(str(out_file))
         cmd = (
             f"sudo {quoted_dump} -u root --single-transaction --quick "
             f"--routines --events --triggers {quoted_name} "
-            f"| gzip -c > {quoted_out}"
+            f"| {quoted_gzip} -c > {quoted_out}"
         )
         try:
             res = subprocess.run(
@@ -610,6 +643,9 @@ class BackupTaskEngine:
                 print(f"MySQL dump failed: {err}")
                 return
             source_path = str(dump_file)
+            remote_path = _mysql_rclone_destination(
+                profile["remote_name"], profile["remote_path"], dump_file
+            )
 
         cmd = [
             "rclone",
