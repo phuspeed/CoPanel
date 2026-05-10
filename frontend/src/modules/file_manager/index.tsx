@@ -3,7 +3,7 @@
  * Premium file explorer with advanced editing and action capabilities.
  * Synchronized with the global Light/Dark theme and En/Vi languages.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
@@ -15,15 +15,23 @@ interface FileItem {
   modified: number;
 }
 
+interface BookmarkEntry {
+  path: string;
+  is_dir: boolean;
+  label?: string;
+}
+
 /** Per-row actions: distinct icons (rename ≠ cut) and larger tap targets when `touch` */
 function FileActionsBar({
   item,
   isDark,
   touch,
   tr,
+  bookmarked,
   onEdit,
   onDownload,
   onRename,
+  onBookmarkToggle,
   onCut,
   onCopy,
   onDelete,
@@ -31,6 +39,7 @@ function FileActionsBar({
   item: FileItem;
   isDark: boolean;
   touch: boolean;
+  bookmarked: boolean;
   tr: {
     editFile: string;
     renameItem: string;
@@ -38,10 +47,13 @@ function FileActionsBar({
     copy: string;
     deleteItem: string;
     downloadFile: string;
+    addBookmark: string;
+    removeBookmark: string;
   };
   onEdit: () => void;
   onDownload: () => void;
   onRename: () => void;
+  onBookmarkToggle: () => void;
   onCut: () => void;
   onCopy: () => void;
   onDelete: () => void;
@@ -95,6 +107,23 @@ function FileActionsBar({
         aria-label={tr.renameItem}
       >
         <Icons.PencilLine className={icon} />
+      </button>
+      <button
+        type="button"
+        onClick={onBookmarkToggle}
+        className={shell(
+          bookmarked
+            ? isDark
+              ? 'bg-amber-950/50 hover:bg-amber-900/40 text-amber-300 border-amber-800/50'
+              : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
+            : isDark
+              ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 border-slate-700/60'
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+        )}
+        title={bookmarked ? tr.removeBookmark : tr.addBookmark}
+        aria-label={bookmarked ? tr.removeBookmark : tr.addBookmark}
+      >
+        <Icons.Bookmark className={`${icon} ${bookmarked ? 'fill-current' : ''}`} />
       </button>
       <button
         type="button"
@@ -184,6 +213,8 @@ export default function FileManagerDashboard() {
   const [chmodModalOpen, setChmodModalOpen] = useState<boolean>(false);
   const [chmodValue, setChmodValue] = useState<string>('755');
 
+  const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
+
   // Translation Dictionaries
   const t = {
     en: {
@@ -234,6 +265,14 @@ export default function FileManagerDashboard() {
       selectAllTitle: 'Select or deselect all',
       zipLabelShort: 'Zip',
       chmodLabelShort: 'Chmod',
+      bookmarksTitle: 'Bookmarks',
+      bookmarksEmpty: 'Save folders or files you open often. Use the bookmark icon on each row or bookmark this folder.',
+      bookmarkFolder: 'Bookmark folder',
+      bookmarkFolderToggle: 'Remove folder bookmark',
+      addBookmark: 'Add bookmark',
+      removeBookmark: 'Remove bookmark',
+      bookmarkSelection: 'Bookmark selected',
+      bookmarksMaxError: 'Bookmark limit reached (100). Remove some before adding more.',
     },
     vi: {
       title: 'Quản lý File',
@@ -283,6 +322,14 @@ export default function FileManagerDashboard() {
       selectAllTitle: 'Chọn / bỏ chọn tất cả',
       zipLabelShort: 'Nén ZIP',
       chmodLabelShort: 'Quyền',
+      bookmarksTitle: 'Đánh dấu',
+      bookmarksEmpty: 'Lưu thư mục hoặc file hay dùng. Dùng icon bookmark trên mỗi dòng hoặc đánh dấu thư mục hiện tại.',
+      bookmarkFolder: 'Đánh dấu thư mục này',
+      bookmarkFolderToggle: 'Bỏ đánh dấu thư mục',
+      addBookmark: 'Thêm bookmark',
+      removeBookmark: 'Xóa bookmark',
+      bookmarkSelection: 'Bookmark các mục đã chọn',
+      bookmarksMaxError: 'Đã đủ 100 bookmark. Xóa bớt trước khi thêm.',
     },
   };
 
@@ -293,6 +340,24 @@ export default function FileManagerDashboard() {
     if (!parent || parent === '/') return `/${child}`;
     return `${parent.replace(/[\\/]+$/, '')}/${child}`;
   };
+
+  const parentDir = (fullPath: string): string => {
+    const norm = fullPath.replace(/[\\/]+$/, '');
+    if (!norm) return '/';
+    const idx = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf('\\'));
+    if (idx < 0) {
+      if (/^[A-Za-z]:$/.test(norm)) return `${norm}\\`;
+      return norm;
+    }
+    if (idx === 0) return '/';
+    const candidate = norm.slice(0, idx);
+    if (candidate.length === 2 && candidate[1] === ':') {
+      return `${candidate}\\`;
+    }
+    return candidate || '/';
+  };
+
+  const bookmarkPathSet = useMemo(() => new Set(bookmarks.map((b) => b.path)), [bookmarks]);
 
   // Get token helper
   const getAuthHeader = (): Record<string, string> => {
@@ -327,6 +392,119 @@ export default function FileManagerDashboard() {
   useEffect(() => {
     fetchPath();
   }, []);
+
+  const loadBookmarks = async () => {
+    try {
+      const res = await fetch('/api/file_manager/bookmarks', {
+        headers: getAuthHeader(),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { bookmarks?: BookmarkEntry[] };
+      setBookmarks(data.bookmarks || []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    loadBookmarks();
+  }, []);
+
+  const persistBookmarks = async (next: BookmarkEntry[]) => {
+    try {
+      const res = await fetch('/api/file_manager/bookmarks', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader(),
+        },
+        body: JSON.stringify({
+          bookmarks: next.map((b) => ({
+            path: b.path,
+            is_dir: b.is_dir,
+            label: b.label ?? '',
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail || 'Failed to save bookmarks');
+      }
+      const data = (await res.json()) as { bookmarks?: BookmarkEntry[] };
+      setBookmarks(data.bookmarks ?? next);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bookmarks save failed');
+    }
+  };
+
+  const toggleBookmarkForItem = async (item: FileItem) => {
+    const exists = bookmarks.some((b) => b.path === item.path);
+    let next: BookmarkEntry[];
+    if (exists) {
+      next = bookmarks.filter((b) => b.path !== item.path);
+    } else {
+      if (bookmarks.length >= 100) {
+        alert(t[language].bookmarksMaxError);
+        return;
+      }
+      next = [...bookmarks, { path: item.path, is_dir: item.is_dir, label: item.name }];
+    }
+    await persistBookmarks(next);
+  };
+
+  const removeBookmarkByPath = async (pathKey: string) => {
+    await persistBookmarks(bookmarks.filter((b) => b.path !== pathKey));
+  };
+
+  const bookmarkCurrentDirectory = async () => {
+    if (!currentPath) return;
+    const exists = bookmarks.some((b) => b.path === currentPath);
+    if (exists) {
+      await persistBookmarks(bookmarks.filter((b) => b.path !== currentPath));
+      return;
+    }
+    if (bookmarks.length >= 100) {
+      alert(t[language].bookmarksMaxError);
+      return;
+    }
+    const parts = currentPath.replace(/[\\/]+$/, '').split(/[\\/]/);
+    const base = parts.filter(Boolean).pop() || currentPath;
+    await persistBookmarks([...bookmarks, { path: currentPath, is_dir: true, label: base }]);
+  };
+
+  const bookmarkSelection = async () => {
+    if (selectedPaths.length === 0) return;
+    let next = [...bookmarks];
+    for (const p of selectedPaths) {
+      const item = files.find((f) => f.path === p);
+      if (!item) continue;
+      if (next.some((b) => b.path === item.path)) continue;
+      if (next.length >= 100) {
+        alert(t[language].bookmarksMaxError);
+        return;
+      }
+      next.push({ path: item.path, is_dir: item.is_dir, label: item.name });
+    }
+    if (next.length === bookmarks.length) return;
+    await persistBookmarks(next);
+  };
+
+  const openBookmark = async (b: BookmarkEntry) => {
+    if (b.is_dir) {
+      fetchPath(b.path);
+      return;
+    }
+    const dir = parentDir(b.path);
+    await fetchPath(dir);
+    const name = (b.label && b.label.trim()) || b.path.split(/[\\/]/).pop() || '';
+    void handleEditFile({
+      path: b.path,
+      name,
+      is_dir: false,
+      size: 0,
+      modified: 0,
+    });
+  };
 
   // Handlers for file management actions
   const handleOpenFolder = (path: string) => {
@@ -802,6 +980,81 @@ export default function FileManagerDashboard() {
           </button>
         </div>
 
+        <div
+          className={`rounded-2xl border p-3 sm:p-4 backdrop-blur-sm ${
+            isDark ? 'bg-slate-900/30 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Icons.Bookmark className={`w-5 h-5 shrink-0 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
+              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                {tr.bookmarksTitle}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!currentPath}
+              onClick={() => void bookmarkCurrentDirectory()}
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition border min-h-[44px] sm:min-h-0 disabled:opacity-40 ${
+                currentPath && bookmarkPathSet.has(currentPath)
+                  ? isDark
+                    ? 'bg-amber-950/40 border-amber-800/50 text-amber-200 hover:bg-amber-900/30'
+                    : 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'
+                  : isDark
+                    ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+                    : 'bg-slate-100 border-slate-200 text-slate-800 hover:bg-slate-200'
+              }`}
+            >
+              <Icons.Bookmark className={`w-4 h-4 ${currentPath && bookmarkPathSet.has(currentPath) ? 'fill-current' : ''}`} />
+              {currentPath && bookmarkPathSet.has(currentPath) ? tr.bookmarkFolderToggle : tr.bookmarkFolder}
+            </button>
+          </div>
+          {bookmarks.length === 0 ? (
+            <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.bookmarksEmpty}</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {bookmarks.map((b) => (
+                <div
+                  key={b.path}
+                  className={`inline-flex items-center gap-1 max-w-full rounded-xl border px-2 py-1.5 text-xs font-medium ${
+                    isDark ? 'border-slate-700 bg-slate-950/40 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void openBookmark(b)}
+                    className={`flex items-center gap-1.5 min-w-0 text-left font-semibold transition ${
+                      isDark ? 'hover:text-amber-300 text-slate-100' : 'hover:text-amber-700 text-slate-800'
+                    }`}
+                    title={b.path}
+                  >
+                    {b.is_dir ? (
+                      <Icons.Folder className="w-4 h-4 shrink-0 text-blue-400" />
+                    ) : (
+                      <Icons.File className="w-4 h-4 shrink-0 text-slate-400" />
+                    )}
+                    <span className="truncate max-w-[200px] sm:max-w-xs">
+                      {(b.label && b.label.trim()) || b.path.split(/[\\/]/).pop() || b.path}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeBookmarkByPath(b.path)}
+                    className={`shrink-0 rounded-lg p-1.5 transition ${
+                      isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-200 text-slate-500'
+                    }`}
+                    title={tr.removeBookmark}
+                    aria-label={tr.removeBookmark}
+                  >
+                    <Icons.X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {uploadProgress !== null && (
           <div className={`p-4 rounded-xl flex flex-col gap-2 backdrop-blur-sm shadow-xl select-none border animate-pulse ${
             isDark ? 'bg-blue-950/30 border-blue-800/60' : 'bg-blue-50 border-blue-200 text-blue-900'
@@ -883,6 +1136,17 @@ export default function FileManagerDashboard() {
               }`}
             >
               <Icons.Copy className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.copy}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void bookmarkSelection()}
+              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
+                isDark
+                  ? 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-200 border-amber-800/50'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+              }`}
+            >
+              <Icons.Bookmark className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.bookmarkSelection}</span>
             </button>
             <button
               type="button"
@@ -1080,6 +1344,7 @@ export default function FileManagerDashboard() {
                         item={item}
                         isDark={isDark}
                         touch
+                        bookmarked={bookmarkPathSet.has(item.path)}
                         tr={{
                           editFile: tr.editFile,
                           renameItem: tr.renameItem,
@@ -1087,6 +1352,8 @@ export default function FileManagerDashboard() {
                           copy: tr.copy,
                           deleteItem: tr.deleteItem,
                           downloadFile: tr.downloadFile,
+                          addBookmark: tr.addBookmark,
+                          removeBookmark: tr.removeBookmark,
                         }}
                         onEdit={() => handleEditFile(item)}
                         onDownload={() => handleDownloadFile(item)}
@@ -1094,6 +1361,7 @@ export default function FileManagerDashboard() {
                           setRenameValue(item.name);
                           setRenamingItem(item);
                         }}
+                        onBookmarkToggle={() => void toggleBookmarkForItem(item)}
                         onCut={() => handleCut(item)}
                         onCopy={() => handleCopy(item)}
                         onDelete={() => handleDelete(item)}
@@ -1203,6 +1471,7 @@ export default function FileManagerDashboard() {
                             item={item}
                             isDark={isDark}
                             touch={false}
+                            bookmarked={bookmarkPathSet.has(item.path)}
                             tr={{
                               editFile: tr.editFile,
                               renameItem: tr.renameItem,
@@ -1210,6 +1479,8 @@ export default function FileManagerDashboard() {
                               copy: tr.copy,
                               deleteItem: tr.deleteItem,
                               downloadFile: tr.downloadFile,
+                              addBookmark: tr.addBookmark,
+                              removeBookmark: tr.removeBookmark,
                             }}
                             onEdit={() => handleEditFile(item)}
                             onDownload={() => handleDownloadFile(item)}
@@ -1217,6 +1488,7 @@ export default function FileManagerDashboard() {
                               setRenameValue(item.name);
                               setRenamingItem(item);
                             }}
+                            onBookmarkToggle={() => void toggleBookmarkForItem(item)}
                             onCut={() => handleCut(item)}
                             onCopy={() => handleCopy(item)}
                             onDelete={() => handleDelete(item)}

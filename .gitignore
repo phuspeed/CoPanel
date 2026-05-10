@@ -115,3 +115,6 @@ logs/
 # Production build
 frontend/dist/
 backend/dist/
+
+# Module-local persisted data (per-user JSON)
+backend/modules/file_manager/bookmarks_store/

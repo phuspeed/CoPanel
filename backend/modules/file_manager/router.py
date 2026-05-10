@@ -15,6 +15,10 @@ router = APIRouter()
 
 IS_WINDOWS = os.name == 'nt'
 
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+BOOKMARKS_STORE_DIR = os.path.join(MODULE_DIR, "bookmarks_store")
+MAX_BOOKMARKS = 100
+
 def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
     """Validate and return safe absolute path depending on User Role."""
     if not requested_path:
@@ -84,6 +88,109 @@ class MoveRequest(BaseModel):
 class WriteFileRequest(BaseModel):
     path: str
     content: str
+
+
+class BookmarkEntry(BaseModel):
+    path: str
+    is_dir: bool
+    label: Optional[str] = ""
+
+
+class BookmarksPayload(BaseModel):
+    bookmarks: List[BookmarkEntry]
+
+
+def _bookmarks_json_path(user_id: int) -> str:
+    os.makedirs(BOOKMARKS_STORE_DIR, exist_ok=True)
+    return os.path.join(BOOKMARKS_STORE_DIR, f"{user_id}.json")
+
+
+def _load_bookmarks_raw(user_id: int) -> List[Dict[str, Any]]:
+    fp = _bookmarks_json_path(user_id)
+    if not os.path.isfile(fp):
+        return []
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        items = data.get("bookmarks")
+        if not isinstance(items, list):
+            return []
+        return items
+    except Exception:
+        return []
+
+
+def _save_bookmarks_raw(user_id: int, items: List[Dict[str, Any]]) -> None:
+    fp = _bookmarks_json_path(user_id)
+    payload = {"version": 1, "bookmarks": items}
+    tmp = fp + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, fp)
+
+
+def _normalize_bookmark_entry(it: Dict[str, Any], user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    p = it.get("path")
+    if not p or not isinstance(p, str):
+        return None
+    try:
+        safe = check_safe_path(p, user)
+    except HTTPException:
+        return None
+    abs_p = os.path.abspath(safe)
+    label = it.get("label") if isinstance(it.get("label"), str) else ""
+    label = label.strip()[:200]
+    return {
+        "path": abs_p,
+        "is_dir": bool(it.get("is_dir", False)),
+        "label": label,
+    }
+
+
+@router.get("/bookmarks")
+async def get_bookmarks(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Load saved path bookmarks for the current user (JSON file per user id)."""
+    uid = user.get("id")
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Missing user id in session.")
+    raw = _load_bookmarks_raw(int(uid))
+    seen: set = set()
+    out: List[Dict[str, Any]] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        norm = _normalize_bookmark_entry(it, user)
+        if not norm:
+            continue
+        key = norm["path"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(norm)
+    return {"status": "success", "bookmarks": out}
+
+
+@router.put("/bookmarks")
+async def put_bookmarks(req: BookmarksPayload, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Replace all bookmarks (validated paths, deduped). Persists to JSON."""
+    uid = user.get("id")
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Missing user id in session.")
+    if len(req.bookmarks) > MAX_BOOKMARKS:
+        raise HTTPException(status_code=400, detail=f"Too many bookmarks (max {MAX_BOOKMARKS}).")
+    seen: set = set()
+    out: List[Dict[str, Any]] = []
+    for b in req.bookmarks:
+        norm = _normalize_bookmark_entry(b.model_dump(), user)
+        if not norm:
+            continue
+        key = norm["path"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(norm)
+    _save_bookmarks_raw(int(uid), out)
+    return {"status": "success", "bookmarks": out}
 
 
 @router.get("/list")
