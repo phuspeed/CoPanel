@@ -28,6 +28,7 @@ function FileActionsBar({
   touch,
   tr,
   bookmarked,
+  bookmarksUiEnabled,
   onEdit,
   onDownload,
   onRename,
@@ -40,6 +41,8 @@ function FileActionsBar({
   isDark: boolean;
   touch: boolean;
   bookmarked: boolean;
+  /** False when server has no /bookmarks API (old module). Hides bookmark control. */
+  bookmarksUiEnabled: boolean;
   tr: {
     editFile: string;
     renameItem: string;
@@ -108,23 +111,25 @@ function FileActionsBar({
       >
         <Icons.PencilLine className={icon} />
       </button>
-      <button
-        type="button"
-        onClick={onBookmarkToggle}
-        className={shell(
-          bookmarked
-            ? isDark
-              ? 'bg-amber-950/50 hover:bg-amber-900/40 text-amber-300 border-amber-800/50'
-              : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
-            : isDark
-              ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 border-slate-700/60'
-              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
-        )}
-        title={bookmarked ? tr.removeBookmark : tr.addBookmark}
-        aria-label={bookmarked ? tr.removeBookmark : tr.addBookmark}
-      >
-        <Icons.Bookmark className={`${icon} ${bookmarked ? 'fill-current' : ''}`} />
-      </button>
+      {bookmarksUiEnabled && (
+        <button
+          type="button"
+          onClick={onBookmarkToggle}
+          className={shell(
+            bookmarked
+              ? isDark
+                ? 'bg-amber-950/50 hover:bg-amber-900/40 text-amber-300 border-amber-800/50'
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
+              : isDark
+                ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 border-slate-700/60'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+          )}
+          title={bookmarked ? tr.removeBookmark : tr.addBookmark}
+          aria-label={bookmarked ? tr.removeBookmark : tr.addBookmark}
+        >
+          <Icons.Bookmark className={`${icon} ${bookmarked ? 'fill-current' : ''}`} />
+        </button>
+      )}
       <button
         type="button"
         onClick={onCut}
@@ -214,6 +219,8 @@ export default function FileManagerDashboard() {
   const [chmodValue, setChmodValue] = useState<string>('755');
 
   const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
+  /** True when GET/PUT /bookmarks returns 404 (old backend without bookmark routes). */
+  const [bookmarkBackendMissing, setBookmarkBackendMissing] = useState(false);
 
   // Translation Dictionaries
   const t = {
@@ -273,6 +280,8 @@ export default function FileManagerDashboard() {
       removeBookmark: 'Remove bookmark',
       bookmarkSelection: 'Bookmark selected',
       bookmarksMaxError: 'Bookmark limit reached (100). Remove some before adding more.',
+      bookmarksUpgradeHint:
+        'The server is running an older File Manager without bookmark APIs. Install or update the File Manager module to v1.0.2 or newer from the App Store (or redeploy backend/router.py). Path bookmarks will stay unavailable until then.',
     },
     vi: {
       title: 'Quản lý File',
@@ -330,6 +339,8 @@ export default function FileManagerDashboard() {
       removeBookmark: 'Xóa bookmark',
       bookmarkSelection: 'Bookmark các mục đã chọn',
       bookmarksMaxError: 'Đã đủ 100 bookmark. Xóa bớt trước khi thêm.',
+      bookmarksUpgradeHint:
+        'Máy chủ đang chạy File Manager cũ, chưa có API bookmark. Hãy cài hoặc cập nhật module File Manager lên ≥ v1.0.2 qua App Store (hoặc triển khai lại backend có router.py mới). Cho đến khi cập nhật, tính đánh dấu không dùng được.',
     },
   };
 
@@ -398,7 +409,13 @@ export default function FileManagerDashboard() {
       const res = await fetch('/api/file_manager/bookmarks', {
         headers: getAuthHeader(),
       });
+      if (res.status === 404) {
+        setBookmarkBackendMissing(true);
+        setBookmarks([]);
+        return;
+      }
       if (!res.ok) return;
+      setBookmarkBackendMissing(false);
       const data = (await res.json()) as { bookmarks?: BookmarkEntry[] };
       setBookmarks(data.bookmarks || []);
     } catch {
@@ -411,6 +428,10 @@ export default function FileManagerDashboard() {
   }, []);
 
   const persistBookmarks = async (next: BookmarkEntry[]) => {
+    if (bookmarkBackendMissing) {
+      alert(tr.bookmarksUpgradeHint);
+      return;
+    }
     try {
       const res = await fetch('/api/file_manager/bookmarks', {
         method: 'PUT',
@@ -426,10 +447,25 @@ export default function FileManagerDashboard() {
           })),
         }),
       });
+      if (res.status === 404) {
+        setBookmarkBackendMissing(true);
+        alert(tr.bookmarksUpgradeHint);
+        return;
+      }
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail || 'Failed to save bookmarks');
+        const raw = data.detail || 'Failed to save bookmarks';
+        if (
+          res.status === 404 ||
+          (typeof raw === 'string' && raw.toLowerCase().includes('not found'))
+        ) {
+          setBookmarkBackendMissing(true);
+          alert(tr.bookmarksUpgradeHint);
+          return;
+        }
+        throw new Error(typeof raw === 'string' ? raw : 'Failed to save bookmarks');
       }
+      setBookmarkBackendMissing(false);
       const data = (await res.json()) as { bookmarks?: BookmarkEntry[] };
       setBookmarks(data.bookmarks ?? next);
     } catch (err) {
@@ -985,6 +1021,19 @@ export default function FileManagerDashboard() {
             isDark ? 'bg-slate-900/30 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm'
           }`}
         >
+          {bookmarkBackendMissing && (
+            <div
+              className={`mb-3 flex gap-2 rounded-xl border p-3 text-xs leading-relaxed ${
+                isDark
+                  ? 'border-amber-800/50 bg-amber-950/25 text-amber-100'
+                  : 'border-amber-200 bg-amber-50 text-amber-950'
+              }`}
+              role="status"
+            >
+              <Icons.AlertTriangle className="w-5 h-5 shrink-0 text-amber-500" aria-hidden />
+              <p>{tr.bookmarksUpgradeHint}</p>
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
             <div className="flex items-center gap-2 min-w-0">
               <Icons.Bookmark className={`w-5 h-5 shrink-0 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
@@ -994,7 +1043,7 @@ export default function FileManagerDashboard() {
             </div>
             <button
               type="button"
-              disabled={!currentPath}
+              disabled={!currentPath || bookmarkBackendMissing}
               onClick={() => void bookmarkCurrentDirectory()}
               className={`flex items-center justify-center gap-2 px-3 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition border min-h-[44px] sm:min-h-0 disabled:opacity-40 ${
                 currentPath && bookmarkPathSet.has(currentPath)
@@ -1010,7 +1059,7 @@ export default function FileManagerDashboard() {
               {currentPath && bookmarkPathSet.has(currentPath) ? tr.bookmarkFolderToggle : tr.bookmarkFolder}
             </button>
           </div>
-          {bookmarks.length === 0 ? (
+          {bookmarkBackendMissing ? null : bookmarks.length === 0 ? (
             <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.bookmarksEmpty}</p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -1137,17 +1186,19 @@ export default function FileManagerDashboard() {
             >
               <Icons.Copy className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.copy}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => void bookmarkSelection()}
-              className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
-                isDark
-                  ? 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-200 border-amber-800/50'
-                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
-              }`}
-            >
-              <Icons.Bookmark className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.bookmarkSelection}</span>
-            </button>
+            {!bookmarkBackendMissing && (
+              <button
+                type="button"
+                onClick={() => void bookmarkSelection()}
+                className={`flex items-center justify-center gap-2 px-3 py-3 sm:py-1.5 rounded-lg border text-xs font-bold transition duration-150 min-h-[44px] sm:min-h-0 ${
+                  isDark
+                    ? 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-200 border-amber-800/50'
+                    : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                }`}
+              >
+                <Icons.Bookmark className="w-4 h-4 shrink-0" /> <span className="truncate">{tr.bookmarkSelection}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -1345,6 +1396,7 @@ export default function FileManagerDashboard() {
                         isDark={isDark}
                         touch
                         bookmarked={bookmarkPathSet.has(item.path)}
+                        bookmarksUiEnabled={!bookmarkBackendMissing}
                         tr={{
                           editFile: tr.editFile,
                           renameItem: tr.renameItem,
@@ -1472,6 +1524,7 @@ export default function FileManagerDashboard() {
                             isDark={isDark}
                             touch={false}
                             bookmarked={bookmarkPathSet.has(item.path)}
+                            bookmarksUiEnabled={!bookmarkBackendMissing}
                             tr={{
                               editFile: tr.editFile,
                               renameItem: tr.renameItem,
