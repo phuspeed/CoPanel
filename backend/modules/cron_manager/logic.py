@@ -21,6 +21,8 @@ IS_WINDOWS = os.name == "nt"
 MARKER = "# copanel-id="
 BLOCK_START = "# BEGIN COPANEL CRON"
 BLOCK_END = "# END COPANEL CRON"
+BACKUP_BLOCK_START = "# BEGIN COPANEL BACKUP"
+BACKUP_BLOCK_END = "# END COPANEL BACKUP"
 DB_PATH = Path("./test_nginx/cron_manager.db") if IS_WINDOWS else Path("/opt/copanel/config/cron_manager.db")
 
 
@@ -78,6 +80,7 @@ def _write_crontab(content: str) -> None:
 def _parse_manual_lines(raw: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     in_copanel_block = False
+    in_backup_block = False
     for line in raw.splitlines():
         line = line.rstrip("\n")
         if line.strip() == BLOCK_START:
@@ -86,7 +89,13 @@ def _parse_manual_lines(raw: str) -> List[Dict[str, Any]]:
         if line.strip() == BLOCK_END:
             in_copanel_block = False
             continue
-        if in_copanel_block:
+        if line.strip() == BACKUP_BLOCK_START:
+            in_backup_block = True
+            continue
+        if line.strip() == BACKUP_BLOCK_END:
+            in_backup_block = False
+            continue
+        if in_copanel_block or in_backup_block:
             continue
         if not line or line.startswith("#"):
             continue

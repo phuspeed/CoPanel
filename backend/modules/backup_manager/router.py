@@ -23,6 +23,10 @@ router = APIRouter()
 async def on_startup():
     from .logic import RealtimeSyncManager
     RealtimeSyncManager.update_watchers()
+    try:
+        ProfileManager.sync_crontab()
+    except Exception:
+        pass
 
 
 @router.get("/profiles")

@@ -20,6 +20,45 @@ DB_PATH = Path("/opt/copanel/config/backup_manager.db")
 CRON_TAG_START = "# BEGIN COPANEL BACKUP"
 CRON_TAG_END = "# END COPANEL BACKUP"
 BACKUP_DIR = Path("/opt/copanel/backups")
+LOG_DIR = Path("/opt/copanel/logs")
+BACKEND_ROOT = Path("/opt/copanel/backend")
+RUN_SYNC_SCRIPT = BACKEND_ROOT / "modules" / "backup_manager" / "run_sync.py"
+BACKUP_CRON_CMD_MARKER = "modules.backup_manager.run_sync"
+DEFAULT_CRON_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def _resolve_rclone_bin() -> str:
+    for candidate in (
+        shutil.which("rclone"),
+        "/usr/bin/rclone",
+        "/usr/local/bin/rclone",
+    ):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "rclone"
+
+
+def _resolve_python_bin() -> str:
+    for candidate in (
+        "/opt/copanel/venv/bin/python",
+        "/opt/copanel/venv/bin/python3",
+        shutil.which("python3"),
+        shutil.which("python"),
+    ):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "/opt/copanel/venv/bin/python"
+
+
+def _is_orphan_backup_cron_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    return (
+        BACKUP_CRON_CMD_MARKER in stripped
+        or "BackupTaskEngine.run_sync_task" in stripped
+        or "run_sync.py" in stripped
+    )
 
 
 def _mysql_rclone_destination(remote_name: str, remote_path_cfg: str, local_dump: Path) -> str:
@@ -486,8 +525,11 @@ class ProfileManager:
         if os.name == 'nt':
             return
 
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
         profiles = ProfileManager.get_profiles()
         rclone_config = str(ProfileManager.get_rclone_config_path())
+        python_bin = _resolve_python_bin()
+        run_script = str(RUN_SYNC_SCRIPT)
 
         res = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         current_cron = res.stdout if res.returncode == 0 else ""
@@ -502,21 +544,25 @@ class ProfileManager:
             if line.strip() == CRON_TAG_END:
                 in_block = False
                 continue
-            if not in_block:
-                clean_lines.append(line)
+            if in_block:
+                continue
+            if _is_orphan_backup_cron_line(line):
+                continue
+            clean_lines.append(line)
 
         new_block = [CRON_TAG_START]
         for p in profiles:
             if p["is_active"] and p.get("cron_expression"):
                 expr = p["cron_expression"].strip()
+                parts = expr.split()
+                if len(parts) != 5:
+                    continue
                 pid = p["id"]
+                log_file = LOG_DIR / f"backup_{pid}.log"
                 cmd = (
-                    f"{expr} RCLONE_CONFIG={rclone_config} "
-                    f"/opt/copanel/venv/bin/python -c "
-                    f"'import sys; sys.path.append(\"/opt/copanel/backend\"); "
-                    f"from modules.backup_manager.logic import BackupTaskEngine; "
-                    f"BackupTaskEngine.run_sync_task({pid})' "
-                    f">> /opt/copanel/logs/backup_{pid}.log 2>&1"
+                    f"{expr} PATH={DEFAULT_CRON_PATH} RCLONE_CONFIG={shlex.quote(rclone_config)} "
+                    f"{shlex.quote(python_bin)} {shlex.quote(run_script)} {pid} "
+                    f">> {shlex.quote(str(log_file))} 2>&1"
                 )
                 new_block.append(cmd)
         new_block.append(CRON_TAG_END)
@@ -524,8 +570,11 @@ class ProfileManager:
         if len(new_block) > 2:
             clean_lines.extend(new_block)
 
-        new_cron_text = "\n".join(clean_lines) + "\n"
-        subprocess.run(["crontab", "-"], input=new_cron_text, text=True)
+        new_cron_text = "\n".join(clean_lines).rstrip() + "\n"
+        proc = subprocess.run(["crontab", "-"], input=new_cron_text, text=True, capture_output=True)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip() or "crontab write failed"
+            raise RuntimeError(err)
 
 
 class BackupTaskEngine:
@@ -621,8 +670,20 @@ class BackupTaskEngine:
     @staticmethod
     def run_sync_task(profile_id: int):
         """Runs the actual sync task blocking (used by Cron or internal tools)."""
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = LOG_DIR / f"backup_{profile_id}.log"
+
+        def _log(msg: str) -> None:
+            line = f"[{datetime.now().isoformat()}] {msg}\n"
+            try:
+                with log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+            except OSError:
+                print(line, end="")
+
         profile = ProfileManager.get_profile(profile_id)
         if not profile:
+            _log(f"Profile {profile_id} not found; aborting.")
             return
 
         flags_str = profile.get("rclone_flags", "{}")
@@ -631,8 +692,10 @@ class BackupTaskEngine:
         source_path = profile["source_path"]
         remote_path = f"{profile['remote_name']}:{profile['remote_path']}"
         rclone_config = str(ProfileManager.get_rclone_config_path())
+        rclone_bin = _resolve_rclone_bin()
 
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        _log(f"Starting backup profile {profile_id} ({profile.get('profile_name', '')})")
 
         if profile["source_type"] == "mysql":
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -640,7 +703,7 @@ class BackupTaskEngine:
             dump_file = BACKUP_DIR / f"{safe_name}_{timestamp}.sql.gz"
             ok, err = BackupTaskEngine.export_mysql(source_path, dump_file)
             if not ok:
-                print(f"MySQL dump failed: {err}")
+                _log(f"MySQL dump failed: {err}")
                 return
             source_path = str(dump_file)
             remote_path = _mysql_rclone_destination(
@@ -648,7 +711,7 @@ class BackupTaskEngine:
             )
 
         cmd = [
-            "rclone",
+            rclone_bin,
             "sync" if flags.get("sync_deletions") else "copy",
             source_path,
             remote_path,
@@ -662,7 +725,15 @@ class BackupTaskEngine:
             cmd.append("--size-only")
         cmd.extend(["--transfers", str(flags.get("transfers", 4))])
 
-        subprocess.run(cmd, capture_output=True)
+        _log(f"Running: {' '.join(shlex.quote(part) for part in cmd)}")
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.stdout:
+            _log(res.stdout.strip())
+        if res.returncode != 0:
+            err = (res.stderr or res.stdout or "").strip() or f"rclone exited with code {res.returncode}"
+            _log(f"ERROR: {err}")
+            return
+        _log("Backup completed successfully.")
 
         if profile["source_type"] == "mysql" and os.path.exists(source_path):
             os.remove(source_path)
