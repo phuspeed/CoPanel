@@ -1,12 +1,29 @@
 /**
  * React Router configuration with Login & dynamic access control
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { moduleRegistry, ModuleConfig } from './registry';
 import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
+
+/** Fallback shown while a lazy module chunk is loading */
+function ModuleLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-[40vh]">
+      <svg
+        className="w-8 h-8 animate-spin text-blue-500"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+      </svg>
+    </div>
+  );
+}
 
 export function createRoutes() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('copanel_token'));
@@ -82,12 +99,16 @@ export function createRoutes() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
 
-          {/* Render allowed modules */}
+          {/* Render allowed modules — wrapped in Suspense to support React.lazy() in config.ts */}
           {filteredModules.map((module: ModuleConfig) => (
             <Route
               key={module.path}
               path={module.path}
-              element={<module.component />}
+              element={
+                <Suspense fallback={<ModuleLoader />}>
+                  <module.component />
+                </Suspense>
+              }
             />
           ))}
 
