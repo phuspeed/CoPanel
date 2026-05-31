@@ -179,6 +179,11 @@ export default function FileManagerDashboard() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Sort state: column + direction
+  type SortKey = 'name' | 'size' | 'modified';
+  const [sortKey, setSortKey] = useState<SortKey>('name');
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
+
   // Global Context synchronization fallback
   const context = useOutletContext<{
     theme: 'dark' | 'light';
@@ -895,6 +900,34 @@ export default function FileManagerDashboard() {
     }
   };
 
+  // Toggle sort column / direction
+  const handleSort = (key: 'name' | 'size' | 'modified') => {
+    if (sortKey === key) {
+      setSortAsc((prev) => !prev);
+    } else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  };
+
+  // Sorted file list: folders always first, then sorted by chosen column
+  const sortedFiles = useMemo(() => {
+    const dirs = files.filter((f) => f.is_dir);
+    const regular = files.filter((f) => !f.is_dir);
+    const compare = (a: FileItem, b: FileItem): number => {
+      let result = 0;
+      if (sortKey === 'name') {
+        result = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      } else if (sortKey === 'size') {
+        result = a.size - b.size;
+      } else if (sortKey === 'modified') {
+        result = a.modified - b.modified;
+      }
+      return sortAsc ? result : -result;
+    };
+    return [...dirs.sort(compare), ...regular.sort(compare)];
+  }, [files, sortKey, sortAsc]);
+
   // Format File Size
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -1306,12 +1339,12 @@ export default function FileManagerDashboard() {
                 </button>
               </div>
             )}
-            {files.length === 0 ? (
+            {sortedFiles.length === 0 ? (
               <div className={`p-10 text-center text-xs select-none ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                 {tr.noFiles}
               </div>
             ) : (
-              files.map((item, idx) => {
+              sortedFiles.map((item, idx) => {
                 const isChecked = selectedPaths.includes(item.path);
                 return (
                   <div
@@ -1448,21 +1481,75 @@ export default function FileManagerDashboard() {
                       )}
                     </button>
                   </th>
-                  <th className="p-4 font-bold select-none">{tr.name}</th>
-                  <th className="p-4 font-bold w-28 select-none">{tr.size}</th>
-                  <th className="p-4 font-bold w-48 select-none">{tr.dateModified}</th>
+                  {/* Sortable: Name */}
+                  <th className="p-4 font-bold select-none">
+                    <button
+                      type="button"
+                      onClick={() => handleSort('name')}
+                      className={`inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors ${
+                        sortKey === 'name'
+                          ? isDark ? 'text-blue-400' : 'text-blue-600'
+                          : isDark ? 'text-slate-300 hover:text-blue-400' : 'text-slate-600 hover:text-blue-600'
+                      }`}
+                    >
+                      {tr.name}
+                      <span className={`transition-transform duration-150 ${
+                        sortKey === 'name' ? (sortAsc ? 'rotate-0' : 'rotate-180') : 'opacity-30'
+                      }`}>
+                        <Icons.ChevronUp className="w-3.5 h-3.5" />
+                      </span>
+                    </button>
+                  </th>
+                  {/* Sortable: Size */}
+                  <th className="p-4 font-bold w-28 select-none">
+                    <button
+                      type="button"
+                      onClick={() => handleSort('size')}
+                      className={`inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors ${
+                        sortKey === 'size'
+                          ? isDark ? 'text-blue-400' : 'text-blue-600'
+                          : isDark ? 'text-slate-300 hover:text-blue-400' : 'text-slate-600 hover:text-blue-600'
+                      }`}
+                    >
+                      {tr.size}
+                      <span className={`transition-transform duration-150 ${
+                        sortKey === 'size' ? (sortAsc ? 'rotate-0' : 'rotate-180') : 'opacity-30'
+                      }`}>
+                        <Icons.ChevronUp className="w-3.5 h-3.5" />
+                      </span>
+                    </button>
+                  </th>
+                  {/* Sortable: Date Modified */}
+                  <th className="p-4 font-bold w-48 select-none">
+                    <button
+                      type="button"
+                      onClick={() => handleSort('modified')}
+                      className={`inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors ${
+                        sortKey === 'modified'
+                          ? isDark ? 'text-blue-400' : 'text-blue-600'
+                          : isDark ? 'text-slate-300 hover:text-blue-400' : 'text-slate-600 hover:text-blue-600'
+                      }`}
+                    >
+                      {tr.dateModified}
+                      <span className={`transition-transform duration-150 ${
+                        sortKey === 'modified' ? (sortAsc ? 'rotate-0' : 'rotate-180') : 'opacity-30'
+                      }`}>
+                        <Icons.ChevronUp className="w-3.5 h-3.5" />
+                      </span>
+                    </button>
+                  </th>
                   <th className="p-4 font-bold min-w-[220px] text-center select-none">{tr.actions}</th>
                 </tr>
               </thead>
               <tbody className={`divide-y text-sm ${isDark ? 'divide-slate-800/30' : 'divide-slate-200'}`}>
-                {files.length === 0 && (
+                {sortedFiles.length === 0 && (
                   <tr>
                     <td colSpan={5} className="p-12 text-center text-slate-400 text-xs select-none">
                       {tr.noFiles}
                     </td>
                   </tr>
                 )}
-                {files.map((item, idx) => {
+                {sortedFiles.map((item, idx) => {
                   const isChecked = selectedPaths.includes(item.path);
                   return (
                     <tr
