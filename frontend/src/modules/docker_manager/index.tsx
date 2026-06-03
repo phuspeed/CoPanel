@@ -20,6 +20,39 @@ interface ComposeFile {
   full_path: string;
 }
 
+interface LogLine {
+  timestamp: string | null;
+  message: string;
+}
+
+/** Docker `logs --timestamps`: ISO8601 prefix then message */
+const DOCKER_LOG_TS_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(.*)$/;
+
+function parseDockerLogs(raw: string): LogLine[] {
+  if (!raw) return [];
+  return raw.split('\n').map((line) => {
+    const m = line.match(DOCKER_LOG_TS_RE);
+    if (m) return { timestamp: m[1], message: m[2] };
+    return { timestamp: null, message: line };
+  });
+}
+
+function formatLogTimestamp(iso: string, language: 'en' | 'vi'): string {
+  try {
+    return new Date(iso).toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}
+
 export default function DockerManagerDashboard() {
   const [containers, setContainers] = useState<ContainerItem[]>([]);
   const [composeFiles, setComposeFiles] = useState<ComposeFile[]>([]);
@@ -32,6 +65,7 @@ export default function DockerManagerDashboard() {
   const [totalCount, setTotalCount] = useState<number>(0);
 
   const [viewingLogs, setViewingLogs] = useState<{ id: string; name: string; content: string } | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string | null>(null);
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
@@ -62,7 +96,10 @@ export default function DockerManagerDashboard() {
       noContainers: 'No Docker containers active on this system.',
       deleteConfirm: 'Are you sure you want to completely remove this container?',
       viewLogsTitle: 'Logs for',
-      closeBtn: 'Close'
+      logTime: 'Time',
+      logMessage: 'Message',
+      closeBtn: 'Close',
+      loadingLogs: 'Loading logs...',
     },
     vi: {
       title: 'Trung tâm Docker',
@@ -88,7 +125,10 @@ export default function DockerManagerDashboard() {
       noContainers: 'Không tìm thấy container Docker nào đang chạy trên hệ thống.',
       deleteConfirm: 'Bạn có chắc chắn muốn xóa hoàn toàn container này không?',
       viewLogsTitle: 'Logs cho',
-      closeBtn: 'Đóng'
+      logTime: 'Thời gian',
+      logMessage: 'Nội dung',
+      closeBtn: 'Đóng',
+      loadingLogs: 'Đang tải log...',
     }
   };
 
@@ -208,8 +248,15 @@ export default function DockerManagerDashboard() {
   };
 
   const handleViewLogs = async (item: ContainerItem) => {
+    setViewingLogs({ id: item.id, name: item.name, content: '' });
+    setLogsLoading(true);
     try {
-      const response = await fetch(`/api/docker_manager/logs?container_id=${encodeURIComponent(item.id)}`);
+      const params = new URLSearchParams({
+        container_id: item.id,
+        tail: '200',
+        timestamps: 'true',
+      });
+      const response = await fetch(`/api/docker_manager/logs?${params}`);
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to fetch container logs');
@@ -221,7 +268,10 @@ export default function DockerManagerDashboard() {
         content: data.logs || 'No logs recorded.',
       });
     } catch (err) {
+      setViewingLogs(null);
       alert(err instanceof Error ? err.message : 'Error retrieving logs');
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -490,9 +540,39 @@ export default function DockerManagerDashboard() {
                 <Icons.X className="w-4 h-4" />
               </button>
             </div>
-            <pre className={`flex-1 p-4 rounded-xl font-mono text-xs overflow-auto select-text border ${isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'}`}>
-              {viewingLogs.content}
-            </pre>
+            <div className={`flex-1 rounded-xl overflow-hidden flex flex-col border min-h-0 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+              <div className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[10px] uppercase tracking-wider font-bold border-b shrink-0 ${isDark ? 'border-slate-800 text-slate-500 bg-slate-900/50' : 'border-slate-200 text-slate-400 bg-slate-100/80'}`}>
+                <span>{tr.logTime}</span>
+                <span>{tr.logMessage}</span>
+              </div>
+              <div className="flex-1 overflow-auto select-text">
+                {logsLoading ? (
+                  <div className={`flex items-center justify-center gap-2 h-full min-h-[8rem] text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                    <Icons.Loader2 className="w-4 h-4 animate-spin" />
+                    {tr.loadingLogs}
+                  </div>
+                ) : (
+                  <div className="font-mono text-xs">
+                    {parseDockerLogs(viewingLogs.content).map((line, i) => (
+                      <div
+                        key={i}
+                        className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-1.5 border-b last:border-0 ${isDark ? 'border-slate-800/60 hover:bg-slate-900/40' : 'border-slate-100 hover:bg-white/80'}`}
+                      >
+                        <span
+                          className={`shrink-0 tabular-nums whitespace-nowrap ${line.timestamp ? (isDark ? 'text-cyan-400/90' : 'text-cyan-700') : 'text-transparent'}`}
+                          title={line.timestamp || undefined}
+                        >
+                          {line.timestamp ? formatLogTimestamp(line.timestamp, language || 'en') : '—'}
+                        </span>
+                        <span className={`whitespace-pre-wrap break-all ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                          {line.message || '\u00a0'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex items-center justify-end flex-shrink-0">
               <button
                 onClick={() => setViewingLogs(null)}
