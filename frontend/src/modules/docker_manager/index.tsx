@@ -71,6 +71,7 @@ export default function DockerManagerDashboard() {
   const [viewingLogs, setViewingLogs] = useState<{ id: string; name: string; content: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string | null>(null);
+  const [composeListOpen, setComposeListOpen] = useState(true);
 
   const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
   const isDark = theme === 'dark';
@@ -104,6 +105,12 @@ export default function DockerManagerDashboard() {
       logMessage: 'Message',
       closeBtn: 'Close',
       loadingLogs: 'Loading logs...',
+      composeColFile: 'Compose file',
+      composeColPath: 'Directory',
+      composeColAction: 'Action',
+      composeHide: 'Hide list',
+      composeShow: 'Show list',
+      composeCollapsed: '{count} compose file(s) — click "Show list" to view.',
     },
     vi: {
       title: 'Trung tâm Docker',
@@ -133,6 +140,12 @@ export default function DockerManagerDashboard() {
       logMessage: 'Nội dung',
       closeBtn: 'Đóng',
       loadingLogs: 'Đang tải log...',
+      composeColFile: 'Tệp Compose',
+      composeColPath: 'Thư mục',
+      composeColAction: 'Hành động',
+      composeHide: 'Ẩn danh sách',
+      composeShow: 'Hiện danh sách',
+      composeCollapsed: '{count} tệp compose — bấm "Hiện danh sách" để xem.',
     }
   };
 
@@ -169,6 +182,7 @@ export default function DockerManagerDashboard() {
       if (r.ok) {
         const d = await r.json();
         setComposeFiles(d.compose_files || []);
+        setComposeListOpen(true);
       }
     } catch {
       // Ignore scanning fetch failures
@@ -332,11 +346,28 @@ export default function DockerManagerDashboard() {
         isDark ? 'bg-gradient-to-r from-indigo-950/20 via-slate-900/40 to-slate-950/20 border-indigo-900/40' : 'bg-gradient-to-r from-indigo-50/40 via-slate-50/30 to-white border-slate-200 shadow-sm'
       }`}>
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-indigo-200' : 'text-indigo-700'}`}>
-              <Icons.Zap className="w-4 h-4 text-indigo-400 animate-pulse" />
-              {tr.scanTitle} ({composeFiles.length})
-            </h3>
+          <div className="space-y-1 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-indigo-200' : 'text-indigo-700'}`}>
+                <Icons.Zap className="w-4 h-4 text-indigo-400 animate-pulse" />
+                {tr.scanTitle} ({composeFiles.length})
+              </h3>
+              {composeFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setComposeListOpen((open) => !open)}
+                  className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all ${
+                    isDark
+                      ? 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-indigo-500/40'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300'
+                  }`}
+                  title={composeListOpen ? tr.composeHide : tr.composeShow}
+                >
+                  {composeListOpen ? <Icons.ChevronUp className="w-3.5 h-3.5" /> : <Icons.ChevronDown className="w-3.5 h-3.5" />}
+                  {composeListOpen ? tr.composeHide : tr.composeShow}
+                </button>
+              )}
+            </div>
             <p className={`text-[11px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.scanDesc}</p>
           </div>
           <div className={`flex items-center gap-2 p-1.5 rounded-xl border w-full md:w-auto ${isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200'}`}>
@@ -359,35 +390,54 @@ export default function DockerManagerDashboard() {
         </div>
 
         {composeFiles.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {composeFiles.map((file, idx) => (
-              <div key={idx} className={`p-4 rounded-xl flex flex-col justify-between gap-3 group transition-all border ${
-                isDark ? 'bg-slate-950/60 border-slate-800 hover:border-indigo-500/30' : 'bg-white border-slate-100 hover:border-indigo-500/30 hover:bg-slate-50/50 shadow-sm'
-              }`}>
-                <div className="flex items-start gap-3">
-                  <div className={`p-2 border rounded-xl transition-all ${isDark ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-600/20' : 'bg-indigo-50 border-indigo-100 text-indigo-600'}`}>
-                    <Icons.FileCode className="w-5 h-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h4 className={`text-xs font-bold truncate transition-all ${isDark ? 'text-slate-200 group-hover:text-white' : 'text-slate-800'}`}>
-                      {file.filename}
-                    </h4>
-                    <span className={`text-[11px] font-mono break-all block leading-normal ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{file.path}</span>
-                  </div>
-                </div>
-
-                <div className={`flex justify-end pt-1 border-t ${isDark ? 'border-slate-800/40' : 'border-slate-100'}`}>
-                  <button
-                    onClick={() => handleBuildCompose(file.path)}
-                    className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3.5 py-1.5 rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
-                  >
-                    <Icons.Play className="w-3.5 h-3.5" />
-                    {tr.buildDeploy}
-                  </button>
-                </div>
+          composeListOpen ? (
+            <div className={`rounded-xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-white shadow-sm'}`}>
+              <div className="max-h-56 overflow-y-auto overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className={`sticky top-0 z-10 text-[10px] uppercase tracking-wider font-bold ${isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                    <tr className={`border-b ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
+                      <th className="px-3 py-2 w-36">{tr.composeColFile}</th>
+                      <th className="px-3 py-2">{tr.composeColPath}</th>
+                      <th className="px-3 py-2 text-right w-40">{tr.composeColAction}</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y text-xs ${isDark ? 'divide-slate-800/60' : 'divide-slate-100'}`}>
+                    {composeFiles.map((file, idx) => (
+                      <tr
+                        key={`${file.path}-${idx}`}
+                        className={`transition-colors ${isDark ? 'hover:bg-slate-900/50' : 'hover:bg-slate-50/80'}`}
+                      >
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icons.FileCode className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                            <span className={`font-bold truncate ${isDark ? 'text-slate-200' : 'text-slate-800'}`} title={file.filename}>
+                              {file.filename}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={`px-3 py-2 align-middle font-mono text-[11px] break-all ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {file.path}
+                        </td>
+                        <td className="px-3 py-2 align-middle text-right">
+                          <button
+                            onClick={() => handleBuildCompose(file.path)}
+                            className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg transition-all shadow-md whitespace-nowrap"
+                          >
+                            <Icons.Play className="w-3 h-3" />
+                            {tr.buildDeploy}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className={`text-[11px] border px-3 py-2 rounded-lg ${isDark ? 'text-slate-500 border-slate-800/60' : 'text-slate-400 border-slate-200'}`}>
+              {tr.composeCollapsed.replace('{count}', String(composeFiles.length))}
+            </div>
+          )
         ) : (
           <div className={`text-xs border p-4 rounded-xl ${isDark ? 'text-slate-500 border-slate-800/40' : 'text-slate-400 border-slate-200'}`}>
             {tr.noCompose}
