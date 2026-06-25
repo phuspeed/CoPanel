@@ -25,6 +25,9 @@ const I18N = {
     mount: 'Mount',
     noDisk: 'No disk data',
     loadError: 'Cannot reach system monitor',
+    storageAlerts: '{n} storage alert(s)',
+    storageCritical: 'Storage critical',
+    storageWarn: 'Storage warning',
   },
   vi: {
     title: 'Sức khỏe hệ thống',
@@ -40,8 +43,17 @@ const I18N = {
     mount: 'Gắn tại',
     noDisk: 'Không có dữ liệu ổ đĩa',
     loadError: 'Không lấy được dữ liệu giám sát',
+    storageAlerts: '{n} cảnh báo lưu trữ',
+    storageCritical: 'Lưu trữ nguy hiểm',
+    storageWarn: 'Lưu trữ cảnh báo',
   },
 } as const;
+
+interface StorageAlertsPayload {
+  health?: 'healthy' | 'warning' | 'critical';
+  alert_count?: number;
+  alerts?: Array<{ level: string; message: string }>;
+}
 
 interface StatsPayload {
   cpu?: { percent?: number; count?: number; error?: string; frequency?: { current: number; min: number; max: number } | null };
@@ -119,6 +131,7 @@ export default function SystemHealthWidget() {
   const tr = I18N[language];
 
   const [stats, setStats] = useState<StatsPayload | null>(null);
+  const [storageAlerts, setStorageAlerts] = useState<StorageAlertsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -141,6 +154,24 @@ export default function SystemHealthWidget() {
     };
   }, [language]);
 
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const data = await api<StorageAlertsPayload>('/api/storage_manager/alerts');
+        if (active) setStorageAlerts(data || null);
+      } catch {
+        if (active) setStorageAlerts(null);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [language]);
+
   const cpu = stats?.cpu;
   const mem = stats?.memory;
   const diskParts = stats?.disk?.partitions;
@@ -156,6 +187,16 @@ export default function SystemHealthWidget() {
     if (peak > 85) status = 'error';
     else if (peak > 65) status = 'warn';
   }
+  if (storageAlerts?.health === 'critical') status = 'error';
+  else if (storageAlerts?.health === 'warning' && status === 'ok') status = 'warn';
+
+  const storageFootnote = (() => {
+    const count = storageAlerts?.alert_count ?? 0;
+    if (!count) return null;
+    if (storageAlerts?.health === 'critical') return tr.storageCritical;
+    if (storageAlerts?.health === 'warning') return tr.storageWarn;
+    return interpolate(tr.storageAlerts, { n: count });
+  })();
 
   const cpuCount = cpu?.count;
   const cpuSubtitle = (() => {
@@ -252,7 +293,7 @@ export default function SystemHealthWidget() {
       icon="Cpu"
       status={status}
       loading={!stats && !error}
-      action={{ label: tr.details, onClick: () => navigate('/system-monitor') }}
+      action={{ label: tr.details, onClick: () => navigate(storageAlerts?.alert_count ? '/storage-manager' : '/system-monitor') }}
     >
       {error ? (
         <p className="text-xs text-red-500">{error}</p>
@@ -279,6 +320,15 @@ export default function SystemHealthWidget() {
             subtitle={diskSubtitle}
             errorHint={stats.disk?.error ?? (!primaryDisk ? tr.noDisk : null)}
           />
+          {storageFootnote && (
+            <button
+              type="button"
+              onClick={() => navigate('/storage-manager')}
+              className="w-full text-left text-[10px] font-semibold px-2 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition"
+            >
+              {storageFootnote}
+            </button>
+          )}
         </div>
       ) : null}
     </Widget>
