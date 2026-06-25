@@ -30,11 +30,15 @@ const DOCKER_LOG_TS_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(.*)$/;
 
 function parseDockerLogs(raw: string): LogLine[] {
   if (!raw) return [];
-  return raw.split('\n').map((line) => {
+  const lines = raw.split('\n').map((line) => {
     const m = line.match(DOCKER_LOG_TS_RE);
     if (m) return { timestamp: m[1], message: m[2] };
     return { timestamp: null, message: line };
   });
+  if (lines.length > 0 && lines[lines.length - 1].message === '' && lines[lines.length - 1].timestamp === null) {
+    lines.pop();
+  }
+  return lines.reverse();
 }
 
 function formatLogTimestamp(iso: string, language: 'en' | 'vi'): string {
