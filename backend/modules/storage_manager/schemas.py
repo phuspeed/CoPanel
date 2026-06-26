@@ -9,8 +9,14 @@ from pydantic import BaseModel, Field
 class CreatePartitionRequest(BaseModel):
     disk_name: str = Field(..., min_length=1, max_length=32)
     start: str = Field("1MiB", description="parted start, e.g. 1MiB or 50%")
-    end: str = Field("100%", description="parted end, e.g. 100%")
-    initialize_gpt: bool = Field(False, description="Create GPT label on empty disks")
+    end: str = Field("100%", description="parted end, e.g. 100% or 100%")
+    initialize_gpt: bool = Field(False, description="Legacy: create GPT on empty disks (prefer /disks/{name}/initialize)")
+    confirm_token: str = Field(..., min_length=1, max_length=32)
+
+
+class InitializeDiskRequest(BaseModel):
+    disk_name: str = Field(..., min_length=1, max_length=32)
+    table_type: Literal["gpt", "msdos", "mbr"] = Field("gpt", description="Partition table: gpt (UEFI) or msdos/mbr (legacy BIOS)")
     confirm_token: str = Field(..., min_length=1, max_length=32)
 
 

@@ -1190,6 +1190,86 @@ class StorageService:
                 best = (start_raw, end_raw)
         return best
 
+    def _attach_disk_state(self, layout: Dict[str, Any]) -> Dict[str, Any]:
+        parts = layout.get("partitions") or []
+        table = layout.get("partition_table")
+        if not table and not parts:
+            layout["disk_state"] = "uninitialized"
+        elif not parts:
+            layout["disk_state"] = "empty_table"
+        else:
+            layout["disk_state"] = "partitioned"
+        return layout
+
+    def _parted_print_combined(self, disk_name: str) -> str:
+        parted = self._parted_bin()
+        dev = f"/dev/{disk_name}"
+        result = self._run([parted, "-s", dev, "unit", "MiB", "print"], timeout=60)
+        return f"{(result.stdout or '').strip()}\n{(result.stderr or '').strip()}".lower()
+
+    def _partition_table_from_text(self, text: str) -> Optional[str]:
+        if "unrecognised disk label" in text or "unrecognized disk label" in text:
+            return None
+        if "partition table: gpt" in text:
+            return "gpt"
+        if "partition table: msdos" in text:
+            return "msdos"
+        if "partition table:" in text and "unknown" not in text:
+            return "unknown"
+        return None
+
+    def _disk_has_partition_table(self, disk_name: str, existing_parts: Optional[List[Dict[str, Any]]] = None) -> bool:
+        if existing_parts is None:
+            existing_parts = self._partition_rows_for_disk(disk_name)
+        if existing_parts:
+            return True
+        try:
+            return self._partition_table_from_text(self._parted_print_combined(disk_name)) is not None
+        except StorageManagerError:
+            return False
+
+    def initialize_disk(self, disk_name: str, table_type: str, confirm_token: str) -> Dict[str, Any]:
+        if confirm_token != disk_name:
+            raise StorageManagerError("Confirmation must match disk name exactly.", code="confirm_mismatch")
+        disk = self._disk_record(disk_name)
+        if disk.get("is_system_disk"):
+            raise StorageManagerError("Cannot initialize the system disk.", code="protected_disk")
+
+        label = (table_type or "gpt").strip().lower()
+        if label == "mbr":
+            label = "msdos"
+        if label not in ("gpt", "msdos"):
+            raise StorageManagerError("Partition table must be gpt or msdos/mbr.", code="invalid_fstype")
+
+        if IS_WINDOWS:
+            return {
+                "message": f"Mock initialized {disk_name} with {label.upper()}",
+                "disk": disk_name,
+                "partition_table": label,
+            }
+
+        self._require_linux_mutations()
+        existing_parts = self._partition_rows_for_disk(disk_name)
+        if existing_parts:
+            raise StorageManagerError(
+                "Disk already has partitions. Delete all partitions before re-initializing the partition table.",
+                code="device_in_use",
+            )
+
+        parted = self._parted_bin()
+        dev = f"/dev/{disk_name}"
+        self._run_ok(
+            [parted, "-s", dev, "mklabel", label],
+            f"Failed to initialize {label.upper()} partition table",
+            code="parted_failed",
+        )
+        self._partprobe(dev)
+        return {
+            "message": f"Initialized {disk_name} with {label.upper()} partition table",
+            "disk": disk_name,
+            "partition_table": label,
+        }
+
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
         payload = self._parted_json(disk_name)
         parts = payload.get("partitions") or []
@@ -1278,7 +1358,7 @@ class StorageService:
         except StorageManagerError:
             pass
 
-        return {
+        return self._attach_disk_state({
             "disk": disk_name,
             "is_system_disk": disk.get("is_system_disk", False),
             "size_bytes": disk_size,
@@ -1286,12 +1366,12 @@ class StorageService:
             "partition_table": table,
             "partitions": partitions,
             "unallocated": unallocated,
-        }
+        })
 
     def get_disk_partitions_detail(self, disk_name: str) -> Dict[str, Any]:
         disk = self._disk_record(disk_name)
         if IS_WINDOWS:
-            return {
+            return self._attach_disk_state({
                 "disk": disk_name,
                 "is_system_disk": disk.get("is_system_disk", False),
                 "size_bytes": disk.get("size_bytes"),
@@ -1313,7 +1393,7 @@ class StorageService:
                     for i, p in enumerate(disk.get("partitions") or [])
                 ],
                 "unallocated": [],
-            }
+            })
 
         try:
             payload = self._parted_json(disk_name)
@@ -1390,7 +1470,7 @@ class StorageService:
                     "size_mib": disk_mib - cursor,
                 })
 
-        return self._merge_lsblk_partitions_if_empty(disk_name, disk, {
+        return self._attach_disk_state(self._merge_lsblk_partitions_if_empty(disk_name, disk, {
             "disk": disk_name,
             "is_system_disk": disk.get("is_system_disk", False),
             "size_bytes": disk_size,
@@ -1398,7 +1478,7 @@ class StorageService:
             "partition_table": disk_info.get("partitionTable") or disk_info.get("partition_table"),
             "partitions": partitions,
             "unallocated": unallocated,
-        })
+        }))
 
     def _merge_lsblk_partitions_if_empty(
         self,
@@ -1598,7 +1678,7 @@ class StorageService:
         if not has_table and not existing_parts:
             if not initialize_gpt:
                 raise StorageManagerError(
-                    "Disk has no partition table. Check «Initialize GPT» for a blank disk.",
+                    "Disk has no partition table. Initialize the disk (GPT/MBR) first, then create a partition.",
                     code="no_partition_table",
                 )
             self._run_ok([parted, "-s", dev, "mklabel", "gpt"], "Failed to initialize GPT", code="parted_failed")

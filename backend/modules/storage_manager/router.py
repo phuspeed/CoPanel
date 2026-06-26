@@ -13,6 +13,7 @@ from core.auth import require_admin, require_module
 from .logic import StorageManagerError, StorageService
 from .schemas import (
     BtrfsScrubRequest,
+    InitializeDiskRequest,
     CreateLvRequest,
     CreatePartitionRequest,
     CreateRaidRequest,
@@ -271,6 +272,31 @@ async def set_partition_boot(
             actor=user.get("username"),
             actor_id=user.get("id"),
             meta={"active": body.active},
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/disks/{disk_name}/initialize")
+async def initialize_disk(
+    disk_name: str,
+    body: InitializeDiskRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    if body.disk_name != disk_name:
+        raise HTTPException(status_code=400, detail="disk_name in URL and body must match.")
+    try:
+        result = _service.initialize_disk(disk_name, body.table_type, body.confirm_token)
+        record_audit(
+            "storage.disk_initialize",
+            module="storage_manager",
+            target=disk_name,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"table_type": body.table_type},
         )
         return {"status": "success", "data": result}
     except StorageManagerError as exc:
