@@ -1171,6 +1171,75 @@ class StorageService:
                 return vol
         return None
 
+    def _partitions_detail_from_lsblk(self, disk_name: str, disk: Dict[str, Any]) -> Dict[str, Any]:
+        """Build wizard layout from lsblk when parted cannot read the table (blank disk, etc.)."""
+        disk_size = int(disk.get("size_bytes") or 0)
+        parts_raw = sorted(disk.get("partitions") or [], key=lambda p: str(p.get("name") or ""))
+        partitions: List[Dict[str, Any]] = []
+        cursor = 1.0
+        for idx, part in enumerate(parts_raw):
+            name = part.get("name")
+            path = part.get("path") or (f"/dev/{name}" if name else None)
+            size_bytes = int(part.get("size_bytes") or 0)
+            size_mib = size_bytes / (1024 * 1024) if size_bytes else 0
+            start_mib = cursor
+            end_mib = start_mib + size_mib if size_mib else start_mib
+            cursor = end_mib
+            fstype = self._normalize_fstype(part.get("fstype"))
+            if path and not fstype:
+                fstype = self._probe_fstype(path)
+            usage = self._volume_usage_for_device(path) if path else None
+            partitions.append({
+                "number": idx + 1,
+                "name": name,
+                "path": path,
+                "start_mib": start_mib,
+                "end_mib": end_mib,
+                "size_bytes": size_bytes or None,
+                "fstype": fstype,
+                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or "unknown").upper()) if fstype else None,
+                "mountpoint": part.get("mountpoint"),
+                "flags": [],
+                "is_boot": False,
+                "label": None,
+                "used_percent": usage.get("percent") if usage else None,
+                "used_bytes": usage.get("used") if usage else None,
+                "free_bytes": usage.get("free") if usage else None,
+                "is_mounted": bool(part.get("mountpoint")),
+            })
+
+        unallocated: List[Dict[str, Any]] = []
+        if disk_size > 0:
+            disk_mib = disk_size / (1024 * 1024)
+            if not partitions:
+                unallocated.append({"start_mib": 1.0, "end_mib": disk_mib, "size_mib": max(0.0, disk_mib - 1.0)})
+            elif cursor < disk_mib - 1:
+                unallocated.append({"start_mib": cursor, "end_mib": disk_mib, "size_mib": disk_mib - cursor})
+
+        table = None
+        try:
+            parted = self._parted_bin()
+            pr = self._run([parted, "-s", f"/dev/{disk_name}", "print"], timeout=30)
+            text = ((pr.stdout or "") + (pr.stderr or "")).lower()
+            if "partition table: gpt" in text:
+                table = "gpt"
+            elif "partition table: msdos" in text:
+                table = "msdos"
+            elif "unrecognised" in text or "unrecognized" in text:
+                table = None
+        except StorageManagerError:
+            pass
+
+        return {
+            "disk": disk_name,
+            "is_system_disk": disk.get("is_system_disk", False),
+            "size_bytes": disk_size,
+            "model": disk.get("model"),
+            "partition_table": table,
+            "partitions": partitions,
+            "unallocated": unallocated,
+        }
+
     def get_disk_partitions_detail(self, disk_name: str) -> Dict[str, Any]:
         disk = self._disk_record(disk_name)
         if IS_WINDOWS:
@@ -1198,7 +1267,14 @@ class StorageService:
                 "unallocated": [],
             }
 
-        payload = self._parted_json(disk_name)
+        try:
+            payload = self._parted_json(disk_name)
+        except StorageManagerError as exc:
+            if exc.code in ("parted_failed", "parted_missing"):
+                logger.warning("parted layout failed for %s, lsblk fallback: %s", disk_name, exc)
+                return self._partitions_detail_from_lsblk(disk_name, disk)
+            raise
+
         disk_info = payload.get("disk") or {}
         parted_parts = payload.get("partitions") or []
         children = sorted(

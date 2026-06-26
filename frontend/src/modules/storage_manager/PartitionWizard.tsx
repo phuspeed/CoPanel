@@ -201,7 +201,15 @@ function buildLayoutFromDisks(
 
 function isPartitionsApiMissing(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return msg === 'Not Found' || msg.includes('404') || msg.toLowerCase().includes('not found');
+  const lower = msg.toLowerCase();
+  return (
+    msg === 'Not Found'
+    || msg.includes('404')
+    || msg.includes('503')
+    || lower.includes('not found')
+    || lower.includes('service unavailable')
+    || lower.includes('parted')
+  );
 }
 
 function displayName(part: WizardPartition): string {
