@@ -24,6 +24,11 @@ from .schemas import (
     SmartTestRequest,
     UnmountRequest,
     FsckRequest,
+    DiskBenchmarkRequest,
+    DeletePartitionRequest,
+    ResizePartitionRequest,
+    PartitionLabelRequest,
+    PartitionBootRequest,
 )
 
 router = APIRouter()
@@ -44,14 +49,15 @@ _BAD_REQUEST_CODES = frozenset({
     "smart_test_failed",
     "scrub_failed",
     "fsck_failed",
+    "partition_not_found",
 })
 
 
 def _http_error(exc: StorageManagerError) -> HTTPException:
     code = exc.code
-    if code == "disk_not_found" or code == "device_not_found":
+    if code == "disk_not_found" or code == "device_not_found" or code == "partition_not_found":
         status = 404
-    elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed", "fsck_missing"}:
+    elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "parted_failed", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed", "fsck_missing", "label_failed"}:
         status = 503
     elif code in _BAD_REQUEST_CODES:
         status = 400
@@ -109,6 +115,42 @@ async def get_disk_layout(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/disks/{disk_name}/benchmark")
+async def start_disk_benchmark(
+    disk_name: str,
+    body: DiskBenchmarkRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.start_disk_benchmark(disk_name, body.profile)
+        record_audit(
+            "storage.disk_benchmark",
+            module="storage_manager",
+            target=disk_name,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"profile": body.profile},
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/disks/{disk_name}/benchmark")
+async def get_disk_benchmark_status(
+    disk_name: str,
+    _user: Dict[str, Any] = Depends(require_module("storage_manager")),
+) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": _service.get_disk_benchmark_status(disk_name)}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/volumes")
 async def list_volumes(_user: Dict[str, Any] = Depends(require_module("storage_manager"))) -> Dict[str, Any]:
     try:
@@ -124,6 +166,112 @@ async def list_volumes(_user: Dict[str, Any] = Depends(require_module("storage_m
 async def read_fstab(_user: Dict[str, Any] = Depends(require_module("storage_manager"))) -> Dict[str, Any]:
     try:
         return {"status": "success", "data": _service.read_fstab()}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/disks/{disk_name}/partitions")
+async def get_disk_partitions_detail(
+    disk_name: str,
+    _user: Dict[str, Any] = Depends(require_module("storage_manager")),
+) -> Dict[str, Any]:
+    try:
+        data = _service.get_disk_partitions_detail(disk_name)
+        return {"status": "success", "data": data}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/partitions/delete")
+async def delete_partition(
+    body: DeletePartitionRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.delete_partition(body.device, body.confirm_token)
+        record_audit(
+            "storage.partition_delete",
+            module="storage_manager",
+            target=body.device,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/partitions/resize")
+async def resize_partition(
+    body: ResizePartitionRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.resize_partition(
+            body.device,
+            body.end,
+            body.grow_filesystem,
+            body.confirm_token,
+        )
+        record_audit(
+            "storage.partition_resize",
+            module="storage_manager",
+            target=body.device,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"end": body.end, "grow_filesystem": body.grow_filesystem},
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/partitions/label")
+async def change_partition_label(
+    body: PartitionLabelRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.change_partition_label(body.device, body.label, body.confirm_token)
+        record_audit(
+            "storage.partition_label",
+            module="storage_manager",
+            target=body.device,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"label": body.label},
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/partitions/boot")
+async def set_partition_boot(
+    body: PartitionBootRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.set_partition_boot(body.device, body.active, body.confirm_token)
+        record_audit(
+            "storage.partition_boot",
+            module="storage_manager",
+            target=body.device,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"active": body.active},
+        )
+        return {"status": "success", "data": result}
     except StorageManagerError as exc:
         raise _http_error(exc) from exc
     except Exception as exc:

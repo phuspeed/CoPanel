@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,7 +61,7 @@ _FSTYPE_LABELS = {
     "apfs": "APFS (Apple, read-only)",
 }
 _PROTECTED_MOUNTS = frozenset({"/", "/boot", "/boot/efi", "/usr", "/var"})
-_DEVICE_RE = re.compile(r"^/dev/(?P<name>[a-z0-9]+)$")
+_DEVICE_RE = re.compile(r"^/dev/(?P<name>[a-zA-Z0-9_-]+)$")
 _FSTAB_PATH = Path("/etc/fstab")
 _SKIP_FSTYPES = frozenset({
     "", "tmpfs", "devtmpfs", "proc", "sysfs", "cgroup", "cgroup2",
@@ -97,8 +98,12 @@ MOCK_DISKS: List[Dict[str, Any]] = [
             "available": True,
             "passed": True,
             "status": "healthy",
+            "health_percent": 92,
             "temperature_c": 34,
             "power_on_hours": 18240,
+            "power_cycle_count": 890,
+            "host_reads_gb": 12500.5,
+            "host_writes_gb": 4820.2,
             "reallocated_sectors": 0,
             "message": "SMART overall-health self-assessment test result: PASSED",
         },
@@ -121,13 +126,19 @@ MOCK_DISKS: List[Dict[str, Any]] = [
             "available": True,
             "passed": True,
             "status": "healthy",
+            "health_percent": 97,
             "temperature_c": 41,
             "power_on_hours": 4200,
+            "power_cycle_count": 312,
+            "host_reads_gb": 8200.0,
+            "host_writes_gb": 3100.5,
             "reallocated_sectors": None,
             "message": "SMART overall-health self-assessment test result: PASSED",
         },
     },
 ]
+
+BENCHMARK_TASKS: Dict[str, Any] = {}
 
 MOCK_VOLUMES: List[Dict[str, Any]] = [
     {
@@ -435,6 +446,53 @@ class StorageService:
                 return candidate
         return shutil.which("smartctl")
 
+    def _smart_attr_raw(self, attrs: List[Dict[str, Any]], *needles: str) -> Optional[int]:
+        needles_l = [n.lower() for n in needles]
+        for attr in attrs:
+            name = str(attr.get("name") or "").lower()
+            if any(n in name for n in needles_l):
+                raw = attr.get("raw") or {}
+                val = raw.get("value")
+                if val is not None:
+                    try:
+                        return int(val)
+                    except (TypeError, ValueError):
+                        continue
+        return None
+
+    def _gb_from_32mib_units(self, units: Optional[int]) -> Optional[float]:
+        if units is None:
+            return None
+        return round(units * 32 / 1024, 2)
+
+    def _gb_from_lba(self, lba: Optional[int], sector_bytes: int = 512) -> Optional[float]:
+        if lba is None:
+            return None
+        return round(lba * sector_bytes / (1024 ** 3), 2)
+
+    def _derive_health_percent(
+        self,
+        passed: Optional[bool],
+        status: str,
+        nvme_log: Dict[str, Any],
+        attrs: List[Dict[str, Any]],
+    ) -> Optional[int]:
+        if isinstance(nvme_log, dict):
+            used = nvme_log.get("percentage_used")
+            if used is not None:
+                try:
+                    return max(0, min(100, 100 - int(used)))
+                except (TypeError, ValueError):
+                    pass
+        wear = self._smart_attr_raw(attrs, "wear_leveling", "media_wearout", "percent_lifetime")
+        if wear is not None and 0 <= wear <= 100:
+            return int(wear)
+        if passed is True:
+            return 100
+        if passed is False or status == "critical":
+            return 0
+        return None
+
     def _parse_smart_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         smart_status = payload.get("smart_status") or {}
         passed = smart_status.get("passed")
@@ -456,14 +514,45 @@ class StorageService:
         if power_on_hours is None and isinstance(nvme_log, dict):
             power_on_hours = nvme_log.get("power_on_hours")
 
-        reallocated = None
+        power_cycle_count = None
+        if isinstance(nvme_log, dict):
+            power_cycle_count = nvme_log.get("power_cycles")
+
         attrs = (payload.get("ata_smart_attributes") or {}).get("table") or []
-        for attr in attrs:
-            name = str(attr.get("name") or "").lower()
-            if "reallocated" in name:
-                raw = attr.get("raw") or {}
-                reallocated = raw.get("value")
-                break
+        reallocated = self._smart_attr_raw(attrs, "reallocated")
+
+        host_reads_gb = None
+        host_writes_gb = None
+        if isinstance(nvme_log, dict):
+            unit_size = 512000
+            dur = nvme_log.get("data_units_read")
+            duw = nvme_log.get("data_units_written")
+            if dur is not None:
+                try:
+                    host_reads_gb = round(int(dur) * unit_size / (1024 ** 3), 2)
+                except (TypeError, ValueError):
+                    pass
+            if duw is not None:
+                try:
+                    host_writes_gb = round(int(duw) * unit_size / (1024 ** 3), 2)
+                except (TypeError, ValueError):
+                    pass
+        if host_reads_gb is None:
+            host_reads_gb = self._gb_from_32mib_units(
+                self._smart_attr_raw(attrs, "host_reads", "total_host_reads", "host_reads_32mib")
+            )
+            if host_reads_gb is None:
+                host_reads_gb = self._gb_from_lba(
+                    self._smart_attr_raw(attrs, "total_lbas_read", "lba_read")
+                )
+        if host_writes_gb is None:
+            host_writes_gb = self._gb_from_32mib_units(
+                self._smart_attr_raw(attrs, "host_writes", "total_host_writes", "host_writes_32mib")
+            )
+            if host_writes_gb is None:
+                host_writes_gb = self._gb_from_lba(
+                    self._smart_attr_raw(attrs, "total_lbas_written", "lba_written")
+                )
 
         if passed is True:
             status = "healthy"
@@ -472,13 +561,21 @@ class StorageService:
         else:
             status = "unknown"
 
+        health_percent = self._derive_health_percent(passed, status, nvme_log, attrs)
+
         return {
             "available": True,
             "passed": passed,
             "status": status,
+            "health_percent": health_percent,
             "temperature_c": temperature,
             "power_on_hours": power_on_hours,
+            "power_cycle_count": power_cycle_count,
+            "host_reads_gb": host_reads_gb,
+            "host_writes_gb": host_writes_gb,
             "reallocated_sectors": reallocated,
+            "media_errors": nvme_log.get("media_errors") if isinstance(nvme_log, dict) else None,
+            "unsafe_shutdowns": nvme_log.get("unsafe_shutdowns") if isinstance(nvme_log, dict) else None,
             "message": smart_status.get("string") or payload.get("model_name") or "",
         }
 
@@ -504,13 +601,25 @@ class StorageService:
         if m:
             realloc = int(m.group(1))
 
+        host_reads_gb = None
+        m = re.search(r"Host_Reads_32MiB\s+\d+\s+\d+\s+\d+\s+(\d+)", stdout)
+        if m:
+            host_reads_gb = self._gb_from_32mib_units(int(m.group(1)))
+        m = re.search(r"Host_Writes_32MiB\s+\d+\s+\d+\s+\d+\s+(\d+)", stdout)
+        host_writes_gb = self._gb_from_32mib_units(int(m.group(1))) if m else None
+
         status = "healthy" if passed is True else "critical" if passed is False else "unknown"
+        health_percent = 100 if passed is True else 0 if passed is False else None
         return {
             "available": True,
             "passed": passed,
             "status": status,
+            "health_percent": health_percent,
             "temperature_c": temp,
             "power_on_hours": poh,
+            "power_cycle_count": None,
+            "host_reads_gb": host_reads_gb,
+            "host_writes_gb": host_writes_gb,
             "reallocated_sectors": realloc,
             "message": stdout.strip().splitlines()[0] if stdout.strip() else "",
         }
@@ -572,6 +681,174 @@ class StorageService:
             "serial": match.get("serial"),
         }
         return detail
+
+    # --- Disk benchmark (CrystalDiskMark-style) ---
+
+    def _dd_transfer_rate_mibs(self, args: List[str], mebibytes: int, timeout: int = 300) -> float:
+        start = time.perf_counter()
+        result = self._run(args, timeout=timeout)
+        elapsed = time.perf_counter() - start
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise StorageManagerError(detail or "Benchmark command failed", code="benchmark_failed")
+        if elapsed <= 0:
+            raise StorageManagerError("Benchmark completed too quickly to measure", code="benchmark_failed")
+        return round(mebibytes / elapsed, 2)
+
+    def _fio_rate_mibs(self, path: str, rw: str, bs: str, size_mb: int, runtime: int = 5) -> Optional[float]:
+        fio = shutil.which("fio")
+        if not fio:
+            return None
+        iodepth = 1 if rw.startswith("rand") else 8
+        result = self._run(
+            [fio, "--output-format=json", "--filename=" + path, f"--rw={rw}", f"--bs={bs}",
+             f"--size={size_mb}M", "--numjobs=1", f"--iodepth={iodepth}",
+             "--direct=1", f"--runtime={runtime}", "--time_based=1", "--name=copanel_bench"],
+            timeout=runtime + 60,
+        )
+        if result.returncode != 0 or not (result.stdout or "").strip():
+            return None
+        try:
+            payload = json.loads(result.stdout)
+            jobs = payload.get("jobs") or []
+            if not jobs:
+                return None
+            read_bw = (jobs[0].get("read") or {}).get("bw_bytes")
+            write_bw = (jobs[0].get("write") or {}).get("bw_bytes")
+            bw = write_bw if rw.startswith("write") or rw == "randwrite" else read_bw
+            if bw is None:
+                return None
+            return round(bw / (1024 * 1024), 2)
+        except (json.JSONDecodeError, TypeError, KeyError):
+            return None
+
+    def _benchmark_write_target(self, disk: Dict[str, Any]) -> str:
+        if disk.get("is_system_disk"):
+            raise StorageManagerError("Write benchmark blocked on system disk.", code="protected_disk")
+        for part in disk.get("partitions") or []:
+            if not part.get("mountpoint"):
+                return str(part.get("path"))
+        raise StorageManagerError(
+            "No unmounted partition for write test. Unmount a data partition first.",
+            code="invalid_target",
+        )
+
+    def _run_disk_benchmark(self, disk_name: str, profile: str = "standard") -> Dict[str, Any]:
+        disks = self.list_disks(include_smart=False)
+        disk = next((d for d in disks if d.get("name") == disk_name), None)
+        if not disk:
+            raise StorageManagerError(f"Disk not found: {disk_name}", code="disk_not_found")
+
+        if IS_WINDOWS:
+            return {
+                "disk": disk_name,
+                "profile": profile,
+                "results": {
+                    "seq_read_mibs": 520.0,
+                    "seq_write_mibs": 480.0,
+                    "rand4k_read_mibs": 42.5,
+                    "rand4k_write_mibs": 95.0,
+                },
+                "note": "Mock benchmark on Windows dev host.",
+            }
+
+        self._require_linux_mutations()
+        read_path = f"/dev/{disk_name}"
+        seq_mb = 256 if profile == "quick" else 512
+        rand_mb = 64 if profile == "quick" else 128
+        rand_runtime = 4 if profile == "quick" else 8
+
+        results: Dict[str, Any] = {}
+        logs: List[str] = []
+
+        try:
+            results["seq_read_mibs"] = self._dd_transfer_rate_mibs(
+                ["dd", f"if={read_path}", "of=/dev/null", "bs=1M", f"count={seq_mb}", "iflag=direct", "status=none"],
+                seq_mb,
+            )
+            logs.append(f"Sequential read: {results['seq_read_mibs']} MiB/s")
+        except StorageManagerError:
+            results["seq_read_mibs"] = self._dd_transfer_rate_mibs(
+                ["dd", f"if={read_path}", "of=/dev/null", "bs=1M", f"count={seq_mb}", "status=none"],
+                seq_mb,
+            )
+            logs.append(f"Sequential read (cached): {results['seq_read_mibs']} MiB/s")
+
+        write_path = None
+        try:
+            write_path = self._benchmark_write_target(disk)
+            write_mb = 64 if profile == "quick" else 128
+            results["seq_write_mibs"] = self._dd_transfer_rate_mibs(
+                ["dd", "if=/dev/zero", f"of={write_path}", "bs=1M", f"count={write_mb}",
+                 "oflag=direct", "status=none", "conv=fdatasync"],
+                write_mb,
+            )
+            logs.append(f"Sequential write on {write_path}: {results['seq_write_mibs']} MiB/s")
+        except StorageManagerError as exc:
+            results["seq_write_mibs"] = None
+            results["seq_write_skipped"] = str(exc)
+
+        rand_read = self._fio_rate_mibs(read_path, "randread", "4k", rand_mb, rand_runtime)
+        rand_write = self._fio_rate_mibs(write_path or read_path, "randwrite", "4k", rand_mb, rand_runtime) if write_path else None
+        if rand_read is not None:
+            results["rand4k_read_mibs"] = rand_read
+            logs.append(f"Random 4K read: {rand_read} MiB/s")
+        else:
+            results["rand4k_read_mibs"] = self._dd_transfer_rate_mibs(
+                ["dd", f"if={read_path}", "of=/dev/null", "bs=4K", f"count={rand_mb * 256}", "iflag=direct", "status=none"],
+                max(1, rand_mb // 4),
+            )
+            logs.append(f"Random 4K read (dd approx): {results['rand4k_read_mibs']} MiB/s")
+        if rand_write is not None:
+            results["rand4k_write_mibs"] = rand_write
+            logs.append(f"Random 4K write: {rand_write} MiB/s")
+        elif write_path:
+            results["rand4k_write_mibs"] = None
+            results["rand4k_write_skipped"] = "fio not installed or write test failed"
+        else:
+            results["rand4k_write_mibs"] = None
+
+        return {
+            "disk": disk_name,
+            "profile": profile,
+            "results": results,
+            "logs": logs,
+            "tools": {"fio": bool(shutil.which("fio"))},
+        }
+
+    def start_disk_benchmark(self, disk_name: str, profile: str = "standard") -> Dict[str, Any]:
+        self._disk_record(disk_name)
+        if BENCHMARK_TASKS.get(disk_name, {}).get("status") == "running":
+            return {"message": "Benchmark already running", "disk": disk_name}
+
+        BENCHMARK_TASKS[disk_name] = {
+            "status": "running",
+            "progress": 5,
+            "results": None,
+            "error": "",
+            "logs": ["Starting disk benchmark..."],
+        }
+
+        def _worker():
+            try:
+                BENCHMARK_TASKS[disk_name]["progress"] = 20
+                payload = self._run_disk_benchmark(disk_name, profile)
+                BENCHMARK_TASKS[disk_name]["status"] = "success"
+                BENCHMARK_TASKS[disk_name]["progress"] = 100
+                BENCHMARK_TASKS[disk_name]["results"] = payload.get("results")
+                BENCHMARK_TASKS[disk_name]["logs"] = payload.get("logs") or []
+                BENCHMARK_TASKS[disk_name]["tools"] = payload.get("tools")
+                BENCHMARK_TASKS[disk_name]["profile"] = profile
+            except Exception as exc:
+                BENCHMARK_TASKS[disk_name]["status"] = "failed"
+                BENCHMARK_TASKS[disk_name]["progress"] = 100
+                BENCHMARK_TASKS[disk_name]["error"] = str(exc)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {"message": f"Benchmark started for {disk_name}", "disk": disk_name}
+
+    def get_disk_benchmark_status(self, disk_name: str) -> Dict[str, Any]:
+        return BENCHMARK_TASKS.get(disk_name, {"status": "not_started", "progress": 0, "results": None, "logs": [], "error": ""})
 
     def list_volumes(self) -> List[Dict[str, Any]]:
         if IS_WINDOWS:
@@ -846,6 +1123,295 @@ class StorageService:
         dev = f"/dev/{disk_name}"
         text = self._run_ok([parted, "-s", dev, "unit", "MiB", "print", "free"], "Failed to read partition layout")
         return {"disk": disk_name, "text": text, "is_system_disk": disk.get("is_system_disk", False)}
+
+    def _parted_bin(self) -> str:
+        parted = shutil.which("parted")
+        if not parted:
+            raise StorageManagerError("parted not found. Install parted.", code="parted_missing")
+        return parted
+
+    def _parted_json(self, disk_name: str) -> Dict[str, Any]:
+        parted = self._parted_bin()
+        dev = f"/dev/{disk_name}"
+        result = self._run([parted, "-s", "-j", dev, "unit", "MiB", "print"], timeout=60)
+        if result.returncode != 0 or not (result.stdout or "").strip():
+            detail = (result.stderr or result.stdout or "").strip()
+            raise StorageManagerError(detail or "Failed to read partition table", code="parted_failed")
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise StorageManagerError("Invalid parted JSON output", code="parted_failed") from exc
+
+    def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
+        payload = self._parted_json(disk_name)
+        parts = payload.get("partitions") or []
+        children = sorted(
+            [
+                row for row in self._get_flat_block()
+                if row.get("type") in ("part", "primary", "extended", "logical")
+                and (row.get("pkname") or row.get("_parent_name")) == disk_name
+            ],
+            key=lambda r: str(r.get("name") or ""),
+        )
+        for idx, child in enumerate(children):
+            if child.get("name") == part_name:
+                if idx < len(parts):
+                    num = parts[idx].get("number")
+                    if num is not None:
+                        return int(num)
+                break
+        for part in parts:
+            if str(part.get("node", "")).endswith(part_name):
+                return int(part["number"])
+        raise StorageManagerError("Could not resolve partition number in parted.", code="partition_not_found")
+
+    def _volume_usage_for_device(self, device_path: str) -> Optional[Dict[str, Any]]:
+        for vol in self.list_volumes():
+            if vol.get("device") == device_path:
+                return vol
+        return None
+
+    def get_disk_partitions_detail(self, disk_name: str) -> Dict[str, Any]:
+        disk = self._disk_record(disk_name)
+        if IS_WINDOWS:
+            return {
+                "disk": disk_name,
+                "is_system_disk": disk.get("is_system_disk", False),
+                "size_bytes": disk.get("size_bytes"),
+                "model": disk.get("model"),
+                "partition_table": "gpt",
+                "partitions": [
+                    {
+                        "number": i + 1,
+                        "name": p.get("name"),
+                        "path": p.get("path"),
+                        "size_bytes": p.get("size_bytes"),
+                        "fstype": p.get("fstype"),
+                        "mountpoint": p.get("mountpoint"),
+                        "flags": [],
+                        "is_boot": i == 0,
+                        "label": None,
+                        "used_percent": 60 if p.get("mountpoint") else None,
+                    }
+                    for i, p in enumerate(disk.get("partitions") or [])
+                ],
+                "unallocated": [],
+            }
+
+        payload = self._parted_json(disk_name)
+        disk_info = payload.get("disk") or {}
+        parted_parts = payload.get("partitions") or []
+        children = sorted(
+            [
+                row for row in self._get_flat_block()
+                if row.get("type") in ("part", "primary", "extended", "logical", "lvm", "crypt")
+                and (row.get("pkname") or row.get("_parent_name")) == disk_name
+            ],
+            key=lambda r: str(r.get("name") or ""),
+        )
+
+        partitions: List[Dict[str, Any]] = []
+        for idx, pt in enumerate(parted_parts):
+            number = int(pt.get("number") or idx + 1)
+            child = children[idx] if idx < len(children) else {}
+            name = child.get("name")
+            path = f"/dev/{name}" if name else None
+            fstype = self._normalize_fstype(child.get("fstype")) or (pt.get("filesystem") or None)
+            if path and not fstype:
+                fstype = self._probe_fstype(path)
+            flags = pt.get("flags") or []
+            if isinstance(flags, str):
+                flags = [flags]
+            mountpoint = child.get("mountpoint")
+            usage = self._volume_usage_for_device(path) if path else None
+            label = None
+            if path and shutil.which("blkid"):
+                lr = self._run(["blkid", "-o", "value", "-s", "LABEL", path], timeout=10)
+                if lr.returncode == 0 and (lr.stdout or "").strip():
+                    label = lr.stdout.strip()
+
+            partitions.append({
+                "number": number,
+                "name": name,
+                "path": path,
+                "start_mib": pt.get("start"),
+                "end_mib": pt.get("end"),
+                "size_bytes": self._parse_size(pt.get("size")) or self._parse_size(child.get("size")),
+                "fstype": fstype,
+                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or "unknown").upper()),
+                "mountpoint": mountpoint,
+                "flags": flags,
+                "is_boot": any(f in ("boot", "esp", "legacy_boot") for f in flags),
+                "label": label,
+                "used_percent": usage.get("percent") if usage else None,
+                "used_bytes": usage.get("used") if usage else None,
+                "free_bytes": usage.get("free") if usage else None,
+                "is_mounted": bool(mountpoint),
+            })
+
+        disk_size = self._parse_size(disk_info.get("size")) or int(disk.get("size_bytes") or 0)
+        unallocated: List[Dict[str, Any]] = []
+        cursor = 1.0
+        for part in partitions:
+            start = float(part.get("start_mib") or cursor)
+            if start > cursor + 1:
+                unallocated.append({
+                    "start_mib": cursor,
+                    "end_mib": start,
+                    "size_mib": start - cursor,
+                })
+            cursor = max(cursor, float(part.get("end_mib") or start))
+        if disk_size > 0:
+            disk_mib = disk_size / (1024 * 1024)
+            if cursor < disk_mib - 1:
+                unallocated.append({
+                    "start_mib": cursor,
+                    "end_mib": disk_mib,
+                    "size_mib": disk_mib - cursor,
+                })
+
+        return {
+            "disk": disk_name,
+            "is_system_disk": disk.get("is_system_disk", False),
+            "size_bytes": disk_size,
+            "model": disk.get("model"),
+            "partition_table": disk_info.get("partitionTable") or disk_info.get("partition_table"),
+            "partitions": partitions,
+            "unallocated": unallocated,
+        }
+
+    def delete_partition(self, device: str, confirm_token: str) -> Dict[str, Any]:
+        device, name = self._normalize_device(device)
+        if confirm_token != name:
+            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        self._assert_partition_target(name)
+        parent = self._parent_disk_name(name)
+        if not parent:
+            raise StorageManagerError("Parent disk not found.", code="device_not_found")
+
+        if IS_WINDOWS:
+            return {"message": f"Mock deleted partition {device}", "device": device}
+
+        self._require_linux_mutations()
+        parted = self._parted_bin()
+        num = self._parted_partition_number(parent, name)
+        dev = f"/dev/{parent}"
+        self._run_ok([parted, "-s", dev, "rm", str(num)], f"Failed to delete partition {num}", code="parted_failed")
+        self._partprobe(dev)
+        return {"message": f"Deleted partition {device}", "device": device, "partition_number": num}
+
+    def resize_partition(
+        self,
+        device: str,
+        end: str,
+        grow_filesystem: bool,
+        confirm_token: str,
+    ) -> Dict[str, Any]:
+        device, name = self._normalize_device(device)
+        if confirm_token != name:
+            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        row = self._find_block(name)
+        if not row:
+            raise StorageManagerError("Device not found.", code="device_not_found")
+        parent = self._parent_disk_name(name)
+        if not parent:
+            raise StorageManagerError("Parent disk not found.", code="device_not_found")
+        disk = self._disk_record(parent)
+        if disk.get("is_system_disk"):
+            raise StorageManagerError("Operation blocked on the system disk.", code="protected_disk")
+
+        if IS_WINDOWS:
+            return {"message": f"Mock resized {device} to {end}", "device": device}
+
+        self._require_linux_mutations()
+        parted = self._parted_bin()
+        num = self._parted_partition_number(parent, name)
+        dev = f"/dev/{parent}"
+        self._run_ok(
+            [parted, "-s", dev, "unit", "MiB", "resizepart", str(num), end],
+            "Failed to resize partition",
+            code="parted_failed",
+            timeout=120,
+        )
+        self._partprobe(dev)
+        fs_grown = None
+        if grow_filesystem and row.get("mountpoint"):
+            fs_grown = self._grow_filesystem(device)
+        return {
+            "message": f"Resized partition {device} to end {end}",
+            "device": device,
+            "end": end,
+            "filesystem_action": fs_grown,
+        }
+
+    def change_partition_label(self, device: str, label: str, confirm_token: str) -> Dict[str, Any]:
+        device, name = self._normalize_device(device)
+        if confirm_token != name:
+            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        row = self._find_block(name)
+        if not row:
+            raise StorageManagerError("Device not found.", code="device_not_found")
+        fstype = self._normalize_fstype(row.get("fstype")) or self._probe_fstype(device)
+        if not fstype:
+            raise StorageManagerError("Filesystem type required to change label.", code="invalid_fstype")
+
+        if IS_WINDOWS:
+            return {"message": f"Mock label set on {device}", "device": device, "label": label}
+
+        self._require_linux_mutations()
+        norm = fstype
+        if norm == "ext4":
+            self._run_ok(["e2label", device, label], "Failed to set ext4 label", code="label_failed")
+        elif norm == "xfs":
+            self._run_ok(["xfs_admin", "-L", label, device], "Failed to set xfs label", code="label_failed")
+        elif norm == "vfat":
+            self._run_ok(["fatlabel", device, label[:11]], "Failed to set vfat label", code="label_failed")
+        elif norm == "exfat":
+            tool = shutil.which("exfatlabel") or shutil.which("tune.exfat")
+            if not tool:
+                raise StorageManagerError("exfatlabel not installed.", code="label_failed")
+            self._run_ok([tool, device, label[:15]], "Failed to set exfat label", code="label_failed")
+        elif norm == "ntfs":
+            self._run_ok(["ntfslabel", device, label[:32]], "Failed to set ntfs label", code="label_failed")
+        elif norm == "btrfs":
+            self._run_ok(["btrfs", "filesystem", "label", device, label], "Failed to set btrfs label", code="label_failed")
+        else:
+            raise StorageManagerError(f"Label change not supported for {fstype}", code="invalid_fstype")
+        return {"message": f"Label set on {device}", "device": device, "label": label}
+
+    def set_partition_boot(self, device: str, active: bool, confirm_token: str) -> Dict[str, Any]:
+        device, name = self._normalize_device(device)
+        if confirm_token != name:
+            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        parent = self._parent_disk_name(name)
+        if not parent:
+            raise StorageManagerError("Parent disk not found.", code="device_not_found")
+        disk = self._disk_record(parent)
+        if disk.get("is_system_disk"):
+            raise StorageManagerError("Cannot change boot flag on system disk.", code="protected_disk")
+
+        if IS_WINDOWS:
+            return {"message": f"Mock boot flag {'on' if active else 'off'} for {device}", "device": device}
+
+        self._require_linux_mutations()
+        parted = self._parted_bin()
+        num = self._parted_partition_number(parent, name)
+        dev = f"/dev/{parent}"
+        payload = self._parted_json(parent)
+        table = (payload.get("disk") or {}).get("partitionTable") or ""
+        flag = "esp" if str(table).lower() == "gpt" else "boot"
+        state = "on" if active else "off"
+        self._run_ok(
+            [parted, "-s", dev, "set", str(num), flag, state],
+            "Failed to set boot flag",
+            code="parted_failed",
+        )
+        return {"message": f"Boot flag {state} for {device}", "device": device, "flag": flag, "active": active}
+
+    def _partprobe(self, disk_dev: str) -> None:
+        partprobe = shutil.which("partprobe") or "/sbin/partprobe"
+        if os.path.exists(partprobe) or shutil.which("partprobe"):
+            self._run([partprobe, disk_dev], timeout=30)
 
     def create_partition(
         self,

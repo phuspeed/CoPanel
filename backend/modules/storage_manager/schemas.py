@@ -79,3 +79,31 @@ class FsckRequest(BaseModel):
     device: str = Field(..., description="e.g. /dev/sdb1")
     repair: bool = Field(False, description="Attempt automatic repair (fsck -y / xfs_repair)")
     confirm_token: str = Field(..., min_length=1, max_length=32)
+
+
+class DiskBenchmarkRequest(BaseModel):
+    profile: Literal["quick", "standard"] = "standard"
+
+
+class DeletePartitionRequest(BaseModel):
+    device: str = Field(..., description="e.g. /dev/sdb1")
+    confirm_token: str = Field(..., min_length=1, max_length=64)
+
+
+class ResizePartitionRequest(BaseModel):
+    device: str
+    end: str = Field(..., description="New end position, e.g. 100% or 500GiB")
+    grow_filesystem: bool = Field(True, description="Grow filesystem after extending partition")
+    confirm_token: str = Field(..., min_length=1, max_length=64)
+
+
+class PartitionLabelRequest(BaseModel):
+    device: str
+    label: str = Field(..., min_length=1, max_length=32)
+    confirm_token: str = Field(..., min_length=1, max_length=64)
+
+
+class PartitionBootRequest(BaseModel):
+    device: str
+    active: bool = True
+    confirm_token: str = Field(..., min_length=1, max_length=64)

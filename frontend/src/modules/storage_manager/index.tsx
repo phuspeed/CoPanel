@@ -4,6 +4,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
+import PartitionWizard from './PartitionWizard';
 
 type TabId = 'overview' | 'disks' | 'volumes' | 'pools' | 'maintenance' | 'manage';
 type HealthLevel = 'healthy' | 'warning' | 'critical';
@@ -12,10 +13,34 @@ interface SmartInfo {
   available?: boolean;
   passed?: boolean | null;
   status?: string;
+  health_percent?: number | null;
   temperature_c?: number | null;
   power_on_hours?: number | null;
+  power_cycle_count?: number | null;
+  host_reads_gb?: number | null;
+  host_writes_gb?: number | null;
   reallocated_sectors?: number | null;
+  media_errors?: number | null;
+  unsafe_shutdowns?: number | null;
   message?: string;
+}
+
+interface BenchmarkResults {
+  seq_read_mibs?: number | null;
+  seq_write_mibs?: number | null;
+  rand4k_read_mibs?: number | null;
+  rand4k_write_mibs?: number | null;
+  seq_write_skipped?: string;
+  rand4k_write_skipped?: string;
+}
+
+interface BenchmarkStatus {
+  status: string;
+  progress?: number;
+  results?: BenchmarkResults | null;
+  logs?: string[];
+  error?: string;
+  profile?: string;
 }
 
 interface PartitionInfo {
@@ -155,6 +180,26 @@ const MOUNT_FS_OPTIONS = [
 
 function displayFstype(item: { fstype?: string | null; fstype_label?: string | null }): string {
   return item.fstype_label || item.fstype || '—';
+}
+
+function formatPowerOnHours(hours: number | null | undefined, language: 'en' | 'vi'): string {
+  if (hours == null) return '—';
+  const days = Math.floor(hours / 24);
+  if (language === 'vi') {
+    return `${hours.toLocaleString('vi-VN')} giờ (~${days.toLocaleString('vi-VN')} ngày)`;
+  }
+  return `${hours.toLocaleString('en-US')} h (~${days.toLocaleString('en-US')} days)`;
+}
+
+function formatHostIoGb(gb: number | null | undefined): string {
+  if (gb == null) return '—';
+  if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
+  return `${gb.toFixed(2)} GB`;
+}
+
+function formatMibs(mibs: number | null | undefined): string {
+  if (mibs == null) return '—';
+  return `${mibs.toFixed(1)} MiB/s`;
 }
 
 interface StorageAlert {
@@ -302,6 +347,11 @@ export default function StorageManagerDashboard() {
   const [fsckDevice, setFsckDevice] = useState('');
   const [fsckRepair, setFsckRepair] = useState(false);
   const [fsckConfirm, setFsckConfirm] = useState('');
+  const [smartDetails, setSmartDetails] = useState<Record<string, SmartInfo>>({});
+  const [smartLoading, setSmartLoading] = useState<string | null>(null);
+  const [benchmarkDisk, setBenchmarkDisk] = useState<string | null>(null);
+  const [benchmarkStatus, setBenchmarkStatus] = useState<BenchmarkStatus | null>(null);
+  const [benchmarkProfile, setBenchmarkProfile] = useState<'quick' | 'standard'>('quick');
 
   const t = {
     en: {
@@ -410,6 +460,22 @@ export default function StorageManagerDashboard() {
       activeAlerts: 'Active alerts',
       noAlerts: 'No storage alerts.',
       selectDrive: 'Select drive',
+      healthPercent: 'Health',
+      hostReads: 'Host reads',
+      hostWrites: 'Host writes',
+      powerCycles: 'Power cycles',
+      diskBenchmark: 'Disk speed test',
+      benchmarkHint: 'Sequential & 4K random read/write (CrystalDiskMark-style). Write tests use an unmounted data partition.',
+      runBenchmark: 'Run speed test',
+      benchmarkRunning: 'Benchmark running…',
+      seqRead: 'Seq. read',
+      seqWrite: 'Seq. write',
+      rand4kRead: '4K random read',
+      rand4kWrite: '4K random write',
+      benchmarkSkipped: 'Skipped',
+      profileQuick: 'Quick (~30s)',
+      profileStandard: 'Standard (~60s)',
+      refreshSmart: 'Refresh SMART',
       fsckTitle: 'Filesystem check (fsck)',
       fsckCheck: 'Check only (read-only)',
       fsckRepair: 'Repair errors automatically',
@@ -418,6 +484,29 @@ export default function StorageManagerDashboard() {
       runFsck: 'Run check',
       selectPartitionFsck: 'Select unmounted partition',
       noFsckCandidates: 'No unmounted partitions with a supported filesystem.',
+      diskMap: 'Disk map',
+      partitionList: 'Partition list',
+      operations: 'Operations',
+      unallocated: 'Unallocated',
+      deletePartition: 'Delete partition',
+      resizePartition: 'Move / resize',
+      changeLabel: 'Change label',
+      setBoot: 'Set boot / ESP',
+      clearBoot: 'Clear boot flag',
+      properties: 'Device',
+      partitionTable: 'Table',
+      capacity: 'Capacity',
+      unused: 'Unused',
+      type: 'Type',
+      status: 'Status',
+      mounted: 'Mounted',
+      unmounted: 'Unmounted',
+      boot: 'Boot',
+      deleteWarning: 'Deleting a partition erases all data on it permanently.',
+      resizeHint: 'New end position (e.g. 100% or 500GiB). Unmount first to shrink.',
+      cancel: 'Cancel',
+      loadingLayout: 'Loading partition layout…',
+      protectedNote: 'System disk — partition changes blocked.',
     },
     vi: {
       title: 'Quản lý Lưu trữ',
@@ -525,6 +614,22 @@ export default function StorageManagerDashboard() {
       activeAlerts: 'Cảnh báo đang hoạt động',
       noAlerts: 'Không có cảnh báo lưu trữ.',
       selectDrive: 'Chọn ổ đĩa',
+      healthPercent: 'Sức khỏe',
+      hostReads: 'Đã đọc',
+      hostWrites: 'Đã ghi',
+      powerCycles: 'Chu kỳ nguồn',
+      diskBenchmark: 'Test tốc độ ổ đĩa',
+      benchmarkHint: 'Đọc/ghi tuần tự & ngẫu nhiên 4K (kiểu CrystalDiskMark). Ghi dùng phân vùng dữ liệu chưa mount.',
+      runBenchmark: 'Chạy test tốc độ',
+      benchmarkRunning: 'Đang chạy benchmark…',
+      seqRead: 'Đọc tuần tự',
+      seqWrite: 'Ghi tuần tự',
+      rand4kRead: 'Đọc 4K ngẫu nhiên',
+      rand4kWrite: 'Ghi 4K ngẫu nhiên',
+      benchmarkSkipped: 'Bỏ qua',
+      profileQuick: 'Nhanh (~30 giây)',
+      profileStandard: 'Đầy đủ (~60 giây)',
+      refreshSmart: 'Làm mới SMART',
       fsckTitle: 'Kiểm tra / sửa lỗi filesystem (fsck)',
       fsckCheck: 'Chỉ kiểm tra (read-only)',
       fsckRepair: 'Tự động sửa lỗi',
@@ -533,6 +638,29 @@ export default function StorageManagerDashboard() {
       runFsck: 'Chạy kiểm tra',
       selectPartitionFsck: 'Chọn phân vùng chưa mount',
       noFsckCandidates: 'Không có phân vùng chưa mount hỗ trợ fsck.',
+      diskMap: 'Sơ đồ ổ đĩa',
+      partitionList: 'Danh sách phân vùng',
+      operations: 'Thao tác',
+      unallocated: 'Chưa phân bổ',
+      deletePartition: 'Xóa phân vùng',
+      resizePartition: 'Di chuyển / thay đổi kích thước',
+      changeLabel: 'Đổi nhãn',
+      setBoot: 'Đặt boot / ESP',
+      clearBoot: 'Bỏ cờ boot',
+      properties: 'Thiết bị',
+      partitionTable: 'Bảng phân vùng',
+      capacity: 'Dung lượng',
+      unused: 'Còn trống',
+      type: 'Loại',
+      status: 'Trạng thái',
+      mounted: 'Đã mount',
+      unmounted: 'Chưa mount',
+      boot: 'Boot',
+      deleteWarning: 'Xóa phân vùng sẽ xóa vĩnh viễn mọi dữ liệu trên đó.',
+      resizeHint: 'Vị trí kết thúc mới (vd. 100% hoặc 500GiB). Gỡ mount trước khi thu nhỏ.',
+      cancel: 'Hủy',
+      loadingLayout: 'Đang tải bố cục phân vùng…',
+      protectedNote: 'Ổ hệ thống — không cho sửa phân vùng.',
     },
   };
 
@@ -612,6 +740,61 @@ export default function StorageManagerDashboard() {
   useEffect(() => {
     loadAll();
   }, [loadAll, language]);
+
+  const loadSmartDetail = useCallback(async (diskName: string) => {
+    setSmartLoading(diskName);
+    try {
+      const data = await fetchJson<SmartInfo>(`/api/storage_manager/disks/${encodeURIComponent(diskName)}/smart`);
+      setSmartDetails((prev) => ({ ...prev, [diskName]: data }));
+    } catch {
+      /* keep summary from list */
+    } finally {
+      setSmartLoading(null);
+    }
+  }, [fetchJson]);
+
+  useEffect(() => {
+    if (expandedDisk) {
+      loadSmartDetail(expandedDisk);
+    }
+  }, [expandedDisk, loadSmartDetail]);
+
+  const pollBenchmark = useCallback(async (diskName: string) => {
+    const data = await fetchJson<BenchmarkStatus>(
+      `/api/storage_manager/disks/${encodeURIComponent(diskName)}/benchmark`,
+    );
+    setBenchmarkStatus(data);
+    return data;
+  }, [fetchJson]);
+
+  const startBenchmark = useCallback(async (diskName: string) => {
+    setBenchmarkDisk(diskName);
+    setBenchmarkStatus({ status: 'running', progress: 5 });
+    try {
+      await postJson(`/api/storage_manager/disks/${encodeURIComponent(diskName)}/benchmark`, {
+        profile: benchmarkProfile,
+      });
+      const poll = async () => {
+        try {
+          const st = await pollBenchmark(diskName);
+          if (st.status === 'running') {
+            window.setTimeout(poll, 1500);
+          }
+        } catch (err) {
+          setBenchmarkStatus({
+            status: 'failed',
+            error: err instanceof Error ? err.message : 'Benchmark poll failed',
+          });
+        }
+      };
+      poll();
+    } catch (err) {
+      setBenchmarkStatus({
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Failed to start benchmark',
+      });
+    }
+  }, [benchmarkProfile, pollBenchmark, postJson]);
 
   const health = overview?.health || 'healthy';
   const hs = healthStyles(health, isDark);
@@ -839,90 +1022,168 @@ export default function StorageManagerDashboard() {
           )}
 
           {tab === 'disks' && (
-            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white shadow-sm'}`}>
-              {disks.length === 0 ? (
-                <p className={`p-8 text-center text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.noDisks}</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className={`uppercase tracking-wider text-[10px] font-bold ${isDark ? 'bg-slate-950/70 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
-                      <tr>
-                        <th className="p-3">{tr.diskName}</th>
-                        <th className="p-3">{tr.model}</th>
-                        <th className="p-3">{tr.size}</th>
-                        <th className="p-3">{tr.transport}</th>
-                        <th className="p-3">{tr.health}</th>
-                        <th className="p-3 text-center">{tr.partitions}</th>
-                      </tr>
-                    </thead>
-                    <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
-                      {disks.map((disk) => {
-                        const badge = smartBadge(disk.smart, isDark);
-                        const open = expandedDisk === disk.name;
-                        return (
-                          <Fragment key={disk.name}>
-                            <tr
-                              onClick={() => setExpandedDisk(open ? null : disk.name)}
-                              className={`cursor-pointer transition ${isDark ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50'}`}
+            <div className="space-y-4">
+              <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white shadow-sm'}`}>
+                <PartitionWizard
+                  disks={disks}
+                  language={language || 'en'}
+                  isDark={isDark}
+                  actionLoading={actionLoading}
+                  formatBytes={formatBytes}
+                  fetchJson={fetchJson}
+                  runAction={runAction}
+                  postJson={postJson}
+                  tr={{
+                    diskMap: tr.diskMap,
+                    partitionList: tr.partitionList,
+                    operations: tr.operations,
+                    unallocated: tr.unallocated,
+                    selectPartition: tr.selectPartition,
+                    capacity: tr.capacity,
+                    unused: tr.unused,
+                    type: tr.type,
+                    status: tr.status,
+                    mounted: tr.mounted,
+                    unmounted: tr.unmounted,
+                    boot: tr.boot,
+                    createPartition: tr.createPartition,
+                    formatPartition: tr.formatPartition,
+                    deletePartition: tr.deletePartition,
+                    resizePartition: tr.resizePartition,
+                    changeLabel: tr.changeLabel,
+                    setBoot: tr.setBoot,
+                    clearBoot: tr.clearBoot,
+                    mountVolume: tr.mountVolume,
+                    unmountVolume: tr.unmountVolume,
+                    properties: tr.properties,
+                    partitionTable: tr.partitionTable,
+                    confirmPartName: tr.confirmPartName,
+                    dataLossWarning: tr.dataLossWarning,
+                    deleteWarning: tr.deleteWarning,
+                    resizeHint: tr.resizeHint,
+                    growFilesystem: tr.growFilesystem,
+                    runAction: tr.runAction,
+                    cancel: tr.cancel,
+                    labelOptional: tr.labelOptional,
+                    initGpt: tr.initGpt,
+                    start: tr.start,
+                    end: tr.end,
+                    noDisks: tr.noDisks,
+                    loadingLayout: tr.loadingLayout,
+                    systemDisk: tr.systemDisk,
+                    protectedNote: tr.protectedNote,
+                    selectDisk: tr.selectDisk,
+                    mountpoint: tr.mountpoint,
+                    persistFstab: tr.persistFstab,
+                    removeFstab: tr.removeFstab,
+                  }}
+                />
+              </div>
+
+              {disks.length > 0 && (
+                <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white shadow-sm'}`}>
+                  <div className={`px-4 py-3 border-b flex flex-wrap items-center justify-between gap-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                    <p className="text-xs font-bold uppercase tracking-wider opacity-70">SMART &amp; {tr.diskBenchmark}</p>
+                    <select
+                      value={expandedDisk || disks[0]?.name || ''}
+                      onChange={(e) => setExpandedDisk(e.target.value)}
+                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-200'}`}
+                    >
+                      {disks.map((d) => (
+                        <option key={d.name} value={d.name}>{d.name} — {d.model}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(() => {
+                    const diskName = expandedDisk || disks[0]?.name;
+                    const disk = disks.find((d) => d.name === diskName);
+                    if (!disk) return null;
+                    const sm = smartDetails[disk.name] || disk.smart;
+                    const benchActive = benchmarkDisk === disk.name ? benchmarkStatus : null;
+                    const badge = smartBadge(disk.smart, isDark);
+                    return (
+                      <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div className={`rounded-xl border p-3 space-y-3 lg:col-span-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-bold ${badge.cls}`}>{badge.label}</span>
+                              <span className="font-mono text-xs font-bold">{disk.name}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => loadSmartDetail(disk.name)}
+                              className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-200 hover:bg-slate-100'}`}
                             >
-                              <td className="p-3">
-                                <div className="flex items-center gap-2">
-                                  {open ? <Icons.ChevronDown className="w-3.5 h-3.5" /> : <Icons.ChevronRight className="w-3.5 h-3.5" />}
-                                  <span className="font-mono font-bold">{disk.name}</span>
-                                  {disk.is_system_disk && (
-                                    <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold ${isDark ? 'border-blue-500/30 text-blue-300 bg-blue-500/10' : 'border-blue-200 text-blue-700 bg-blue-50'}`}>
-                                      {tr.systemDisk}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className={`p-3 max-w-[12rem] truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`} title={disk.model}>{disk.model}</td>
-                              <td className="p-3 font-mono">{formatBytes(disk.size_bytes, language || 'en')}</td>
-                              <td className={`p-3 uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{disk.transport || (disk.rotational ? 'hdd' : 'ssd')}</td>
-                              <td className="p-3">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-bold ${badge.cls}`}>{badge.label}</span>
-                              </td>
-                              <td className="p-3 text-center">{disk.partitions.length}</td>
-                            </tr>
-                            {open && (
-                              <tr className={isDark ? 'bg-slate-950/50' : 'bg-slate-50/80'}>
-                                <td colSpan={6} className="p-4">
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className={`rounded-xl border p-3 space-y-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-                                      <p className="font-bold text-[11px] uppercase tracking-wider opacity-70">SMART</p>
-                                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                                        <div><span className="opacity-60">{tr.temperature}:</span> {disk.smart.temperature_c != null ? `${disk.smart.temperature_c}°C` : '—'}</div>
-                                        <div><span className="opacity-60">{tr.powerOn}:</span> {disk.smart.power_on_hours != null ? disk.smart.power_on_hours : '—'}</div>
-                                        <div><span className="opacity-60">{tr.reallocated}:</span> {disk.smart.reallocated_sectors != null ? disk.smart.reallocated_sectors : '—'}</div>
-                                        <div className="col-span-2"><span className="opacity-60">{tr.smartMsg}:</span> {disk.smart.message || '—'}</div>
-                                      </div>
-                                    </div>
-                                    <div className={`rounded-xl border p-3 space-y-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-                                      <p className="font-bold text-[11px] uppercase tracking-wider opacity-70">{tr.partitions}</p>
-                                      {disk.partitions.length === 0 ? (
-                                        <p className="text-[11px] opacity-60">—</p>
-                                      ) : (
-                                        <div className="space-y-1.5">
-                                          {disk.partitions.map((part) => (
-                                            <div key={part.name} className={`flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                                              <span>{part.name}</span>
-                                              <span>{formatBytes(part.size_bytes, language || 'en')}</span>
-                                              <span>{displayFstype(part)}</span>
-                                              <span>{part.mountpoint || '—'}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
+                              {smartLoading === disk.name ? '…' : tr.refreshSmart}
+                            </button>
+                          </div>
+                          {sm.health_percent != null && (
+                            <div>
+                              <div className="flex justify-between text-[10px] mb-1">
+                                <span className="opacity-60">{tr.healthPercent}</span>
+                                <span className="font-bold">{sm.health_percent}%</span>
+                              </div>
+                              <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                <div
+                                  className={`h-full rounded-full ${sm.health_percent >= 80 ? 'bg-emerald-500' : sm.health_percent >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                  style={{ width: `${Math.min(100, sm.health_percent)}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
+                            <div><span className="opacity-60">{tr.temperature}:</span> {sm.temperature_c != null ? `${sm.temperature_c}°C` : '—'}</div>
+                            <div><span className="opacity-60">{tr.powerOn}:</span> {formatPowerOnHours(sm.power_on_hours, language || 'en')}</div>
+                            <div><span className="opacity-60">{tr.powerCycles}:</span> {sm.power_cycle_count ?? '—'}</div>
+                            <div><span className="opacity-60">{tr.hostReads}:</span> {formatHostIoGb(sm.host_reads_gb)}</div>
+                            <div><span className="opacity-60">{tr.hostWrites}:</span> {formatHostIoGb(sm.host_writes_gb)}</div>
+                            <div><span className="opacity-60">{tr.reallocated}:</span> {sm.reallocated_sectors ?? '—'}</div>
+                          </div>
+                        </div>
+                        <div className={`rounded-xl border p-3 space-y-3 ${isDark ? 'border-cyan-900/40 bg-cyan-950/10' : 'border-cyan-200 bg-cyan-50/40'}`}>
+                          <p className="font-bold text-[11px] uppercase tracking-wider flex items-center gap-2">
+                            <Icons.Gauge className="w-4 h-4" />
+                            {tr.diskBenchmark}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={benchmarkProfile}
+                              onChange={(e) => setBenchmarkProfile(e.target.value as 'quick' | 'standard')}
+                              className={`rounded-lg border px-3 py-1.5 text-[11px] ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-200'}`}
+                            >
+                              <option value="quick">{tr.profileQuick}</option>
+                              <option value="standard">{tr.profileStandard}</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={actionLoading || benchActive?.status === 'running'}
+                              onClick={() => startBenchmark(disk.name)}
+                              className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-[11px] font-bold"
+                            >
+                              {benchActive?.status === 'running' ? tr.benchmarkRunning : tr.runBenchmark}
+                            </button>
+                          </div>
+                          {benchActive && benchActive.status !== 'not_started' && (
+                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                              {[
+                                { label: tr.seqRead, val: benchActive.results?.seq_read_mibs },
+                                { label: tr.seqWrite, val: benchActive.results?.seq_write_mibs, skip: benchActive.results?.seq_write_skipped },
+                                { label: tr.rand4kRead, val: benchActive.results?.rand4k_read_mibs },
+                                { label: tr.rand4kWrite, val: benchActive.results?.rand4k_write_mibs, skip: benchActive.results?.rand4k_write_skipped },
+                              ].map((item) => (
+                                <div key={item.label} className={`rounded-lg border p-2 ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-white'}`}>
+                                  <div className="opacity-60 text-[10px]">{item.label}</div>
+                                  <div className="font-mono font-bold text-sm mt-0.5">
+                                    {item.skip ? tr.benchmarkSkipped : formatMibs(item.val ?? null)}
                                   </div>
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
