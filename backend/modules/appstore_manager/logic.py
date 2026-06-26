@@ -161,8 +161,9 @@ def _finalize_module_install(
     backend_updated: bool,
     frontend_updated: bool,
     requires_copanel_restart: bool = False,
+    is_new_backend: bool = False,
 ) -> None:
-    """Apply post-install steps without forcing a full copanel service restart."""
+    """Apply post-install steps; restart copanel when hot-reload cannot expose API routes."""
     global BUILD_TASKS
 
     if frontend_updated:
@@ -177,10 +178,16 @@ def _finalize_module_install(
 
     if requires_copanel_restart or pkg_id in COPANEL_RESTART_RECOMMENDED:
         BUILD_TASKS[pkg_id]["logs"].append(
-            f"ℹ️ Backend files updated for «{pkg_id}». "
-            "Restart copanel when convenient if API/installer behavior does not match "
-            "(systemctl restart copanel). No automatic restart."
+            f"🔄 Scheduling copanel restart for «{pkg_id}» (recommended for this module)."
         )
+        restart_backend_service(delay=3.0)
+        return
+
+    if is_new_backend:
+        BUILD_TASKS[pkg_id]["logs"].append(
+            f"🔄 New backend module «{pkg_id}» — scheduling copanel restart to register API routes."
+        )
+        restart_backend_service(delay=3.0)
         return
 
     try:
@@ -190,17 +197,18 @@ def _finalize_module_install(
     except Exception as exc:
         ok, msg = False, str(exc)
 
-    if ok:
+    if ok and _module_api_routes_active(pkg_id):
         BUILD_TASKS[pkg_id]["logs"].append(f"✅ Backend API reloaded for «{pkg_id}» (no copanel restart).")
-        if not _module_api_routes_active(pkg_id):
-            BUILD_TASKS[pkg_id]["logs"].append(
-                f"⚠️ «{pkg_id}» routes not visible after reload — run: systemctl restart copanel"
-            )
+        return
+
+    if ok:
+        BUILD_TASKS[pkg_id]["logs"].append(
+            f"⚠️ «{pkg_id}» routes not visible after hot-reload."
+        )
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
-        BUILD_TASKS[pkg_id]["logs"].append(
-            "ℹ️ Run «systemctl restart copanel» when you need new API routes active."
-        )
+    BUILD_TASKS[pkg_id]["logs"].append("🔄 Scheduling copanel service restart to activate API routes…")
+    restart_backend_service(delay=3.0)
 
 
 def restart_backend_service(delay: float = 2.0):
@@ -232,7 +240,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.18",
+    "appstore_manager": "1.0.19",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -784,8 +792,11 @@ class AppStoreManager:
                     frontend_cwd = project_root / "frontend"
                 
                 if src_backend.exists():
+                    is_new_backend = not (dst_backend / "router.py").is_file()
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
+                else:
+                    is_new_backend = False
                     
                 if src_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
@@ -834,6 +845,7 @@ class AppStoreManager:
                         backend_updated=backend_updated,
                         frontend_updated=frontend_updated,
                         requires_copanel_restart=requires_copanel_restart,
+                        is_new_backend=is_new_backend,
                     )
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
@@ -1001,9 +1013,12 @@ class AppStoreManager:
                     frontend_cwd = project_root / "frontend"
                 
                 if found_backend and found_backend.exists():
+                    is_new_backend = not (dst_backend / "router.py").is_file()
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     dst_backend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
+                else:
+                    is_new_backend = False
                 backend_updated = bool(found_backend and found_backend.exists())
                 frontend_updated = bool(found_frontend and found_frontend.exists())
 
@@ -1059,6 +1074,7 @@ class AppStoreManager:
                         pkg_id,
                         backend_updated=backend_updated,
                         frontend_updated=frontend_updated,
+                        is_new_backend=is_new_backend,
                     )
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
