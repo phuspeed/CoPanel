@@ -17,7 +17,48 @@ from modules.system_monitor.logic import SystemMonitor
 IS_WINDOWS = os.name == "nt"
 
 _SKIP_DISK_PREFIXES = ("loop", "sr", "ram", "zram", "fd", "dm-")
-_ALLOWED_FSTYPES = frozenset({"ext4", "xfs", "btrfs"})
+# Format + mount + fsck support
+_ALLOWED_FSTYPES = frozenset({
+    "ext4", "xfs", "btrfs", "vfat", "exfat", "ntfs", "hfsplus",
+})
+_FSCK_FSTYPES = frozenset({
+    "ext4", "ext3", "ext2", "xfs", "btrfs", "vfat", "exfat", "ntfs", "hfsplus",
+})
+# Recognized on disk (mount / display); APFS is read-only on Linux
+_RECOGNIZED_FSTYPES = _ALLOWED_FSTYPES | frozenset({"apfs", "hfs", "fat", "fat32", "ntfs3"})
+_FSTYPE_ALIASES = {
+    "fat": "vfat",
+    "fat16": "vfat",
+    "fat32": "vfat",
+    "msdos": "vfat",
+    "hfs": "hfsplus",
+    "hfs+": "hfsplus",
+    "ntfs3": "ntfs",
+}
+_MOUNT_FSTYPES = {
+    "vfat": "vfat",
+    "exfat": "exfat",
+    "ntfs": "ntfs-3g",
+    "hfsplus": "hfsplus",
+    "apfs": "apfs",
+}
+_DEFAULT_MOUNT_OPTIONS = {
+    "vfat": "defaults,uid=1000,gid=1000,umask=022",
+    "exfat": "defaults,uid=1000,gid=1000,umask=022",
+    "ntfs": "defaults,uid=1000,gid=1000",
+    "hfsplus": "ro",
+    "apfs": "ro",
+}
+_FSTYPE_LABELS = {
+    "ext4": "ext4 (Linux)",
+    "xfs": "XFS (Linux)",
+    "btrfs": "Btrfs (Linux)",
+    "vfat": "FAT32 / VFAT",
+    "exfat": "exFAT",
+    "ntfs": "NTFS (Windows)",
+    "hfsplus": "HFS+ (macOS)",
+    "apfs": "APFS (Apple, read-only)",
+}
 _PROTECTED_MOUNTS = frozenset({"/", "/boot", "/boot/efi", "/usr", "/var"})
 _DEVICE_RE = re.compile(r"^/dev/(?P<name>[a-z0-9]+)$")
 _FSTAB_PATH = Path("/etc/fstab")
@@ -204,6 +245,33 @@ class StorageService:
             return True
         return any(base.startswith(p) for p in _SKIP_DISK_PREFIXES)
 
+    def _normalize_fstype(self, fstype: Optional[str]) -> Optional[str]:
+        if not fstype:
+            return None
+        key = str(fstype).strip().lower()
+        if not key:
+            return None
+        return _FSTYPE_ALIASES.get(key, key)
+
+    def _probe_fstype(self, device_path: str) -> Optional[str]:
+        if IS_WINDOWS or not shutil.which("blkid"):
+            return None
+        result = self._run(["blkid", "-o", "value", "-s", "TYPE", device_path], timeout=15)
+        if result.returncode != 0:
+            return None
+        return self._normalize_fstype((result.stdout or "").strip())
+
+    def _enrich_partition_fstype(self, part: Dict[str, Any]) -> Dict[str, Any]:
+        path = part.get("path") or ""
+        fstype = self._normalize_fstype(part.get("fstype"))
+        if not fstype and path:
+            fstype = self._probe_fstype(path)
+        if fstype:
+            part = dict(part)
+            part["fstype"] = fstype
+            part["fstype_label"] = _FSTYPE_LABELS.get(fstype, fstype.upper())
+        return part
+
     def _read_sysfs(self, block_name: str, field: str) -> Optional[str]:
         path = f"/sys/block/{block_name}/device/{field}"
         if not os.path.isfile(path):
@@ -304,14 +372,14 @@ class StorageService:
                 continue
             if not self._is_descendant_of_disk(name, disk_name, flat):
                 continue
-            partitions.append({
+            partitions.append(self._enrich_partition_fstype({
                 "name": part.get("name"),
                 "path": f"/dev/{part.get('name')}",
                 "size_bytes": self._parse_size(part.get("size")),
                 "fstype": part.get("fstype") or None,
                 "mountpoint": part.get("mountpoint") or None,
                 "type": part.get("type"),
-            })
+            }))
         partitions.sort(key=lambda p: str(p.get("name") or ""))
         return partitions
 
@@ -524,7 +592,11 @@ class StorageService:
             volumes.append({
                 "device": part.get("device"),
                 "mountpoint": mp,
-                "fstype": part.get("fstype"),
+                "fstype": self._normalize_fstype(part.get("fstype")) or part.get("fstype"),
+                "fstype_label": _FSTYPE_LABELS.get(
+                    self._normalize_fstype(part.get("fstype")) or "",
+                    (part.get("fstype") or "").upper(),
+                ),
                 "total": int(part.get("total") or 0),
                 "used": int(part.get("used") or 0),
                 "free": int(part.get("free") or 0),
@@ -824,7 +896,8 @@ class StorageService:
         device, name = self._normalize_device(device)
         if confirm_token != name:
             raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
-        if fstype not in _ALLOWED_FSTYPES:
+        norm = self._normalize_fstype(fstype) or fstype
+        if norm not in _ALLOWED_FSTYPES:
             raise StorageManagerError(f"Unsupported filesystem: {fstype}", code="invalid_fstype")
 
         if IS_WINDOWS:
@@ -832,27 +905,50 @@ class StorageService:
 
         self._assert_partition_target(name)
         self._require_linux_mutations()
-        if fstype == "ext4":
+        norm = self._normalize_fstype(fstype) or fstype
+        if norm == "ext4":
             cmd = ["mkfs.ext4", "-F"]
             if label:
                 cmd.extend(["-L", label])
             cmd.append(device)
-        elif fstype == "xfs":
+        elif norm == "xfs":
             cmd = ["mkfs.xfs", "-f"]
             if label:
                 cmd.extend(["-L", label])
             cmd.append(device)
-        else:
+        elif norm == "btrfs":
             cmd = ["mkfs.btrfs", "-f"]
             if label:
                 cmd.extend(["-L", label])
             cmd.append(device)
+        elif norm == "vfat":
+            cmd = ["mkfs.vfat", "-F", "32"]
+            if label:
+                cmd.extend(["-n", label[:11]])
+            cmd.append(device)
+        elif norm == "exfat":
+            cmd = ["mkfs.exfat"]
+            if label:
+                cmd.extend(["-n", label[:15]])
+            cmd.append(device)
+        elif norm == "ntfs":
+            cmd = ["mkfs.ntfs", "-F"]
+            if label:
+                cmd.extend(["-L", label[:32]])
+            cmd.append(device)
+        elif norm == "hfsplus":
+            cmd = ["mkfs.hfsplus"]
+            if label:
+                cmd.extend(["-v", label[:27]])
+            cmd.append(device)
+        else:
+            raise StorageManagerError(f"Unsupported filesystem: {fstype}", code="invalid_fstype")
 
         if not shutil.which(cmd[0]):
             raise StorageManagerError(f"{cmd[0]} not installed.", code="mkfs_missing")
 
-        self._run_ok(cmd, f"Failed to format {device} as {fstype}", code="format_failed", timeout=600)
-        return {"message": f"Formatted {device} as {fstype}", "device": device, "fstype": fstype}
+        self._run_ok(cmd, f"Failed to format {device} as {norm}", code="format_failed", timeout=600)
+        return {"message": f"Formatted {device} as {norm}", "device": device, "fstype": norm}
 
     def mount_device(
         self,
@@ -873,7 +969,9 @@ class StorageService:
         if row and row.get("mountpoint"):
             raise StorageManagerError("Device is already mounted.", code="device_mounted")
 
-        use_fstype = (fstype or (row or {}).get("fstype") or "").strip()
+        use_fstype = self._normalize_fstype(fstype or (row or {}).get("fstype")) or ""
+        if not use_fstype:
+            use_fstype = self._probe_fstype(device) or ""
         if not use_fstype:
             raise StorageManagerError("Filesystem type is required.", code="invalid_fstype")
 
@@ -882,20 +980,114 @@ class StorageService:
 
         self._require_linux_mutations()
         os.makedirs(mountpoint, exist_ok=True)
-        self._run_ok(
-            ["mount", "-t", use_fstype, "-o", options or "defaults", device, mountpoint],
-            "Mount failed",
-            code="mount_failed",
-        )
+        opts = (options or "").strip() or _DEFAULT_MOUNT_OPTIONS.get(use_fstype, "defaults")
+        mount_cmd = self._mount_command(use_fstype, device, mountpoint, opts)
+        self._run_ok(mount_cmd, "Mount failed", code="mount_failed")
+        fstab_type = _MOUNT_FSTYPES.get(use_fstype, use_fstype)
         if persist_fstab:
             uuid = self._device_uuid(device)
-            self._fstab_add(uuid, mountpoint, use_fstype, options or "defaults")
+            self._fstab_add(uuid, mountpoint, fstab_type, opts)
 
         return {
             "message": f"Mounted {device} at {mountpoint}",
             "device": device,
             "mountpoint": mountpoint,
             "persist_fstab": persist_fstab,
+        }
+
+    def _mount_command(self, fstype: str, device: str, mountpoint: str, options: str) -> List[str]:
+        norm = self._normalize_fstype(fstype) or fstype
+        if norm == "ntfs" and shutil.which("ntfs-3g"):
+            return ["ntfs-3g", "-o", options, device, mountpoint]
+        mount_type = _MOUNT_FSTYPES.get(norm, norm)
+        return ["mount", "-t", mount_type, "-o", options, device, mountpoint]
+
+    def _fsck_command(self, fstype: str, device: str, repair: bool) -> List[str]:
+        norm = self._normalize_fstype(fstype) or fstype
+        if norm in ("ext4", "ext3", "ext2"):
+            tool = shutil.which(f"fsck.{norm}") or shutil.which("fsck")
+            if not tool:
+                raise StorageManagerError("e2fsprogs (fsck) not installed.", code="fsck_missing")
+            return [tool, "-y" if repair else "-n", device]
+        if norm == "xfs":
+            if not shutil.which("xfs_repair"):
+                raise StorageManagerError("xfsprogs (xfs_repair) not installed.", code="fsck_missing")
+            return ["xfs_repair", device] if repair else ["xfs_repair", "-n", device]
+        if norm == "btrfs":
+            if not shutil.which("btrfs"):
+                raise StorageManagerError("btrfs-progs not installed.", code="fsck_missing")
+            if repair:
+                return ["btrfs", "check", "--repair", device]
+            return ["btrfs", "check", device]
+        if norm == "vfat":
+            tool = shutil.which("fsck.vfat") or shutil.which("dosfsck")
+            if not tool:
+                raise StorageManagerError("dosfstools (fsck.vfat) not installed.", code="fsck_missing")
+            return [tool, "-a" if repair else "-n", device]
+        if norm == "exfat":
+            tool = shutil.which("fsck.exfat") or shutil.which("exfatfsck")
+            if not tool:
+                raise StorageManagerError("exfatprogs not installed.", code="fsck_missing")
+            return [tool, "-y" if repair else "-n", device]
+        if norm == "ntfs":
+            tool = shutil.which("ntfsfix") or shutil.which("ntfsck")
+            if not tool:
+                raise StorageManagerError("ntfs-3g (ntfsfix) not installed.", code="fsck_missing")
+            if tool.endswith("ntfsfix"):
+                return [tool, device] if repair else [tool, "-n", device]
+            return [tool, device]
+        if norm == "hfsplus":
+            tool = shutil.which("fsck.hfsplus")
+            if not tool:
+                raise StorageManagerError("hfsprogs not installed.", code="fsck_missing")
+            return [tool, "-y" if repair else "-n", device]
+        raise StorageManagerError(f"Filesystem check not supported for {fstype}", code="invalid_fstype")
+
+    def check_filesystem(self, device: str, repair: bool, confirm_token: str) -> Dict[str, Any]:
+        device, name = self._normalize_device(device)
+        if confirm_token != name:
+            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+
+        row = self._find_block(name)
+        if row and row.get("mountpoint"):
+            raise StorageManagerError("Unmount the partition before running filesystem check.", code="device_mounted")
+
+        fstype = self._normalize_fstype((row or {}).get("fstype")) or self._probe_fstype(device)
+        if not fstype:
+            raise StorageManagerError("Could not detect filesystem type.", code="invalid_fstype")
+        if fstype not in _FSCK_FSTYPES:
+            raise StorageManagerError(f"Check/repair not supported for {fstype}", code="invalid_fstype")
+
+        if IS_WINDOWS:
+            action = "repair" if repair else "check"
+            msg = f"Mock fsck {action} on {device} ({fstype})"
+            self._append_maintenance_event("fsck", device, msg)
+            return {"message": msg, "device": device, "fstype": fstype, "repair": repair, "output": msg}
+
+        self._require_linux_mutations()
+        parent = self._parent_disk_name(name)
+        if parent:
+            disk = self._disk_record(parent)
+            if disk.get("is_system_disk"):
+                raise StorageManagerError("Filesystem check blocked on system disk partitions.", code="protected_disk")
+
+        cmd = self._fsck_command(fstype, device, repair)
+        result = self._run(cmd, timeout=3600)
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        # fsck often exits 1 when errors were corrected
+        if result.returncode not in (0, 1):
+            raise StorageManagerError(output or "Filesystem check failed", code="fsck_failed")
+
+        action = "repair" if repair else "check"
+        msg = f"Filesystem {action} completed on {device} ({fstype})"
+        self._append_maintenance_event("fsck", device, msg)
+        return {
+            "message": msg,
+            "device": device,
+            "fstype": fstype,
+            "repair": repair,
+            "exit_code": result.returncode,
+            "output": output,
         }
 
     def unmount_device(self, mountpoint: str, remove_fstab: bool) -> Dict[str, Any]:
@@ -1344,6 +1536,22 @@ class StorageService:
         disks = self.list_disks()
         volumes = self.list_volumes()
         pools = self.list_pools()
+        fsck_partitions: List[Dict[str, Any]] = []
+        for disk in disks:
+            for part in disk.get("partitions") or []:
+                fst = self._normalize_fstype(part.get("fstype"))
+                if not fst or fst not in _FSCK_FSTYPES:
+                    continue
+                if part.get("mountpoint"):
+                    continue
+                fsck_partitions.append({
+                    "path": part.get("path"),
+                    "name": part.get("name"),
+                    "fstype": fst,
+                    "fstype_label": part.get("fstype_label") or _FSTYPE_LABELS.get(fst, fst),
+                    "disk": disk.get("name"),
+                    "is_system_disk": disk.get("is_system_disk", False),
+                })
         return {
             "smart_disks": [
                 {"name": d.get("name"), "model": d.get("model"), "is_system_disk": d.get("is_system_disk")}
@@ -1355,6 +1563,7 @@ class StorageService:
                 if (v.get("fstype") or "").lower() == "btrfs"
             ],
             "raid_arrays": pools.get("raid", {}).get("arrays") or [],
+            "fsck_partitions": fsck_partitions,
         }
 
     def run_smart_test(self, disk_name: str, test_type: str) -> Dict[str, Any]:

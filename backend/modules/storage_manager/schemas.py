@@ -16,7 +16,7 @@ class CreatePartitionRequest(BaseModel):
 
 class FormatRequest(BaseModel):
     device: str = Field(..., description="e.g. /dev/sdb1")
-    fstype: Literal["ext4", "xfs", "btrfs"] = "ext4"
+    fstype: Literal["ext4", "xfs", "btrfs", "vfat", "exfat", "ntfs", "hfsplus"] = "ext4"
     label: Optional[str] = Field(None, max_length=32)
     confirm_token: str = Field(..., min_length=1, max_length=32)
 
@@ -73,3 +73,9 @@ class BtrfsScrubRequest(BaseModel):
 
 class RaidCheckRequest(BaseModel):
     md_device: str = Field(..., description="e.g. /dev/md0")
+
+
+class FsckRequest(BaseModel):
+    device: str = Field(..., description="e.g. /dev/sdb1")
+    repair: bool = Field(False, description="Attempt automatic repair (fsck -y / xfs_repair)")
+    confirm_token: str = Field(..., min_length=1, max_length=32)

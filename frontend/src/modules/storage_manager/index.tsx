@@ -23,7 +23,9 @@ interface PartitionInfo {
   path: string;
   size_bytes: number;
   fstype?: string | null;
+  fstype_label?: string | null;
   mountpoint?: string | null;
+  type?: string;
 }
 
 interface DiskInfo {
@@ -45,6 +47,7 @@ interface VolumeInfo {
   device: string;
   mountpoint: string;
   fstype: string;
+  fstype_label?: string;
   total: number;
   used: number;
   free: number;
@@ -123,6 +126,35 @@ interface MaintenanceTargets {
   smart_disks: Array<{ name: string; model: string; is_system_disk: boolean }>;
   btrfs_volumes: Array<{ mountpoint: string; device: string }>;
   raid_arrays: RaidArrayInfo[];
+  fsck_partitions?: Array<{
+    path: string;
+    name: string;
+    fstype: string;
+    fstype_label?: string;
+    disk: string;
+    is_system_disk: boolean;
+  }>;
+}
+
+type FormatFsType = 'ext4' | 'xfs' | 'btrfs' | 'vfat' | 'exfat' | 'ntfs' | 'hfsplus';
+
+const FORMAT_FS_OPTIONS: { value: FormatFsType; label: string }[] = [
+  { value: 'ext4', label: 'ext4 (Linux)' },
+  { value: 'xfs', label: 'XFS (Linux)' },
+  { value: 'btrfs', label: 'Btrfs (Linux)' },
+  { value: 'vfat', label: 'FAT32 / VFAT' },
+  { value: 'exfat', label: 'exFAT' },
+  { value: 'ntfs', label: 'NTFS (Windows)' },
+  { value: 'hfsplus', label: 'HFS+ (macOS)' },
+];
+
+const MOUNT_FS_OPTIONS = [
+  ...FORMAT_FS_OPTIONS,
+  { value: 'apfs', label: 'APFS (Apple, read-only)' },
+];
+
+function displayFstype(item: { fstype?: string | null; fstype_label?: string | null }): string {
+  return item.fstype_label || item.fstype || '—';
 }
 
 interface StorageAlert {
@@ -231,7 +263,7 @@ export default function StorageManagerDashboard() {
   const [partConfirm, setPartConfirm] = useState('');
 
   const [formatDevice, setFormatDevice] = useState('');
-  const [formatFs, setFormatFs] = useState<'ext4' | 'xfs' | 'btrfs'>('ext4');
+  const [formatFs, setFormatFs] = useState<FormatFsType>('ext4');
   const [formatLabel, setFormatLabel] = useState('');
   const [formatConfirm, setFormatConfirm] = useState('');
 
@@ -267,6 +299,9 @@ export default function StorageManagerDashboard() {
   const [smartTestType, setSmartTestType] = useState<'short' | 'long'>('short');
   const [scrubMount, setScrubMount] = useState('');
   const [raidCheckDev, setRaidCheckDev] = useState('');
+  const [fsckDevice, setFsckDevice] = useState('');
+  const [fsckRepair, setFsckRepair] = useState(false);
+  const [fsckConfirm, setFsckConfirm] = useState('');
 
   const t = {
     en: {
@@ -375,6 +410,14 @@ export default function StorageManagerDashboard() {
       activeAlerts: 'Active alerts',
       noAlerts: 'No storage alerts.',
       selectDrive: 'Select drive',
+      fsckTitle: 'Filesystem check (fsck)',
+      fsckCheck: 'Check only (read-only)',
+      fsckRepair: 'Repair errors automatically',
+      fsckConfirm: 'Type partition name to confirm',
+      fsckUnmountNote: 'Partition must be unmounted. System disk partitions are blocked.',
+      runFsck: 'Run check',
+      selectPartitionFsck: 'Select unmounted partition',
+      noFsckCandidates: 'No unmounted partitions with a supported filesystem.',
     },
     vi: {
       title: 'Quản lý Lưu trữ',
@@ -414,74 +457,82 @@ export default function StorageManagerDashboard() {
       lsblk: 'lsblk (util-linux)',
       smartctl: 'smartmontools (smartctl)',
       parted: 'parted',
-      adminNote: 'Thao tac pha hoai can superadmin. O he thong va mount (/ , /boot, CoPanel) duoc bao ve.',
-      manage: 'Quan ly',
-      adminOnly: 'Chi superadmin',
-      createPartition: 'Tao phan vung',
-      formatPartition: 'Dinh dang phan vung',
+      adminNote: 'Thao tác phá hoại cần superadmin. Ổ hệ thống và mount (/, /boot, CoPanel) được bảo vệ.',
+      manage: 'Quản lý',
+      adminOnly: 'Chỉ superadmin',
+      createPartition: 'Tạo phân vùng',
+      formatPartition: 'Định dạng phân vùng',
       mountVolume: 'Mount volume',
       unmountVolume: 'Gỡ mount',
-      selectDisk: 'Chon o dia',
-      selectPartition: 'Chon phan vung',
-      selectMount: 'Chon diem mount',
-      start: 'Bat dau',
-      end: 'Ket thuc',
-      initGpt: 'Khoi tao GPT cho o moi',
-      confirmDiskName: 'Nhap ten o de xac nhan',
-      confirmPartName: 'Nhap ten phan vung de xac nhan',
-      labelOptional: 'Nhan (tuy chon)',
-      mountpoint: 'Diem mount',
-      options: 'Tuy chon mount',
-      persistFstab: 'Them vao /etc/fstab',
-      removeFstab: 'Xoa khoi /etc/fstab',
-      runAction: 'Thuc hien',
-      fstabTitle: 'Muc /etc/fstab',
-      dataLossWarning: 'Dinh dang se xoa vinh vien moi du lieu tren phan vung.',
-      success: 'Thanh cong',
-      noCandidateDisk: 'Khong co o du lieu kha dung.',
-      noCandidatePart: 'Khong co phan vung chua mount tren o du lieu.',
+      selectDisk: 'Chọn ổ đĩa',
+      selectPartition: 'Chọn phân vùng',
+      selectMount: 'Chọn điểm mount',
+      start: 'Bắt đầu',
+      end: 'Kết thúc',
+      initGpt: 'Khởi tạo GPT cho ổ mới',
+      confirmDiskName: 'Nhập tên ổ để xác nhận',
+      confirmPartName: 'Nhập tên phân vùng để xác nhận',
+      labelOptional: 'Nhãn (tùy chọn)',
+      mountpoint: 'Điểm mount',
+      options: 'Tùy chọn mount',
+      persistFstab: 'Thêm vào /etc/fstab',
+      removeFstab: 'Xóa khỏi /etc/fstab',
+      runAction: 'Thực hiện',
+      fstabTitle: 'Mục /etc/fstab',
+      dataLossWarning: 'Định dạng sẽ xóa vĩnh viễn mọi dữ liệu trên phân vùng.',
+      success: 'Thành công',
+      noCandidateDisk: 'Không có ổ dữ liệu khả dụng.',
+      noCandidatePart: 'Không có phân vùng chưa mount trên ổ dữ liệu.',
       pools: 'Pool',
-      lvmTitle: 'Pool luu tru LVM',
-      raidTitle: 'RAID phan mem (mdadm)',
+      lvmTitle: 'Pool lưu trữ LVM',
+      raidTitle: 'RAID phần mềm (mdadm)',
       volumeGroups: 'Volume group',
       logicalVolumes: 'Logical volume',
       physicalVolumes: 'Physical volume',
-      raidArrays: 'Mang RAID',
-      noVg: 'Chua co volume group.',
-      noLv: 'Chua co logical volume.',
-      noRaid: 'Khong phat hien mang RAID.',
-      createVg: 'Tao volume group',
-      createLv: 'Tao logical volume',
-      extendLv: 'Mo rong logical volume',
-      createRaid: 'Tao mang RAID',
-      vgName: 'Ten volume group',
-      lvName: 'Ten logical volume',
-      lvSize: 'Dung luong (100G hoac 100%FREE)',
-      selectDevices: 'Chon thiet bi',
-      raidLevel: 'Cap RAID',
-      confirmVgName: 'Nhap ten VG de xac nhan',
-      confirmLvPath: 'Nhap vg_name/lv_name de xac nhan',
-      confirmRaid: 'Nhap CREATE-RAID de xac nhan',
-      growFilesystem: 'Mo rong filesystem sau extend',
-      vgFree: 'con trong',
-      raidConfirmWarning: 'Tao RAID se xoa du lieu tren cac thiet bi da chon.',
+      raidArrays: 'Mảng RAID',
+      noVg: 'Chưa có volume group.',
+      noLv: 'Chưa có logical volume.',
+      noRaid: 'Không phát hiện mảng RAID.',
+      createVg: 'Tạo volume group',
+      createLv: 'Tạo logical volume',
+      extendLv: 'Mở rộng logical volume',
+      createRaid: 'Tạo mảng RAID',
+      vgName: 'Tên volume group',
+      lvName: 'Tên logical volume',
+      lvSize: 'Dung lượng (100G hoặc 100%FREE)',
+      selectDevices: 'Chọn thiết bị',
+      raidLevel: 'Cấp RAID',
+      confirmVgName: 'Nhập tên VG để xác nhận',
+      confirmLvPath: 'Nhập vg_name/lv_name để xác nhận',
+      confirmRaid: 'Nhập CREATE-RAID để xác nhận',
+      growFilesystem: 'Mở rộng filesystem sau extend',
+      vgFree: 'còn trống',
+      raidConfirmWarning: 'Tạo RAID sẽ xóa dữ liệu trên các thiết bị đã chọn.',
       lvm: 'lvm2',
       mdadm: 'mdadm',
       maintenance: 'Bảo trì',
-      maintenanceTitle: 'Kiem tra suc khoe o & scrub',
+      maintenanceTitle: 'Kiểm tra sức khỏe ổ & scrub',
       smartTest: 'SMART self-test',
-      smartShort: 'Test ngan (~2 phut)',
-      smartLong: 'Test dai (nhieu gio)',
+      smartShort: 'Test ngắn (~2 phút)',
+      smartLong: 'Test dài (nhiều giờ)',
       btrfsScrub: 'Btrfs scrub',
-      raidCheck: 'Kiem tra RAID',
-      runTest: 'Bat dau test',
-      runScrub: 'Bat dau scrub',
-      runRaidCheck: 'Bat dau kiem tra',
-      maintenanceHistory: 'Bao tri gan day',
-      noHistory: 'Chua co thao tac bao tri.',
-      activeAlerts: 'Canh bao dang hoat dong',
-      noAlerts: 'Khong co canh bao luu tru.',
-      selectDrive: 'Chon o dia',
+      raidCheck: 'Kiểm tra RAID',
+      runTest: 'Bắt đầu test',
+      runScrub: 'Bắt đầu scrub',
+      runRaidCheck: 'Bắt đầu kiểm tra',
+      maintenanceHistory: 'Bảo trì gần đây',
+      noHistory: 'Chưa có thao tác bảo trì.',
+      activeAlerts: 'Cảnh báo đang hoạt động',
+      noAlerts: 'Không có cảnh báo lưu trữ.',
+      selectDrive: 'Chọn ổ đĩa',
+      fsckTitle: 'Kiểm tra / sửa lỗi filesystem (fsck)',
+      fsckCheck: 'Chỉ kiểm tra (read-only)',
+      fsckRepair: 'Tự động sửa lỗi',
+      fsckConfirm: 'Nhập tên phân vùng để xác nhận',
+      fsckUnmountNote: 'Phân vùng phải đã gỡ mount. Phân vùng ổ hệ thống bị chặn.',
+      runFsck: 'Chạy kiểm tra',
+      selectPartitionFsck: 'Chọn phân vùng chưa mount',
+      noFsckCandidates: 'Không có phân vùng chưa mount hỗ trợ fsck.',
     },
   };
 
@@ -765,7 +816,7 @@ export default function StorageManagerDashboard() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className={`font-bold text-sm truncate ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{vol.mountpoint}</p>
-                            <p className={`text-[11px] font-mono truncate ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{vol.device} · {vol.fstype}</p>
+                            <p className={`text-[11px] font-mono truncate ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{vol.device} · {displayFstype(vol)}</p>
                           </div>
                           <Icons.CheckCircle2 className={`w-5 h-5 shrink-0 ${vol.percent >= 95 ? 'text-red-500' : vol.percent >= 85 ? 'text-amber-500' : isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
                         </div>
@@ -856,7 +907,7 @@ export default function StorageManagerDashboard() {
                                             <div key={part.name} className={`flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                                               <span>{part.name}</span>
                                               <span>{formatBytes(part.size_bytes, language || 'en')}</span>
-                                              <span>{part.fstype || '—'}</span>
+                                              <span>{displayFstype(part)}</span>
                                               <span>{part.mountpoint || '—'}</span>
                                             </div>
                                           ))}
@@ -899,7 +950,7 @@ export default function StorageManagerDashboard() {
                         <tr key={`${vol.device}-${vol.mountpoint}`} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}>
                           <td className={`p-3 font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{vol.mountpoint}</td>
                           <td className="p-3 font-mono">{vol.device}</td>
-                          <td className="p-3">{vol.fstype}</td>
+                          <td className="p-3">{displayFstype(vol)}</td>
                           <td className="p-3 font-mono">{formatBytes(vol.used, language || 'en')}</td>
                           <td className="p-3 font-mono">{formatBytes(vol.free, language || 'en')}</td>
                           <td className="p-3">
@@ -1089,7 +1140,7 @@ export default function StorageManagerDashboard() {
 
               <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.maintenanceTitle}</p>
 
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <div className={`rounded-2xl border p-4 space-y-3 ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white'}`}>
                   <h4 className="text-xs font-bold">{tr.smartTest}</h4>
                   <select value={smartDisk} onChange={(e) => setSmartDisk(e.target.value)} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
@@ -1143,6 +1194,56 @@ export default function StorageManagerDashboard() {
                   >
                     {tr.runRaidCheck}
                   </button>
+                </div>
+
+                <div className={`rounded-2xl border p-4 space-y-3 xl:col-span-2 ${isDark ? 'border-amber-900/40 bg-amber-950/10' : 'border-amber-200 bg-amber-50/40'}`}>
+                  <h4 className="text-xs font-bold flex items-center gap-2">
+                    <Icons.Wrench className="w-4 h-4" />
+                    {tr.fsckTitle}
+                  </h4>
+                  <p className="text-[11px] opacity-70">{tr.fsckUnmountNote}</p>
+                  {(maintenance?.targets.fsck_partitions || []).length === 0 ? (
+                    <p className="text-xs opacity-60">{tr.noFsckCandidates}</p>
+                  ) : (
+                    <>
+                      <select
+                        value={fsckDevice}
+                        onChange={(e) => setFsckDevice(e.target.value)}
+                        className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}
+                      >
+                        <option value="">{tr.selectPartitionFsck}</option>
+                        {(maintenance?.targets.fsck_partitions || []).map((p) => (
+                          <option key={p.path} value={p.path}>
+                            {p.path} — {p.fstype_label || p.fstype}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={fsckRepair} onChange={(e) => setFsckRepair(e.target.checked)} />
+                        {tr.fsckRepair}
+                      </label>
+                      {!fsckRepair && (
+                        <p className="text-[10px] opacity-60">{tr.fsckCheck}</p>
+                      )}
+                      <input
+                        value={fsckConfirm}
+                        onChange={(e) => setFsckConfirm(e.target.value)}
+                        placeholder={tr.fsckConfirm}
+                        className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}
+                      />
+                      <button
+                        disabled={actionLoading || !fsckDevice || fsckConfirm !== fsckDevice.replace('/dev/', '')}
+                        onClick={() => runAction(() => postJson('/api/storage_manager/maintenance/fsck', {
+                          device: fsckDevice,
+                          repair: fsckRepair,
+                          confirm_token: fsckConfirm,
+                        }))}
+                        className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-xl"
+                      >
+                        {tr.runFsck}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1223,10 +1324,10 @@ export default function StorageManagerDashboard() {
                         <option value="">{tr.selectPartition}</option>
                         {formatCandidates.map((p) => <option key={p.path} value={p.path}>{p.path}</option>)}
                       </select>
-                      <select value={formatFs} onChange={(e) => setFormatFs(e.target.value as 'ext4' | 'xfs' | 'btrfs')} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                        <option value="ext4">ext4</option>
-                        <option value="xfs">xfs</option>
-                        <option value="btrfs">btrfs</option>
+                      <select value={formatFs} onChange={(e) => setFormatFs(e.target.value as FormatFsType)} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                        {FORMAT_FS_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                       <input value={formatLabel} onChange={(e) => setFormatLabel(e.target.value)} placeholder={tr.labelOptional} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
                       <input value={formatConfirm} onChange={(e) => setFormatConfirm(e.target.value)} placeholder={tr.confirmPartName} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
@@ -1250,7 +1351,12 @@ export default function StorageManagerDashboard() {
                   <h3 className="text-sm font-bold flex items-center gap-2"><Icons.FolderInput className="w-4 h-4" />{tr.mountVolume}</h3>
                   <input value={mountDevice} onChange={(e) => setMountDevice(e.target.value)} placeholder="/dev/sdb1" className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
                   <input value={mountPoint} onChange={(e) => setMountPoint(e.target.value)} placeholder={tr.mountpoint} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
-                  <input value={mountFs} onChange={(e) => setMountFs(e.target.value)} placeholder={tr.fstype} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
+                  <select value={mountFs} onChange={(e) => setMountFs(e.target.value)} className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                    <option value="">{tr.fstype} (auto)</option>
+                    {MOUNT_FS_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                   <input value={mountOptions} onChange={(e) => setMountOptions(e.target.value)} placeholder={tr.options} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
                   <label className="flex items-center gap-2 text-xs">
                     <input type="checkbox" checked={mountPersist} onChange={(e) => setMountPersist(e.target.checked)} />

@@ -23,6 +23,7 @@ from .schemas import (
     RaidCheckRequest,
     SmartTestRequest,
     UnmountRequest,
+    FsckRequest,
 )
 
 router = APIRouter()
@@ -42,6 +43,7 @@ _BAD_REQUEST_CODES = frozenset({
     "device_in_use",
     "smart_test_failed",
     "scrub_failed",
+    "fsck_failed",
 })
 
 
@@ -49,7 +51,7 @@ def _http_error(exc: StorageManagerError) -> HTTPException:
     code = exc.code
     if code == "disk_not_found" or code == "device_not_found":
         status = 404
-    elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed"}:
+    elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed", "fsck_missing"}:
         status = 503
     elif code in _BAD_REQUEST_CODES:
         status = 400
@@ -432,6 +434,28 @@ async def start_raid_check(
             target=body.md_device,
             actor=user.get("username"),
             actor_id=user.get("id"),
+        )
+        return {"status": "success", "data": result}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/maintenance/fsck")
+async def run_filesystem_check(
+    body: FsckRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = _service.check_filesystem(body.device, body.repair, body.confirm_token)
+        record_audit(
+            "storage.fsck",
+            module="storage_manager",
+            target=body.device,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"repair": body.repair},
         )
         return {"status": "success", "data": result}
     except StorageManagerError as exc:
