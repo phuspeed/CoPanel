@@ -1,5 +1,5 @@
 /**
- * Audio Station — Synology-style music player (MVP: folder browse + playback).
+ * Audio Player — music library with folder browse and playback.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -194,8 +194,8 @@ export default function AudioStation() {
     () =>
       language === 'vi'
         ? {
-            title: 'Audio Station',
-            subtitle: 'Thư viện nhạc — duyệt thư mục & phát',
+            title: 'Audio Player',
+            subtitle: 'Thư viện nhạc — duyệt thư mục & phát nhạc',
             search: 'Tìm nhạc…',
             settings: 'Cài đặt',
             home: 'Trang chủ',
@@ -248,8 +248,8 @@ export default function AudioStation() {
             addToPlaylist: 'Thêm vào playlist',
           }
         : {
-            title: 'Audio Station',
-            subtitle: 'Music library — folder browse & playback',
+            title: 'Audio Player',
+            subtitle: 'Music library — browse folders and play tracks',
             search: 'Search music…',
             settings: 'Settings',
             home: 'Home',

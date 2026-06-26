@@ -1,5 +1,5 @@
 """
-Audio Station — music library with folder browsing and metadata index.
+Audio Player — music library with folder browsing and metadata index.
 """
 from __future__ import annotations
 

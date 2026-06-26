@@ -1,4 +1,4 @@
-"""Pydantic models for Audio Station."""
+"""Pydantic models for Audio Player."""
 from __future__ import annotations
 
 from typing import List, Optional
