@@ -1026,6 +1026,7 @@ export default function StorageManagerDashboard() {
               <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white shadow-sm'}`}>
                 <PartitionWizard
                   disks={disks}
+                  volumes={volumes}
                   language={language || 'en'}
                   isDark={isDark}
                   actionLoading={actionLoading}

@@ -162,7 +162,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.14",
+    "appstore_manager": "1.0.16",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -695,6 +695,7 @@ class AppStoreManager:
                 
                 src_backend = extracted_dir / "backend"
                 src_frontend = extracted_dir / "frontend"
+                backend_updated = src_backend.exists()
                 
                 if Path("/opt/copanel").exists():
                     dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
@@ -746,7 +747,11 @@ class AppStoreManager:
                         save_local_version(pkg_id, version)
                     except Exception:
                         pass
-                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Backend restart skipped to avoid forced logout. You can reload modules manually if needed.")
+                    if backend_updated:
+                        BUILD_TASKS[pkg_id]["logs"].append("🔄 Restarting copanel in ~3s to load new backend API routes…")
+                        restart_backend_service(delay=3.0)
+                    else:
+                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend restart not required.")
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
@@ -912,6 +917,7 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     dst_backend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
+                backend_updated = bool(found_backend and found_backend.exists())
                     
                 if found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
@@ -956,7 +962,11 @@ class AppStoreManager:
                             save_local_version(pkg_id, vf.read_text(encoding="utf-8").strip())
                     except Exception:
                         pass
-                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Backend restart skipped to avoid forced logout. You can reload modules manually if needed.")
+                    if backend_updated:
+                        BUILD_TASKS[pkg_id]["logs"].append("🔄 Restarting copanel in ~3s to load new backend API routes…")
+                        restart_backend_service(delay=3.0)
+                    else:
+                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend restart not required.")
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"

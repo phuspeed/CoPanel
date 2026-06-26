@@ -58,12 +58,29 @@ export interface DiskPartitionDetail {
   unallocated: Array<{ start_mib: number; end_mib: number; size_mib: number }>;
 }
 
+interface DiskPartitionSummary {
+  name: string;
+  path: string;
+  size_bytes: number;
+  fstype?: string | null;
+  fstype_label?: string | null;
+  mountpoint?: string | null;
+}
+
 interface DiskSummary {
   name: string;
   path: string;
   size_bytes: number;
   model: string;
   is_system_disk: boolean;
+  partitions?: DiskPartitionSummary[];
+}
+
+interface VolumeUsage {
+  device: string;
+  percent: number;
+  used: number;
+  free: number;
 }
 
 export interface PartitionWizardStrings {
@@ -113,6 +130,7 @@ export interface PartitionWizardStrings {
 
 interface PartitionWizardProps {
   disks: DiskSummary[];
+  volumes: VolumeUsage[];
   language: 'en' | 'vi';
   isDark: boolean;
   actionLoading: boolean;
@@ -130,6 +148,61 @@ function fsColor(fstype?: string | null): string {
   return FS_COLORS[key] || FS_COLORS.unknown;
 }
 
+function buildLayoutFromDisks(
+  diskName: string,
+  disks: DiskSummary[],
+  volumes: VolumeUsage[],
+): DiskPartitionDetail | null {
+  const disk = disks.find((d) => d.name === diskName);
+  if (!disk) return null;
+  const parts = disk.partitions || [];
+  let cursor = 1.0;
+  const partitions: WizardPartition[] = parts.map((part, idx) => {
+    const usage = volumes.find((v) => v.device === part.path);
+    const sizeMib = part.size_bytes / (1024 * 1024);
+    const start = cursor;
+    const end = start + sizeMib;
+    cursor = end;
+    return {
+      number: idx + 1,
+      name: part.name,
+      path: part.path,
+      start_mib: start,
+      end_mib: end,
+      size_bytes: part.size_bytes,
+      fstype: part.fstype,
+      fstype_label: part.fstype_label,
+      mountpoint: part.mountpoint,
+      flags: [],
+      is_boot: false,
+      label: null,
+      used_percent: usage?.percent ?? null,
+      used_bytes: usage?.used ?? null,
+      free_bytes: usage?.free ?? null,
+      is_mounted: Boolean(part.mountpoint),
+    };
+  });
+  const diskMib = disk.size_bytes / (1024 * 1024);
+  const unallocated: DiskPartitionDetail['unallocated'] = [];
+  if (cursor < diskMib - 1) {
+    unallocated.push({ start_mib: cursor, end_mib: diskMib, size_mib: diskMib - cursor });
+  }
+  return {
+    disk: diskName,
+    is_system_disk: disk.is_system_disk,
+    size_bytes: disk.size_bytes,
+    model: disk.model,
+    partition_table: undefined,
+    partitions,
+    unallocated,
+  };
+}
+
+function isPartitionsApiMissing(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg === 'Not Found' || msg.includes('404') || msg.toLowerCase().includes('not found');
+}
+
 function displayName(part: WizardPartition): string {
   if (part.label) return part.label;
   if (part.mountpoint) return part.mountpoint;
@@ -139,6 +212,7 @@ function displayName(part: WizardPartition): string {
 
 export default function PartitionWizard({
   disks,
+  volumes,
   language,
   isDark,
   actionLoading,
@@ -193,12 +267,19 @@ export default function PartitionWizard({
       );
       setLayout(data);
     } catch (err) {
+      if (isPartitionsApiMissing(err)) {
+        const fallback = buildLayoutFromDisks(diskName, disks, volumes);
+        if (fallback) {
+          setLayout(fallback);
+          return;
+        }
+      }
       setLayout(null);
       setLayoutErr(err instanceof Error ? err.message : 'Failed to load layout');
     } finally {
       setLayoutLoading(false);
     }
-  }, [fetchJson]);
+  }, [fetchJson, disks, volumes]);
 
   useEffect(() => {
     if (activeDisk) {
