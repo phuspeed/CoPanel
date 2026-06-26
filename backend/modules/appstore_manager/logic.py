@@ -170,8 +170,22 @@ def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] 
     task["logs"].append(log_line or _RESTART_LOG_HINT)
 
 
+# Key routes that must exist after install — prefix /api/{module_id} is implied.
+MODULE_ROUTE_PROBES: Dict[str, List[str]] = {
+    "storage_manager": [
+        "/partitions/delete",
+        "/disks/{disk_name}/partitions",
+        "/disks/{disk_name}/initialize",
+        "/mount",
+        "/version",
+    ],
+    "package_manager": ["/list"],
+    "appstore_manager": ["/catalog", "/restart-copanel"],
+}
+
+
 def _module_api_routes_active(pkg_id: str) -> bool:
-    """True if FastAPI has at least one route under /api/{pkg_id}."""
+    """True if required API routes for this module are registered on the running process."""
     try:
         from core.module_reload import get_app
 
@@ -179,8 +193,14 @@ def _module_api_routes_active(pkg_id: str) -> bool:
         if app is None:
             return False
         prefix = f"/api/{pkg_id}"
-        for route in app.routes:
-            path = getattr(route, "path", None) or ""
+        paths = {getattr(route, "path", None) or "" for route in app.routes}
+        required = MODULE_ROUTE_PROBES.get(pkg_id)
+        if required:
+            for suffix in required:
+                if f"{prefix}{suffix}" not in paths:
+                    return False
+            return True
+        for path in paths:
             if path == prefix or path.startswith(prefix + "/"):
                 return True
     except Exception:
@@ -238,7 +258,7 @@ def _finalize_module_install(
 
     if ok:
         BUILD_TASKS[pkg_id]["logs"].append(
-            f"⚠️ «{pkg_id}» routes not visible after hot-reload."
+            f"⚠️ «{pkg_id}» hot-reload OK but required API routes are missing (stale process?)."
         )
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
@@ -281,7 +301,7 @@ def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.20",
+    "appstore_manager": "1.0.21",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"

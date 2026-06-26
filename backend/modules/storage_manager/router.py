@@ -68,6 +68,18 @@ def _http_error(exc: StorageManagerError) -> HTTPException:
     return HTTPException(status_code=status, detail=str(exc))
 
 
+@router.get("/version")
+async def get_module_version(
+    _user: Dict[str, Any] = Depends(require_module("storage_manager")),
+) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": _service.get_module_version()}
+    except StorageManagerError as exc:
+        raise _http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/overview")
 async def get_overview(_user: Dict[str, Any] = Depends(require_module("storage_manager"))) -> Dict[str, Any]:
     try:

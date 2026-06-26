@@ -26,5 +26,11 @@ def reload_module(module_id: str) -> Tuple[bool, str]:
     return _loader.reload_module(_app, module_id)
 
 
+def list_module_route_paths(module_id: str) -> List[str]:
+    if _app is None or _loader is None:
+        return []
+    return _loader.list_route_paths(_app, module_id)
+
+
 def get_app() -> Optional[FastAPI]:
     return _app

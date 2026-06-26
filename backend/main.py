@@ -9,6 +9,7 @@ running module task can flow through the unified Task Center.
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Any, Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,12 +124,16 @@ module_reload.configure(app, loader)
 
 @app.get("/api/modules")
 async def list_modules():
-    """List all loaded modules."""
+    """List loaded modules and live API route paths (reflects hot-reload)."""
+    modules: Dict[str, Any] = {}
+    for name in loader.loaded_modules:
+        paths = loader.list_route_paths(app, name)
+        modules[name] = {"route_count": len(paths), "routes": paths}
     return JSONResponse(
         status_code=200,
         content={
-            "modules": list(loaded_modules.keys()),
-            "count": len(loaded_modules)
+            "modules": modules,
+            "count": len(modules),
         }
     )
 

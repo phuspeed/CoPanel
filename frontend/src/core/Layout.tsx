@@ -376,15 +376,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   useEffect(() => {
     const fetchInstalledPackages = () => {
       fetch('/api/package_manager/list')
-        .then((r) => {
-          if (!r.ok) return fetch('/api/package_manager/');
+        .then(async (r) => {
+          if (!r.ok) {
+            const alt = await fetch('/api/package_manager/');
+            if (alt.ok) return alt;
+            return fetch('/api/package_manager');
+          }
           return r;
         })
-        .then((r) => {
-          if (!r.ok) return fetch('/api/package_manager');
-          return r;
+        .then(async (r) => {
+          const ct = r.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            return null;
+          }
+          return r.json();
         })
-        .then((r) => r.json())
         .then((data) => {
           if (data && data.packages) {
             setInstalledPackages(data.packages.filter((p: any) => p.status !== 'not_installed'));

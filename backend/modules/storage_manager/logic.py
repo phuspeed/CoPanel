@@ -936,6 +936,16 @@ class StorageService:
 
         return level, message, issues
 
+    def get_module_version(self) -> Dict[str, Any]:
+        vf = Path(__file__).resolve().parent / "version.txt"
+        version = "unknown"
+        if vf.is_file():
+            try:
+                version = vf.read_text(encoding="utf-8").strip().split()[0] or version
+            except OSError:
+                pass
+        return {"version": version, "module": "storage_manager"}
+
     def get_overview(self) -> Dict[str, Any]:
         disks = self.list_disks(include_smart=False)
         volumes = self.list_volumes()

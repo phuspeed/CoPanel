@@ -227,6 +227,9 @@ function isProtectedMount(mountpoint: string): boolean {
 }
 
 function apiErrorMessage(body: Record<string, unknown>, status: number): string {
+  if (status === 404) {
+    return 'API route not found (404). Restart copanel service or reinstall the module from AppStore.';
+  }
   const wrapped = body.error as { message?: string } | undefined;
   if (wrapped?.message) return wrapped.message;
   if (typeof body.detail === 'string') return body.detail;
@@ -300,6 +303,8 @@ export default function StorageManagerDashboard() {
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
+  const [apiStale, setApiStale] = useState(false);
 
   const [partDisk, setPartDisk] = useState('');
   const [partStart, setPartStart] = useState('1MiB');
@@ -507,6 +512,8 @@ export default function StorageManagerDashboard() {
       cancel: 'Cancel',
       loadingLayout: 'Loading partition layout…',
       protectedNote: 'System disk — partition changes blocked.',
+      apiStaleBanner: 'Backend API is outdated (missing routes after module update). Run: sudo systemctl restart copanel — or use AppStore «Restart CoPanel».',
+      backendVersionLabel: (v: string) => `Backend module v${v}`,
       diskOperations: 'Disk',
       initializeDisk: 'Initialize partition table',
       initializeDiskTitle: 'Initialize disk (step 1)',
@@ -672,6 +679,8 @@ export default function StorageManagerDashboard() {
       cancel: 'Hủy',
       loadingLayout: 'Đang tải bố cục phân vùng…',
       protectedNote: 'Ổ hệ thống — không cho sửa phân vùng.',
+      apiStaleBanner: 'API backend đã cũ (thiếu route sau khi cập nhật module). Chạy: sudo systemctl restart copanel — hoặc bấm «Restart CoPanel» trong AppStore.',
+      backendVersionLabel: (v: string) => `Module backend v${v}`,
       diskOperations: 'Ổ đĩa',
       initializeDisk: 'Khởi tạo bảng phân vùng',
       initializeDiskTitle: 'Khởi tạo ổ đĩa (bước 1)',
@@ -756,6 +765,16 @@ export default function StorageManagerDashboard() {
     if (errors.length > 0) {
       setError(errors.join(' · '));
     }
+
+    try {
+      const ver = await fetchJson<{ version: string }>('/api/storage_manager/version');
+      setBackendVersion(ver.version);
+      setApiStale(false);
+    } catch {
+      setBackendVersion(null);
+      setApiStale(true);
+    }
+
     setLoading(false);
   }, [fetchJson]);
 
@@ -896,6 +915,9 @@ export default function StorageManagerDashboard() {
           </h1>
           <p className={`text-xs md:text-sm max-w-2xl ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.desc}</p>
           <p className={`text-[11px] ${isDark ? 'text-amber-400/90' : 'text-amber-700'}`}>{tr.adminNote}</p>
+          {backendVersion && (
+            <p className={`text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.backendVersionLabel(backendVersion)}</p>
+          )}
         </div>
         <button
           onClick={loadAll}
@@ -908,6 +930,12 @@ export default function StorageManagerDashboard() {
           {tr.refresh}
         </button>
       </div>
+
+      {apiStale && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${isDark ? 'border-red-500/40 bg-red-950/30 text-red-200' : 'border-red-200 bg-red-50 text-red-800'}`}>
+          {tr.apiStaleBanner}
+        </div>
+      )}
 
       <div className={`flex flex-wrap gap-2 p-1 rounded-xl border ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
         {tabs.map((item) => {

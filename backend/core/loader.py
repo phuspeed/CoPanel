@@ -5,7 +5,7 @@ Automatically discovers and registers API routes from the modules directory.
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from fastapi import FastAPI
 import logging
 
@@ -61,6 +61,15 @@ class ModuleLoader:
         self.loaded_modules[module_name] = router
         logger.info("Reloaded module: %s", module_name)
         return True, f"Reloaded {module_name}"
+
+    def list_route_paths(self, app: FastAPI, module_name: str) -> List[str]:
+        prefix = f"/api/{module_name}"
+        paths: List[str] = []
+        for route in app.routes:
+            path = getattr(route, "path", None) or ""
+            if path == prefix or path.startswith(prefix + "/"):
+                paths.append(path)
+        return sorted(set(paths))
 
     def _unregister_module_routes(self, app: FastAPI, module_name: str) -> None:
         prefix = f"/api/{module_name}"
