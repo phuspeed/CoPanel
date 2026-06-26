@@ -27,11 +27,6 @@ from .schemas import (
 router = APIRouter()
 
 
-@router.on_event("startup")
-async def on_startup() -> None:
-    logic.ensure_worker()
-
-
 @router.get("/settings")
 def get_settings(user: Dict[str, Any] = Depends(require_module("download_manager"))) -> Dict[str, Any]:
     return ok(logic.get_settings())

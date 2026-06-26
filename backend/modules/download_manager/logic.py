@@ -21,9 +21,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.error import HTTPError as UrlHTTPError
 from urllib.parse import parse_qs, urlparse
-
-import httpx
+from urllib.request import Request, urlopen
 
 from .aria2_engine import Aria2Engine, get_engine_from_settings, parse_aria2_progress
 from .google_oauth import GoogleOAuthService
@@ -859,13 +859,15 @@ def _resolve_via_api(
     method = (api_cfg.get("method") or "POST").upper()
     headers = {k: _substitute(v, url, account) for k, v in (api_cfg.get("headers") or {}).items()}
     body_raw = _substitute(api_cfg.get("body_template") or "", url, account)
-    with httpx.Client(timeout=120) as client:
-        if method == "GET":
-            resp = client.get(resolve_url, headers=headers)
-        else:
-            resp = client.post(resolve_url, headers=headers, content=body_raw or None)
-        resp.raise_for_status()
-        payload = resp.json()
+    if method == "GET":
+        payload = _http_json_request(resolve_url, method="GET", headers=headers)
+    else:
+        payload = _http_json_request(
+            resolve_url,
+            method="POST",
+            headers=headers,
+            body=body_raw.encode("utf-8") if body_raw else None,
+        )
     field = api_cfg.get("download_url_field") or "direct_link"
     direct = _dig_field(payload, field)
     if not direct:
@@ -881,6 +883,38 @@ def _dig_field(obj: Any, dotted: str) -> Any:
         else:
             return None
     return cur
+
+
+def _http_json_request(
+    url: str,
+    method: str = "GET",
+    headers: Optional[Dict[str, str]] = None,
+    body: Optional[bytes] = None,
+    timeout: int = 120,
+) -> Any:
+    hdrs = dict(headers or {})
+    if body is not None and "Content-Type" not in hdrs:
+        hdrs["Content-Type"] = "application/json"
+    req = Request(url, data=body, headers=hdrs, method=method.upper())
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except UrlHTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        raise RuntimeError(detail or f"HTTP {exc.code}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Invalid JSON response") from exc
+
+
+def _http_open(url: str, headers: Optional[Dict[str, str]] = None, timeout: int = 600):
+    req = Request(url, headers=headers or {}, method="GET")
+    try:
+        return urlopen(req, timeout=timeout)
+    except UrlHTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else str(exc)
+        raise RuntimeError(detail or f"HTTP {exc.code}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -994,10 +1028,7 @@ def _expand_google_folder(task: Dict[str, Any]) -> None:
             error_message="Google API key or OAuth required for folder listing",
         )
         return
-    with httpx.Client(timeout=60) as client:
-        resp = client.get(list_url, headers=headers)
-        resp.raise_for_status()
-        files = resp.json().get("files") or []
+    files = (_http_json_request(list_url, headers=headers, timeout=60).get("files")) or []
     if not files:
         _update_task(task["id"], status="completed", progress=100.0, completed_at=_utc_now())
         return
@@ -1060,12 +1091,11 @@ def _download_http(
     last_bytes = 0
     speed = 0
 
-    with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=600) as resp:
-        resp.raise_for_status()
-        cl = resp.headers.get("content-length")
-        if cl and cl.isdigit():
+    with _http_open(url, headers=headers, timeout=600) as resp:
+        cl = resp.headers.get("Content-Length") or resp.headers.get("content-length")
+        if cl and str(cl).isdigit():
             total = int(cl)
-        cd = resp.headers.get("content-disposition", "")
+        cd = resp.headers.get("Content-Disposition") or resp.headers.get("content-disposition") or ""
         if "filename=" in cd and task["name"].startswith("google_"):
             m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";\n]+)"?', cd)
             if m:
@@ -1075,7 +1105,10 @@ def _download_http(
                 _update_task(task_id, name=final_name)
 
         with open(temp_file, "wb") as fh:
-            for chunk in resp.iter_bytes(chunk_size=256 * 1024):
+            while True:
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
                 cur = get_task(task_id)
                 if not cur or cur["status"] in ("paused", "stopped"):
                     return
@@ -1301,3 +1334,7 @@ def get_engine_status() -> Dict[str, Any]:
         "version": "",
         "message": "aria2 RPC unreachable — start aria2c --enable-rpc",
     }
+
+
+# Start worker when backend loads this module (sub-router startup events are unreliable).
+ensure_worker()
