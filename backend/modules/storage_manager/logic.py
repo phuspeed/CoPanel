@@ -78,6 +78,12 @@ _LSBLK_COLUMN_SETS = (
     "NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,PKNAME",
 )
 
+_PARTITION_ROW_TYPES = frozenset({"part", "primary", "extended", "logical", "lvm", "crypt"})
+_PARTED_FREE_RE = re.compile(
+    r"^\s*([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B)?)\s+Free\s+Space\s*$",
+    re.IGNORECASE,
+)
+
 MOCK_DISKS: List[Dict[str, Any]] = [
     {
         "name": "sda",
@@ -373,13 +379,19 @@ class StorageService:
             current = by_name.get(pk)
         return False
 
-    def _partitions_for_disk(self, disk_name: str, flat: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _partition_rows_for_disk(
+        self,
+        disk_name: str,
+        flat: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        if flat is None:
+            flat = self._get_flat_block()
         partitions: List[Dict[str, Any]] = []
         for part in flat:
             name = str(part.get("name") or "")
             if not name or name == disk_name:
                 continue
-            if part.get("type") not in ("part", "lvm", "crypt"):
+            if part.get("type") not in _PARTITION_ROW_TYPES:
                 continue
             if not self._is_descendant_of_disk(name, disk_name, flat):
                 continue
@@ -393,6 +405,9 @@ class StorageService:
             }))
         partitions.sort(key=lambda p: str(p.get("name") or ""))
         return partitions
+
+    def _partitions_for_disk(self, disk_name: str, flat: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return self._partition_rows_for_disk(disk_name, flat)
 
     def list_disks(self, include_smart: bool = True) -> List[Dict[str, Any]]:
         if IS_WINDOWS:
@@ -1137,10 +1152,43 @@ class StorageService:
         if result.returncode != 0 or not (result.stdout or "").strip():
             detail = (result.stderr or result.stdout or "").strip()
             raise StorageManagerError(detail or "Failed to read partition table", code="parted_failed")
+        raw = (result.stdout or "").strip()
+        if not raw.startswith("{"):
+            brace = raw.find("{")
+            if brace >= 0:
+                raw = raw[brace:]
         try:
-            return json.loads(result.stdout)
+            return json.loads(raw)
         except json.JSONDecodeError as exc:
             raise StorageManagerError("Invalid parted JSON output", code="parted_failed") from exc
+
+    def _parted_free_from_print(self, disk_name: str) -> Optional[Tuple[str, str]]:
+        if IS_WINDOWS:
+            return None
+        try:
+            parted = self._parted_bin()
+        except StorageManagerError:
+            return None
+        dev = f"/dev/{disk_name}"
+        result = self._run([parted, "-s", dev, "unit", "MiB", "print", "free"], timeout=60)
+        text = (result.stdout or "") + "\n" + (result.stderr or "")
+        best: Optional[Tuple[str, str]] = None
+        best_size = 0.0
+        for line in text.splitlines():
+            if "free space" not in line.lower():
+                continue
+            match = _PARTED_FREE_RE.match(line.strip())
+            if not match:
+                continue
+            start_raw, end_raw, size_raw = match.group(1).strip(), match.group(2).strip(), match.group(3).strip()
+            size_bytes = self._parse_size(size_raw.replace(" ", ""))
+            size_mib = size_bytes / (1024 * 1024) if size_bytes else 0.0
+            if size_mib < 2:
+                continue
+            if size_mib > best_size:
+                best_size = size_mib
+                best = (start_raw, end_raw)
+        return best
 
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
         payload = self._parted_json(disk_name)
@@ -1174,7 +1222,7 @@ class StorageService:
     def _partitions_detail_from_lsblk(self, disk_name: str, disk: Dict[str, Any]) -> Dict[str, Any]:
         """Build wizard layout from lsblk when parted cannot read the table (blank disk, etc.)."""
         disk_size = int(disk.get("size_bytes") or 0)
-        parts_raw = sorted(disk.get("partitions") or [], key=lambda p: str(p.get("name") or ""))
+        parts_raw = self._partition_rows_for_disk(disk_name)
         partitions: List[Dict[str, Any]] = []
         cursor = 1.0
         for idx, part in enumerate(parts_raw):
@@ -1276,21 +1324,18 @@ class StorageService:
 
         disk_info = payload.get("disk") or {}
         parted_parts = payload.get("partitions") or []
-        children = sorted(
-            [
-                row for row in self._get_flat_block()
-                if row.get("type") in ("part", "primary", "extended", "logical", "lvm", "crypt")
-                and (row.get("pkname") or row.get("_parent_name")) == disk_name
-            ],
-            key=lambda r: str(r.get("name") or ""),
-        )
+        lsblk_parts = self._partition_rows_for_disk(disk_name)
+
+        if not parted_parts and lsblk_parts:
+            return self._partitions_detail_from_lsblk(disk_name, disk)
 
         partitions: List[Dict[str, Any]] = []
         for idx, pt in enumerate(parted_parts):
             number = int(pt.get("number") or idx + 1)
-            child = children[idx] if idx < len(children) else {}
-            name = child.get("name")
-            path = f"/dev/{name}" if name else None
+            child = lsblk_parts[idx] if idx < len(lsblk_parts) else {}
+            node = str(pt.get("node") or "")
+            name = child.get("name") or (node.rsplit("/", 1)[-1] if node else None)
+            path = child.get("path") or (f"/dev/{name}" if name else None)
             fstype = self._normalize_fstype(child.get("fstype")) or (pt.get("filesystem") or None)
             if path and not fstype:
                 fstype = self._probe_fstype(path)
@@ -1345,7 +1390,7 @@ class StorageService:
                     "size_mib": disk_mib - cursor,
                 })
 
-        return {
+        return self._merge_lsblk_partitions_if_empty(disk_name, disk, {
             "disk": disk_name,
             "is_system_disk": disk.get("is_system_disk", False),
             "size_bytes": disk_size,
@@ -1353,7 +1398,20 @@ class StorageService:
             "partition_table": disk_info.get("partitionTable") or disk_info.get("partition_table"),
             "partitions": partitions,
             "unallocated": unallocated,
-        }
+        })
+
+    def _merge_lsblk_partitions_if_empty(
+        self,
+        disk_name: str,
+        disk: Dict[str, Any],
+        layout: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if layout.get("partitions"):
+            return layout
+        lsblk_layout = self._partitions_detail_from_lsblk(disk_name, disk)
+        if lsblk_layout.get("partitions"):
+            return lsblk_layout
+        return layout
 
     def delete_partition(self, device: str, confirm_token: str) -> Dict[str, Any]:
         device, name = self._normalize_device(device)
@@ -1492,16 +1550,16 @@ class StorageService:
         """Return (start, end) for the first unallocated region large enough for a partition."""
         try:
             detail = self.get_disk_partitions_detail(disk_name)
+            for gap in detail.get("unallocated") or []:
+                size_mib = float(gap.get("size_mib") or 0)
+                if size_mib < 2:
+                    continue
+                start_mib = int(float(gap.get("start_mib") or 1))
+                end_mib = int(float(gap.get("end_mib") or start_mib + size_mib))
+                return f"{start_mib}MiB", f"{end_mib}MiB"
         except StorageManagerError:
-            return None
-        for gap in detail.get("unallocated") or []:
-            size_mib = float(gap.get("size_mib") or 0)
-            if size_mib < 2:
-                continue
-            start_mib = int(float(gap.get("start_mib") or 1))
-            end_mib = int(float(gap.get("end_mib") or start_mib + size_mib))
-            return f"{start_mib}MiB", f"{end_mib}MiB"
-        return None
+            pass
+        return self._parted_free_from_print(disk_name)
 
     def create_partition(
         self,
@@ -1529,8 +1587,13 @@ class StorageService:
         stdout = (print_out.stdout or "").strip()
         stderr = (print_out.stderr or "").strip()
         combined = f"{stdout}\n{stderr}".lower()
-        has_table = "partition table:" in combined and "unknown" not in combined and "unrecognised" not in combined
-        existing_parts = disk.get("partitions") or []
+        existing_parts = self._partition_rows_for_disk(disk_name)
+        has_table = bool(existing_parts) or (
+            "partition table:" in combined
+            and "unknown" not in combined
+            and "unrecognised" not in combined
+            and "unrecognized" not in combined
+        )
 
         if not has_table and not existing_parts:
             if not initialize_gpt:
@@ -1541,11 +1604,12 @@ class StorageService:
             self._run_ok([parted, "-s", dev, "mklabel", "gpt"], "Failed to initialize GPT", code="parted_failed")
 
         use_start, use_end = start, end
-        if existing_parts and start in ("1MiB", "0MiB", "1049kB") and end in ("100%", "100"):
+        default_range = start in ("1MiB", "0MiB", "1049kB") and end in ("100%", "100")
+        if default_range:
             free = self._parted_free_region(disk_name)
             if free:
                 use_start, use_end = free
-            elif has_table:
+            elif existing_parts or has_table:
                 raise StorageManagerError(
                     "No unallocated space on this disk. Specify start/end in free space.",
                     code="no_free_space",

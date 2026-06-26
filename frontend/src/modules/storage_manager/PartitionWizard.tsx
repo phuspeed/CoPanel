@@ -263,7 +263,10 @@ export default function PartitionWizard({
 
   const applyCreateDefaults = useCallback((diskName: string) => {
     const disk = disks.find((d) => d.name === diskName);
-    const partCount = disk?.partitions?.length ?? layout?.partitions?.length ?? 0;
+    const partCount = Math.max(
+      disk?.partitions?.length ?? 0,
+      layout?.partitions?.length ?? 0,
+    );
     setPartConfirm(diskName);
     setPartInitGpt(partCount === 0);
     const firstFree = layout?.unallocated?.[0];
@@ -300,7 +303,15 @@ export default function PartitionWizard({
         `/api/storage_manager/disks/${encodeURIComponent(diskName)}/partitions`,
       );
       partitionsApiAvailable.current = true;
-      setLayout(data);
+      const disk = disks.find((d) => d.name === diskName);
+      const apiEmpty = (data.partitions?.length ?? 0) === 0;
+      const diskHasParts = (disk?.partitions?.length ?? 0) > 0;
+      if (apiEmpty && diskHasParts) {
+        const fallback = buildLayoutFromDisks(diskName, disks, volumes);
+        setLayout(fallback ?? data);
+      } else {
+        setLayout(data);
+      }
     } catch (err) {
       if (isPartitionsApiMissing(err)) {
         partitionsApiAvailable.current = false;
