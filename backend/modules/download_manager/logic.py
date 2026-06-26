@@ -1128,7 +1128,7 @@ def _download_http(
                         progress=round(prog, 1),
                     )
 
-    temp_file.replace(final_path)
+    _finalize_download_file(temp_file, final_path)
     size = final_path.stat().st_size
     _update_task(
         task_id,
@@ -1142,7 +1142,12 @@ def _download_http(
     _cleanup_temp(task["temp_path"])
 
 
-def _cleanup_temp(temp_path: Optional[str]) -> None:
+def _finalize_download_file(temp_file: Path, final_path: Path) -> None:
+    """Move completed .part file to destination (works across mount points)."""
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if final_path.exists():
+        final_path.unlink()
+    shutil.move(str(temp_file), str(final_path))
     if not temp_path:
         return
     p = Path(temp_path)
