@@ -1,7 +1,7 @@
 """
 Download Manager — task queue, settings, URL resolvers, file-hosting plugins.
 
-Layout mirrors Synology Download Station:
+Features:
   - temp folder (in-progress chunks)
   - destination folder (final files)
   - user-defined file hosting (curl template or API resolver + accounts)
@@ -1148,6 +1148,9 @@ def _finalize_download_file(temp_file: Path, final_path: Path) -> None:
     if final_path.exists():
         final_path.unlink()
     shutil.move(str(temp_file), str(final_path))
+
+
+def _cleanup_temp(temp_path: Optional[str]) -> None:
     if not temp_path:
         return
     p = Path(temp_path)

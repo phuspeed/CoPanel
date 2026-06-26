@@ -1,6 +1,5 @@
 /**
- * Download Manager — Synology Download Station–style UI.
- * Three-pane: sidebar filters | task table + toolbar | detail pane.
+ * Download Manager — task list, filters, settings, file-hosting plugins.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';

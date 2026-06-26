@@ -5,5 +5,5 @@ export default {
   icon: 'Download',
   path: '/download-manager',
   component: DownloadManager,
-  description: 'Direct links, Google Drive, custom file hosting — like Download Station.',
+  description: 'Direct links, Google Drive, custom file hosting, BitTorrent via aria2.',
 };
