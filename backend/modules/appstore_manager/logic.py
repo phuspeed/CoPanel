@@ -14,6 +14,7 @@ import time
 import zipfile
 import sqlite3
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
 CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/contents/packages.json"
@@ -139,8 +140,34 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
     return compare_versions(remote_version, local_version) > 0
 
 
-# Modules whose installer/runtime cannot hot-reload safely — user may restart manually.
+# Modules whose installer/runtime cannot hot-reload safely — user must restart manually.
 COPANEL_RESTART_RECOMMENDED = frozenset({"appstore_manager"})
+
+_RESTART_LOG_HINT = (
+    "⚠️ Restart copanel service to activate backend changes — use «Restart CoPanel» below "
+    "or run: sudo systemctl restart copanel"
+)
+
+
+def _new_build_task(logs: Optional[List[str]] = None) -> Dict[str, Any]:
+    return {
+        "status": "running",
+        "logs": logs or ["Starting download and extraction..."],
+        "error": "",
+        "progress": 3,
+        "restart_required": False,
+        "restart_reason": None,
+    }
+
+
+def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] = None) -> None:
+    global BUILD_TASKS
+    task = BUILD_TASKS.get(pkg_id)
+    if not task:
+        return
+    task["restart_required"] = True
+    task["restart_reason"] = reason
+    task["logs"].append(log_line or _RESTART_LOG_HINT)
 
 
 def _module_api_routes_active(pkg_id: str) -> bool:
@@ -183,17 +210,19 @@ def _finalize_module_install(
         return
 
     if requires_copanel_restart or pkg_id in COPANEL_RESTART_RECOMMENDED:
-        BUILD_TASKS[pkg_id]["logs"].append(
-            f"🔄 Scheduling copanel restart for «{pkg_id}» (recommended for this module)."
+        _mark_restart_required(
+            pkg_id,
+            "module_flag" if requires_copanel_restart else "core_module",
+            log_line=f"⚠️ «{pkg_id}» needs a copanel service restart to take effect.",
         )
-        restart_backend_service(delay=3.0)
         return
 
     if is_new_backend:
-        BUILD_TASKS[pkg_id]["logs"].append(
-            f"🔄 New backend module «{pkg_id}» — scheduling copanel restart to register API routes."
+        _mark_restart_required(
+            pkg_id,
+            "new_backend",
+            log_line=f"⚠️ New backend module «{pkg_id}» — restart copanel to register API routes.",
         )
-        restart_backend_service(delay=3.0)
         return
 
     try:
@@ -213,40 +242,46 @@ def _finalize_module_install(
         )
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
-    BUILD_TASKS[pkg_id]["logs"].append("🔄 Scheduling copanel service restart to activate API routes…")
-    restart_backend_service(delay=3.0)
+    _mark_restart_required(pkg_id, "hot_reload_failed")
 
 
-def restart_backend_service(delay: float = 2.0):
+def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
     """
-    Restart the copanel systemd service so newly-installed Python modules
-    are picked up without requiring manual VPS access.
-    Runs in a daemon thread with a short delay so the caller's HTTP response
-    can be flushed before the process is replaced.
-    Only acts on Linux when systemctl is available.
+    Restart the copanel systemd service (Linux production).
+    Runs in a daemon thread with a short delay so the HTTP response can flush first.
     """
     if platform.system() == "Windows":
-        return
+        return {
+            "scheduled": False,
+            "message": "Restart is only available on Linux hosts with systemd.",
+        }
+
+    if not shutil.which("systemctl"):
+        return {
+            "scheduled": False,
+            "message": "systemctl not found. Run manually: sudo systemctl restart copanel",
+        }
 
     def _do_restart():
-        import time
         time.sleep(delay)
-        if shutil.which("systemctl"):
-            try:
-                subprocess.run(
-                    ["systemctl", "restart", "copanel"],
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception:
-                pass
+        try:
+            subprocess.run(
+                ["systemctl", "restart", "copanel"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            pass
 
-    t = threading.Thread(target=_do_restart, daemon=True)
-    t.start()
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {
+        "scheduled": True,
+        "message": "CoPanel service restart scheduled.",
+    }
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.19",
+    "appstore_manager": "1.0.20",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -716,12 +751,7 @@ class AppStoreManager:
     ) -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
-        BUILD_TASKS[pkg_id] = {
-            "status": "running",
-            "logs": ["Starting download and extraction..."],
-            "error": "",
-            "progress": 3
-        }
+        BUILD_TASKS[pkg_id] = _new_build_task()
         
         def run_install():
             is_windows = platform.system() == "Windows"
@@ -883,7 +913,23 @@ class AppStoreManager:
     def get_build_status(pkg_id: str) -> dict:
         """Retrieves status and logs for the given package ID."""
         global BUILD_TASKS
-        return BUILD_TASKS.get(pkg_id, {"status": "not_started", "logs": [], "error": "", "progress": 0})
+        default = {
+            "status": "not_started",
+            "logs": [],
+            "error": "",
+            "progress": 0,
+            "restart_required": False,
+            "restart_reason": None,
+        }
+        task = BUILD_TASKS.get(pkg_id)
+        if not task:
+            return default
+        return {**default, **task}
+
+    @staticmethod
+    def trigger_copanel_restart() -> Dict[str, Any]:
+        """Schedule a copanel systemd restart (admin action from UI)."""
+        return restart_backend_service(delay=1.5)
 
     @staticmethod
     def uninstall_package(pkg_id: str) -> dict:
@@ -942,12 +988,8 @@ class AppStoreManager:
     def install_local_zip(pkg_id: str, zip_path: Path) -> dict:
         """Installs a module directly from a local zip file."""
         global BUILD_TASKS
-        BUILD_TASKS[pkg_id] = {
-            "status": "running",
-            "logs": ["Starting installation from uploaded ZIP..."],
-            "error": "",
-            "progress": 5
-        }
+        BUILD_TASKS[pkg_id] = _new_build_task(["Starting installation from uploaded ZIP..."])
+        BUILD_TASKS[pkg_id]["progress"] = 5
         
         def run_install():
             is_windows = platform.system() == "Windows"

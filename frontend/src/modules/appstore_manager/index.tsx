@@ -23,6 +23,7 @@ interface Package {
   update_status?: UpdateStatus;
   is_core?: boolean;
   system_packages?: string[];
+  requires_copanel_restart?: boolean;
   changelog_en?: string;
   changelog_vi?: string;
   is_community?: boolean;
@@ -73,6 +74,9 @@ export default function AppStoreDashboard() {
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
   const [buildProgress, setBuildProgress] = useState<number>(0);
   const [showBuildLogs, setShowBuildLogs] = useState(false);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [restartReason, setRestartReason] = useState<string | null>(null);
+  const [restartingCopanel, setRestartingCopanel] = useState(false);
 
 
   const [communityUrls, setCommunityUrls] = useState<string[]>([]);
@@ -117,6 +121,14 @@ export default function AppStoreDashboard() {
       installedVsCatalog: (inst: string, cat: string) => `Installed v${inst} · catalog v${cat}`,
       communitySaved: 'Community catalog list saved.',
       communitySaveFailed: 'Could not save community AppStore URLs (check appstore config DB permissions).',
+      installSuccessNeedsRestart: (name: string) => `✓ ${name} installed. Restart CoPanel to activate backend changes.`,
+      restartRequiredTitle: 'CoPanel restart required',
+      restartRequiredBody: 'Backend module changed. Restart the copanel service to load new API routes.',
+      restartManualHint: 'Or SSH: sudo systemctl restart copanel',
+      restartCopanelBtn: 'Restart CoPanel',
+      restartingCopanel: 'Restarting…',
+      restartScheduled: 'Restart scheduled. Page will reload when the service is back (~30s).',
+      restartFailed: (err: string) => `Could not schedule restart: ${err}`,
     },
     vi: {
       title: 'Cửa hàng ứng dụng AppStore',
@@ -150,10 +162,80 @@ export default function AppStoreDashboard() {
       installedVsCatalog: (inst: string, cat: string) => `Đã cài v${inst} · trên kho v${cat}`,
       communitySaved: 'Đã lưu danh sách AppStore cộng đồng.',
       communitySaveFailed: 'Không lưu được URL (kiểm tra quyền ghi appstore config DB trên máy chủ).',
+      installSuccessNeedsRestart: (name: string) => `✓ Đã cài ${name}. Cần restart CoPanel để kích hoạt backend.`,
+      restartRequiredTitle: 'Cần khởi động lại CoPanel',
+      restartRequiredBody: 'Module backend đã thay đổi. Restart dịch vụ copanel để nạp API mới.',
+      restartManualHint: 'Hoặc SSH: sudo systemctl restart copanel',
+      restartCopanelBtn: 'Restart CoPanel',
+      restartingCopanel: 'Đang restart…',
+      restartScheduled: 'Đã lên lịch restart. Trang sẽ tải lại khi dịch vụ sẵn sàng (~30 giây).',
+      restartFailed: (err: string) => `Không thể restart: ${err}`,
     }
   };
 
   const tr = t[language || 'en'];
+
+  const resetBuildModal = () => {
+    setActivePkgId(null);
+    setBuildLogs([]);
+    setBuildProgress(0);
+    setRestartRequired(false);
+    setRestartReason(null);
+    setRestartingCopanel(false);
+  };
+
+  const handleBuildPollResult = (
+    b: {
+      status?: string;
+      logs?: string[];
+      progress?: number;
+      error?: string;
+      restart_required?: boolean;
+      restart_reason?: string | null;
+    },
+    successLabel: string,
+  ) => {
+    if (b.logs) setBuildLogs(b.logs);
+    if (typeof b.progress === 'number') setBuildProgress(b.progress);
+    if (b.status !== 'success' && b.status !== 'failed') return false;
+
+    setBuildStatus(b.status);
+    if (b.status === 'success') {
+      fetchCatalog();
+      if (b.restart_required) {
+        setRestartRequired(true);
+        setRestartReason(b.restart_reason ?? null);
+        setMsg(tr.installSuccessNeedsRestart(successLabel));
+      } else {
+        setMsg(`✓ ${successLabel} installed and built successfully!`);
+        setTimeout(() => window.location.reload(), 1200);
+      }
+    } else {
+      setMsg(`❌ Error building ${successLabel}: ${b.error || 'Build failed.'}`);
+    }
+    return true;
+  };
+
+  const handleRestartCopanel = async () => {
+    setRestartingCopanel(true);
+    try {
+      const res = await fetch('/api/appstore_manager/restart-copanel', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        setMsg(tr.restartFailed(formatApiDetail(body.detail) || 'Request failed'));
+        return;
+      }
+      setMsg(tr.restartScheduled);
+      setTimeout(() => window.location.reload(), 10000);
+    } catch {
+      setMsg(tr.commError);
+    } finally {
+      setRestartingCopanel(false);
+    }
+  };
 
   const selfModuleVersion = catalog.find((p) => p.id === 'appstore_manager')?.version;
 
@@ -230,6 +312,8 @@ export default function AppStoreDashboard() {
     setBuildStatus("running");
     setBuildProgress(5);
     setShowBuildLogs(false);
+    setRestartRequired(false);
+    setRestartReason(null);
     setMsg(language === 'vi' ? 'Đang tải lên tệp zip...' : 'Uploading zip file...');
 
     const formData = new FormData();
@@ -263,20 +347,8 @@ export default function AppStoreDashboard() {
             });
             if (r.ok) {
               const b = await r.json();
-              if (b.logs) setBuildLogs(b.logs);
-              if (typeof b.progress === 'number') setBuildProgress(b.progress);
-              if (b.status === 'success' || b.status === 'failed') {
-                setBuildStatus(b.status);
+              if (handleBuildPollResult(b, file.name)) {
                 clearInterval(interval);
-                if (b.status === 'success') {
-                  setMsg(`✓ ${file.name} installed and built successfully!`);
-                  fetchCatalog();
-                  setTimeout(() => {
-                    window.location.reload();
-                  }, 1200);
-                } else {
-                  setMsg(`❌ Error building ${file.name}: ${b.error || 'Build failed.'}`);
-                }
               }
             }
           } catch (err) {
@@ -333,6 +405,8 @@ export default function AppStoreDashboard() {
     setBuildStatus("running");
     setBuildProgress(5);
     setShowBuildLogs(false);
+    setRestartRequired(false);
+    setRestartReason(null);
     setMsg(tr.installing(pkg.name));
     try {
       const res = await fetch('/api/appstore_manager/install', {
@@ -346,7 +420,7 @@ export default function AppStoreDashboard() {
           download_url: pkg.download_url,
           version: pkg.version,
           system_packages: pkg.system_packages,
-          requires_copanel_restart: !!(pkg as { requires_copanel_restart?: boolean }).requires_copanel_restart,
+          requires_copanel_restart: !!pkg.requires_copanel_restart,
         }),
       });
       const d = await res.json();
@@ -361,20 +435,8 @@ export default function AppStoreDashboard() {
             });
             if (r.ok) {
               const b = await r.json();
-              if (b.logs) setBuildLogs(b.logs);
-              if (typeof b.progress === 'number') setBuildProgress(b.progress);
-              if (b.status === 'success' || b.status === 'failed') {
-                setBuildStatus(b.status);
+              if (handleBuildPollResult(b, pkg.name)) {
                 clearInterval(interval);
-                if (b.status === 'success') {
-                  setMsg(`✓ ${pkg.name} installed and built successfully!`);
-                  fetchCatalog();
-                  setTimeout(() => {
-                    window.location.reload();
-                  }, 1200);
-                } else {
-                  setMsg(`❌ Error building ${pkg.name}: ${b.error || 'Build failed.'}`);
-                }
               }
             }
           } catch (err) {
@@ -576,7 +638,7 @@ export default function AppStoreDashboard() {
                 </span>
                 {(buildStatus === 'success' || buildStatus === 'failed') && (
                   <button
-                    onClick={() => { setActivePkgId(null); setBuildLogs([]); setBuildProgress(0); }}
+                    onClick={resetBuildModal}
                     className={`p-1.5 rounded-lg border transition-all duration-200 ${
                       isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-800 border-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border-slate-200'
                     }`}
@@ -636,9 +698,45 @@ export default function AppStoreDashboard() {
             </div>
             )}
 
+            {buildStatus === 'success' && restartRequired && (
+              <div
+                className={`rounded-xl border p-4 space-y-3 ${
+                  isDark ? 'border-amber-500/30 bg-amber-950/30' : 'border-amber-200 bg-amber-50'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <Icons.RefreshCw className={`w-4 h-4 mt-0.5 shrink-0 ${isDark ? 'text-amber-400' : 'text-amber-700'}`} />
+                  <div className="space-y-1">
+                    <p className={`text-xs font-bold ${isDark ? 'text-amber-200' : 'text-amber-900'}`}>
+                      {tr.restartRequiredTitle}
+                    </p>
+                    <p className={`text-[11px] leading-relaxed ${isDark ? 'text-amber-100/80' : 'text-amber-800'}`}>
+                      {tr.restartRequiredBody}
+                    </p>
+                    {restartReason && (
+                      <p className={`text-[10px] font-mono opacity-60 ${isDark ? 'text-amber-200' : 'text-amber-700'}`}>
+                        {restartReason}
+                      </p>
+                    )}
+                    <p className={`text-[10px] ${isDark ? 'text-amber-200/70' : 'text-amber-700'}`}>
+                      {tr.restartManualHint}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={restartingCopanel}
+                  onClick={() => void handleRestartCopanel()}
+                  className="w-full py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white transition"
+                >
+                  {restartingCopanel ? tr.restartingCopanel : tr.restartCopanelBtn}
+                </button>
+              </div>
+            )}
+
             {(buildStatus === 'success' || buildStatus === 'failed') && (
               <button
-                onClick={() => { setActivePkgId(null); setBuildLogs([]); setBuildProgress(0); }}
+                onClick={resetBuildModal}
                 className={`w-full py-2.5 font-bold text-xs rounded-xl transition-all duration-200 border ${
                   isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200 hover:text-white' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-sm'
                 }`}

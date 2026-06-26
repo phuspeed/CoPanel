@@ -5,8 +5,9 @@ Exposes FastAPI endpoints for AppStore catalog and installation actions.
 import secrets
 from typing import Dict, Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 
+from core.auth import require_admin
 from .logic import AppStoreManager, get_copanel_home, derive_pkg_id_from_upload_name
 
 router = APIRouter()
@@ -52,6 +53,16 @@ def install_package(req: dict) -> Dict[str, Any]:
 def get_build_status(pkg_id: str) -> Dict[str, Any]:
     """Retrieves real-time build logs and installation status."""
     return AppStoreManager.get_build_status(pkg_id)
+
+
+@router.post("/restart-copanel")
+def restart_copanel(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    """Restart copanel systemd service after module install (superadmin)."""
+    try:
+        result = AppStoreManager.trigger_copanel_restart()
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.post("/uninstall")
 def uninstall_package(req: dict) -> Dict[str, Any]:
