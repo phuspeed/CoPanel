@@ -42,6 +42,8 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   Grid: Icons.Grid,
   Settings: Icons.Settings,
   Home: Icons.Home,
+  Trash2: Icons.Trash2,
+  HardDrive: Icons.HardDrive,
 };
 
 export default function Layout({ user, onLogout }: { user?: any; onLogout?: () => void }) {

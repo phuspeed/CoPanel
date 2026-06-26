@@ -149,6 +149,14 @@ function isProtectedMount(mountpoint: string): boolean {
   return false;
 }
 
+function apiErrorMessage(body: Record<string, unknown>, status: number): string {
+  const wrapped = body.error as { message?: string } | undefined;
+  if (wrapped?.message) return wrapped.message;
+  if (typeof body.detail === 'string') return body.detail;
+  if (typeof body.message === 'string') return body.message;
+  return `HTTP ${status}`;
+}
+
 function formatBytes(bytes: number, language: 'en' | 'vi'): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = language === 'vi'
@@ -487,9 +495,9 @@ export default function StorageManagerDashboard() {
 
   const fetchJson = useCallback(async <T,>(path: string): Promise<T> => {
     const res = await fetch(path, { headers: authHeaders });
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch(() => ({} as Record<string, unknown>));
     if (!res.ok) {
-      throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+      throw new Error(apiErrorMessage(body, res.status));
     }
     return body.data as T;
   }, [authHeaders]);
@@ -500,9 +508,9 @@ export default function StorageManagerDashboard() {
       headers: { ...authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch(() => ({} as Record<string, unknown>));
     if (!res.ok) {
-      throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+      throw new Error(apiErrorMessage(body, res.status));
     }
     return body.data as T;
   }, [authHeaders]);
@@ -510,28 +518,44 @@ export default function StorageManagerDashboard() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [ov, dk, vol, fst, poolData, maint, alertData] = await Promise.all([
-        fetchJson<OverviewData>('/api/storage_manager/overview'),
-        fetchJson<DiskInfo[]>('/api/storage_manager/disks'),
-        fetchJson<VolumeInfo[]>('/api/storage_manager/volumes'),
-        fetchJson<FstabEntry[]>('/api/storage_manager/fstab').catch(() => []),
-        fetchJson<PoolsData>('/api/storage_manager/pools').catch(() => null),
-        fetchJson<{ targets: MaintenanceTargets; history: MaintenanceHistoryItem[] }>('/api/storage_manager/maintenance').catch(() => null),
-        fetchJson<{ alerts: StorageAlert[] }>('/api/storage_manager/alerts').catch(() => ({ alerts: [] })),
-      ]);
-      setOverview(ov);
-      setDisks(dk);
-      setVolumes(vol);
-      setFstab(fst);
-      setPools(poolData);
-      setMaintenance(maint);
-      setAlerts(alertData?.alerts || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load storage data');
-    } finally {
-      setLoading(false);
+    const errors: string[] = [];
+
+    const settled = await Promise.allSettled([
+      fetchJson<OverviewData>('/api/storage_manager/overview'),
+      fetchJson<DiskInfo[]>('/api/storage_manager/disks'),
+      fetchJson<VolumeInfo[]>('/api/storage_manager/volumes'),
+      fetchJson<FstabEntry[]>('/api/storage_manager/fstab'),
+      fetchJson<PoolsData>('/api/storage_manager/pools'),
+      fetchJson<{ targets: MaintenanceTargets; history: MaintenanceHistoryItem[] }>('/api/storage_manager/maintenance'),
+      fetchJson<{ alerts: StorageAlert[] }>('/api/storage_manager/alerts'),
+    ]);
+
+    const [ovR, dkR, volR, fstR, poolR, maintR, alertR] = settled;
+
+    if (ovR.status === 'fulfilled') setOverview(ovR.value);
+    else errors.push(ovR.reason instanceof Error ? ovR.reason.message : 'overview failed');
+
+    if (dkR.status === 'fulfilled') setDisks(dkR.value);
+    else {
+      setDisks([]);
+      errors.push(dkR.reason instanceof Error ? dkR.reason.message : 'disks failed');
     }
+
+    if (volR.status === 'fulfilled') setVolumes(volR.value);
+    else {
+      setVolumes([]);
+      errors.push(volR.reason instanceof Error ? volR.reason.message : 'volumes failed');
+    }
+
+    setFstab(fstR.status === 'fulfilled' ? fstR.value : []);
+    setPools(poolR.status === 'fulfilled' ? poolR.value : null);
+    setMaintenance(maintR.status === 'fulfilled' ? maintR.value : null);
+    setAlerts(alertR.status === 'fulfilled' ? (alertR.value?.alerts || []) : []);
+
+    if (errors.length > 0) {
+      setError(errors.join(' · '));
+    }
+    setLoading(false);
   }, [fetchJson]);
 
   useEffect(() => {

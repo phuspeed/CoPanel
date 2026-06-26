@@ -49,7 +49,7 @@ def _http_error(exc: StorageManagerError) -> HTTPException:
     code = exc.code
     if code == "disk_not_found" or code == "device_not_found":
         status = 404
-    elif code in {"lsblk_missing", "smartctl_missing", "parted_missing", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing"}:
+    elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed"}:
         status = 503
     elif code in _BAD_REQUEST_CODES:
         status = 400

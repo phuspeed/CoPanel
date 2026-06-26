@@ -28,6 +28,14 @@ _SKIP_FSTYPES = frozenset({
     "squashfs", "fuse.portal", "fuse.gvfsd-fuse",
 })
 
+# Older util-linux (e.g. Ubuntu 20.04) lacks STATE/HOTPLUG — try simpler sets first.
+_LSBLK_COLUMN_SETS = (
+    "NAME,KNAME,TYPE,SIZE,ROTA,RO,MODEL,SERIAL,FSTYPE,MOUNTPOINT,PKNAME,TRAN,RM",
+    "NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,PKNAME,ROTA,RM,MODEL,SERIAL,TRAN",
+    "NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,PKNAME,ROTA,RM",
+    "NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,PKNAME",
+)
+
 MOCK_DISKS: List[Dict[str, Any]] = [
     {
         "name": "sda",
@@ -206,22 +214,41 @@ class StorageService:
         except OSError:
             return None
 
+    def _lsblk_bin(self) -> str:
+        found = self._lsblk_bin_optional()
+        if not found:
+            raise StorageManagerError("lsblk not found. Install util-linux.", code="lsblk_missing")
+        return found
+
+    def _lsblk_bin_optional(self) -> Optional[str]:
+        for candidate in ("/usr/bin/lsblk", "/bin/lsblk", "/sbin/lsblk"):
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return shutil.which("lsblk")
+
     def _lsblk_rows(self) -> List[Dict[str, Any]]:
         if IS_WINDOWS:
             return []
-        if not shutil.which("lsblk"):
-            raise StorageManagerError("lsblk not found. Install util-linux.", code="lsblk_missing")
-        result = self._run([
-            "lsblk", "-J", "-b",
-            "-o", "NAME,KNAME,TYPE,SIZE,ROTA,RO,MODEL,SERIAL,FSTYPE,MOUNTPOINT,PKNAME,TRAN,RM,HOTPLUG,STATE",
-        ])
-        if result.returncode != 0 or not result.stdout.strip():
-            raise StorageManagerError(
-                result.stderr.strip() or "Failed to list block devices",
-                code="lsblk_failed",
-            )
-        payload = json.loads(result.stdout)
-        return payload.get("blockdevices") or []
+        lsblk = self._lsblk_bin()
+        last_err = ""
+        for cols in _LSBLK_COLUMN_SETS:
+            result = self._run([lsblk, "-J", "-b", "-o", cols])
+            if result.returncode != 0 or not (result.stdout or "").strip():
+                last_err = (result.stderr or result.stdout or "").strip() or "lsblk failed"
+                continue
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                last_err = "Invalid lsblk JSON output"
+                continue
+            rows = payload.get("blockdevices") or []
+            if rows:
+                return rows
+            last_err = "lsblk returned no block devices"
+        raise StorageManagerError(
+            last_err or "Failed to list block devices",
+            code="lsblk_failed",
+        )
 
     def _flatten_lsblk(self, nodes: List[Dict[str, Any]], parent: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         flat: List[Dict[str, Any]] = []
@@ -249,7 +276,46 @@ class StorageService:
                     current = by_name.get(pk) if pk else None
         return names
 
-    def list_disks(self) -> List[Dict[str, Any]]:
+    def _is_descendant_of_disk(self, node_name: str, disk_name: str, flat: List[Dict[str, Any]]) -> bool:
+        by_name = {row.get("name"): row for row in flat if row.get("name")}
+        current = by_name.get(node_name)
+        seen: set = set()
+        while current:
+            if current.get("name") == disk_name:
+                return True
+            if current.get("type") == "disk":
+                return str(current.get("name")) == disk_name
+            pk = current.get("pkname") or current.get("_parent_name")
+            if not pk or pk in seen:
+                break
+            seen.add(str(pk))
+            if pk == disk_name:
+                return True
+            current = by_name.get(pk)
+        return False
+
+    def _partitions_for_disk(self, disk_name: str, flat: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        partitions: List[Dict[str, Any]] = []
+        for part in flat:
+            name = str(part.get("name") or "")
+            if not name or name == disk_name:
+                continue
+            if part.get("type") not in ("part", "lvm", "crypt"):
+                continue
+            if not self._is_descendant_of_disk(name, disk_name, flat):
+                continue
+            partitions.append({
+                "name": part.get("name"),
+                "path": f"/dev/{part.get('name')}",
+                "size_bytes": self._parse_size(part.get("size")),
+                "fstype": part.get("fstype") or None,
+                "mountpoint": part.get("mountpoint") or None,
+                "type": part.get("type"),
+            })
+        partitions.sort(key=lambda p: str(p.get("name") or ""))
+        return partitions
+
+    def list_disks(self, include_smart: bool = True) -> List[Dict[str, Any]]:
         if IS_WINDOWS:
             return [dict(d) for d in MOCK_DISKS]
 
@@ -269,22 +335,13 @@ class StorageService:
             transport = (row.get("tran") or "").strip().lower() or None
             rotational = bool(int(row.get("rota") or 0)) if row.get("rota") is not None else None
 
-            partitions: List[Dict[str, Any]] = []
-            for part in flat:
-                if part.get("type") not in ("part", "lvm", "crypt"):
-                    continue
-                pk = part.get("pkname") or part.get("_parent_name")
-                if pk != name:
-                    continue
-                partitions.append({
-                    "name": part.get("name"),
-                    "path": f"/dev/{part.get('name')}",
-                    "size_bytes": self._parse_size(part.get("size")),
-                    "fstype": part.get("fstype") or None,
-                    "mountpoint": part.get("mountpoint") or None,
-                })
+            partitions = self._partitions_for_disk(name, flat)
 
-            smart_summary = self._smart_summary(name)
+            smart_summary = self._smart_summary(name) if include_smart else {
+                "available": False,
+                "status": "unknown",
+                "message": "SMART loaded on demand",
+            }
 
             disks.append({
                 "name": name,
@@ -516,7 +573,7 @@ class StorageService:
         return level, message, issues
 
     def get_overview(self) -> Dict[str, Any]:
-        disks = self.list_disks()
+        disks = self.list_disks(include_smart=False)
         volumes = self.list_volumes()
         health, message, issues = self._health_from_disks_and_volumes(disks, volumes)
 
@@ -539,7 +596,7 @@ class StorageService:
             "smart_monitored": smart_available,
             "smart_passed": smart_passed,
             "tools": {
-                "lsblk": bool(IS_WINDOWS or shutil.which("lsblk")),
+                "lsblk": bool(IS_WINDOWS or self._lsblk_bin_optional()),
                 "smartctl": bool(IS_WINDOWS or self._smartctl_bin()),
                 "parted": bool(IS_WINDOWS or shutil.which("parted")),
                 "blkid": bool(IS_WINDOWS or shutil.which("blkid")),
@@ -974,7 +1031,7 @@ class StorageService:
                     m_size = re.search(r"(\d+)\s+blocks", detail)
                     if m_size:
                         size_bytes = int(m_size.group(1)) * 1024
-                    if "[UU]" in detail or "["_ in detail:
+                    if "[UU]" in detail or "[_" in detail:
                         health = "clean"
                     if "[_" in detail:
                         health = "degraded"
