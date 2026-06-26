@@ -43,6 +43,7 @@ interface Settings {
   aria2_rpc_host?: string;
   aria2_rpc_port?: number;
   aria2_rpc_secret_set?: boolean;
+  aria2_auto_start?: boolean;
 }
 
 interface EngineStatus {
@@ -208,6 +209,8 @@ export default function DownloadManager() {
             aria2Host: 'RPC host',
             aria2Port: 'RPC port',
             aria2Secret: 'RPC secret',
+            aria2AutoStart: 'Tự khởi động aria2 khi mở panel',
+            aria2AutoStartHint: 'CoPanel tự chạy aria2c với RPC trên localhost (cần cho BitTorrent).',
             manageAccounts: 'Quản lý tài khoản',
             accountLabel: 'Nhãn',
             accountUser: 'Tên đăng nhập',
@@ -273,6 +276,8 @@ export default function DownloadManager() {
             aria2Host: 'RPC host',
             aria2Port: 'RPC port',
             aria2Secret: 'RPC secret',
+            aria2AutoStart: 'Auto-start aria2 on panel load',
+            aria2AutoStartHint: 'CoPanel starts aria2c with RPC on localhost when BitTorrent support is needed.',
             manageAccounts: 'Manage accounts',
             accountLabel: 'Label',
             accountUser: 'Username',
@@ -1080,9 +1085,17 @@ export default function DownloadManager() {
               {settingsTab === 'aria2' && (
                 <div className="space-y-4">
                   <p className={`text-sm ${muted}`}>
-                    Install aria2c and run with RPC enabled, e.g.{' '}
-                    <code className="text-xs">aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all</code>
+                    {t.aria2AutoStartHint} Log:{' '}
+                    <code className="text-xs">/opt/copanel/config/download_manager/aria2.log</code>
                   </p>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.aria2_auto_start !== false}
+                      onChange={(e) => setSettingsDraft((d) => ({ ...d, aria2_auto_start: e.target.checked }))}
+                    />
+                    {t.aria2AutoStart}
+                  </label>
                   <Field label={t.aria2Host}>
                     <input className={`w-full px-2 py-1.5 text-sm rounded border ${isDark ? 'bg-slate-800 border-slate-600' : ''}`} value={settingsDraft.aria2_rpc_host || '127.0.0.1'} onChange={(e) => setSettingsDraft((d) => ({ ...d, aria2_rpc_host: e.target.value }))} />
                   </Field>

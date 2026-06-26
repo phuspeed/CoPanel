@@ -4,11 +4,18 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+import subprocess
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+_aria2_start_lock = threading.Lock()
+_last_aria2_start_attempt = 0.0
+_ARIA2_START_COOLDOWN_SEC = 10.0
 
 
 def _resolve_aria2_bin() -> Optional[str]:
@@ -119,6 +126,83 @@ def get_engine_from_settings(settings: Dict[str, Any]) -> Aria2Engine:
         port=int(settings.get("aria2_rpc_port") or 6800),
         secret=settings.get("aria2_rpc_secret") or "",
     )
+
+
+def _is_local_rpc_host(host: str) -> bool:
+    h = (host or "127.0.0.1").strip().lower()
+    return h in ("127.0.0.1", "localhost", "::1")
+
+
+def ensure_aria2_daemon(
+    *,
+    config_dir: Path,
+    host: str,
+    port: int,
+    secret: str,
+    download_dir: str,
+) -> bool:
+    """Start local aria2c with RPC when unreachable. Returns True if RPC responds."""
+    global _last_aria2_start_attempt
+
+    if not _is_local_rpc_host(host):
+        return False
+
+    engine = Aria2Engine(host=host, port=port, secret=secret)
+    if engine.is_available():
+        return True
+
+    now = time.time()
+    with _aria2_start_lock:
+        if engine.is_available():
+            return True
+        if now - _last_aria2_start_attempt < _ARIA2_START_COOLDOWN_SEC:
+            return False
+        _last_aria2_start_attempt = now
+
+        bin_path = _resolve_aria2_bin()
+        if not bin_path:
+            return False
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        session = config_dir / "aria2.session"
+        log_file = config_dir / "aria2.log"
+        dest = Path(download_dir or ".")
+        dest.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            bin_path,
+            "--enable-rpc",
+            f"--rpc-listen-port={int(port or 6800)}",
+            "--rpc-listen-all=false",
+            "--rpc-allow-origin-all=true",
+            "--continue=true",
+            f"--dir={dest}",
+            f"--input-file={session}",
+            f"--save-session={session}",
+            "--save-session-interval=30",
+            "--daemon=true",
+            "--quiet=true",
+        ]
+        if secret:
+            cmd.append(f"--rpc-secret={secret}")
+
+        try:
+            with open(log_file, "a", encoding="utf-8") as logfh:
+                subprocess.run(
+                    cmd,
+                    stdout=logfh,
+                    stderr=subprocess.STDOUT,
+                    timeout=15,
+                    check=False,
+                )
+        except Exception:
+            return False
+
+        for _ in range(15):
+            time.sleep(0.2)
+            if engine.is_available():
+                return True
+    return False
 
 
 def map_aria2_status(status: str) -> str:

@@ -25,7 +25,13 @@ from urllib.error import HTTPError as UrlHTTPError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
-from .aria2_engine import Aria2Engine, get_engine_from_settings, parse_aria2_progress
+from .aria2_engine import (
+    Aria2Engine,
+    _resolve_aria2_bin,
+    ensure_aria2_daemon,
+    get_engine_from_settings,
+    parse_aria2_progress,
+)
 from .google_oauth import GoogleOAuthService
 
 IS_WINDOWS = os.name == "nt"
@@ -46,6 +52,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "aria2_rpc_host": "127.0.0.1",
     "aria2_rpc_port": 6800,
     "aria2_rpc_secret": "",
+    "aria2_auto_start": True,
 }
 
 GOOGLE_DRIVE_FILE_RE = re.compile(
@@ -163,6 +170,7 @@ def get_settings(mask_secrets: bool = True) -> Dict[str, Any]:
             out["aria2_rpc_secret_set"] = True
             out["aria2_rpc_secret"] = ""
     out["google_oauth_connected"] = GoogleOAuthService.get_access_token() is not None
+    _ensure_aria2_running()
     engine = _get_aria2()
     out["aria2_available"] = bool(engine and engine.is_available())
     return out
@@ -933,6 +941,7 @@ def ensure_worker() -> None:
 
 def _worker_loop() -> None:
     _init_db()
+    _ensure_aria2_running()
     _apply_aria2_speed_limits()
     while True:
         try:
@@ -1182,6 +1191,7 @@ def _get_aria2() -> Optional[Aria2Engine]:
 
 
 def _apply_aria2_speed_limits() -> None:
+    _ensure_aria2_running()
     engine = _get_aria2()
     if not engine:
         return
@@ -1339,6 +1349,27 @@ def scan_watched_folder() -> None:
         _save_watched_seen(seen)
 
 
+def _ensure_aria2_running() -> bool:
+    """Try to connect or auto-start local aria2 RPC."""
+    engine = _get_aria2()
+    if not engine:
+        return False
+    try:
+        if engine.is_available():
+            return True
+    except Exception:
+        pass
+    if not _get_setting("aria2_auto_start"):
+        return False
+    return ensure_aria2_daemon(
+        config_dir=CONFIG_DIR,
+        host=str(_get_setting("aria2_rpc_host") or "127.0.0.1"),
+        port=int(_get_setting("aria2_rpc_port") or 6800),
+        secret=str(_get_setting("aria2_rpc_secret") or ""),
+        download_dir=str(_get_setting("destination_folder") or ""),
+    )
+
+
 def get_engine_status() -> Dict[str, Any]:
     engine = _get_aria2()
     if not engine:
@@ -1348,10 +1379,25 @@ def get_engine_status() -> Dict[str, Any]:
             return {"aria2_available": True, "version": engine.get_version(), "message": "connected"}
     except Exception as exc:
         return {"aria2_available": False, "version": "", "message": str(exc)}
+
+    if not _resolve_aria2_bin():
+        return {
+            "aria2_available": False,
+            "version": "",
+            "message": "aria2 not installed — install via AppStore system packages or: apt install aria2",
+        }
+
+    if _ensure_aria2_running():
+        try:
+            if engine.is_available():
+                return {"aria2_available": True, "version": engine.get_version(), "message": "connected"}
+        except Exception as exc:
+            return {"aria2_available": False, "version": "", "message": str(exc)}
+
     return {
         "aria2_available": False,
         "version": "",
-        "message": "aria2 RPC unreachable — start aria2c --enable-rpc",
+        "message": "aria2 RPC unreachable — check Settings → aria2 or /opt/copanel/config/download_manager/aria2.log",
     }
 
 

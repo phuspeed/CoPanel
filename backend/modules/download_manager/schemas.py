@@ -51,6 +51,7 @@ class SaveSettingsRequest(BaseModel):
     aria2_rpc_host: Optional[str] = None
     aria2_rpc_port: Optional[int] = Field(None, ge=1, le=65535)
     aria2_rpc_secret: Optional[str] = None
+    aria2_auto_start: Optional[bool] = None
 
 
 class GoogleOAuthStartRequest(BaseModel):
