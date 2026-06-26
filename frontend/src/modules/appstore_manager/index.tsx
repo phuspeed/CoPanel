@@ -341,12 +341,13 @@ export default function AppStoreDashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ 
-          id: pkg.id, 
-          download_url: pkg.download_url, 
+        body: JSON.stringify({
+          id: pkg.id,
+          download_url: pkg.download_url,
           version: pkg.version,
-          system_packages: pkg.system_packages 
-        })
+          system_packages: pkg.system_packages,
+          requires_copanel_restart: !!(pkg as { requires_copanel_restart?: boolean }).requires_copanel_restart,
+        }),
       });
       const d = await res.json();
       if (res.ok) {

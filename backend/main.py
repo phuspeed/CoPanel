@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from core.loader import ModuleLoader
 from core import api as core_api
+from core import module_reload
 from core.jobs import jobs as job_manager
 
 logging.basicConfig(
@@ -117,6 +118,7 @@ async def api_root():
 
 loader = ModuleLoader(MODULES_DIR)
 loaded_modules = loader.load_modules(app)
+module_reload.configure(app, loader)
 
 
 @app.get("/api/modules")

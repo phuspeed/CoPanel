@@ -27,11 +27,18 @@ def install_package(req: dict) -> Dict[str, Any]:
     download_url = req.get("download_url")
     version = req.get("version", "1.0.0")
     system_packages = req.get("system_packages", [])
+    requires_copanel_restart = bool(req.get("requires_copanel_restart", False))
     if not pkg_id or not download_url:
         raise HTTPException(status_code=400, detail="Package id and download_url are required.")
-    
+
     try:
-        res = AppStoreManager.install_package(pkg_id, download_url, version, system_packages)
+        res = AppStoreManager.install_package(
+            pkg_id,
+            download_url,
+            version,
+            system_packages,
+            requires_copanel_restart,
+        )
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
         return res

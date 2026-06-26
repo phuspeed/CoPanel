@@ -133,6 +133,54 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
     return compare_versions(remote_version, local_version) > 0
 
 
+# Modules whose installer/runtime cannot hot-reload safely — user may restart manually.
+COPANEL_RESTART_RECOMMENDED = frozenset({"appstore_manager"})
+
+
+def _finalize_module_install(
+    pkg_id: str,
+    *,
+    backend_updated: bool,
+    frontend_updated: bool,
+    requires_copanel_restart: bool = False,
+) -> None:
+    """Apply post-install steps without forcing a full copanel service restart."""
+    global BUILD_TASKS
+
+    if frontend_updated:
+        BUILD_TASKS[pkg_id]["logs"].append("✅ Frontend rebuilt — refresh the browser to see UI changes.")
+    elif backend_updated:
+        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipped npm build.")
+
+    if not backend_updated:
+        if frontend_updated:
+            BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend unchanged.")
+        return
+
+    if requires_copanel_restart or pkg_id in COPANEL_RESTART_RECOMMENDED:
+        BUILD_TASKS[pkg_id]["logs"].append(
+            f"ℹ️ Backend files updated for «{pkg_id}». "
+            "Restart copanel when convenient if API/installer behavior does not match "
+            "(systemctl restart copanel). No automatic restart."
+        )
+        return
+
+    try:
+        from core.module_reload import reload_module
+
+        ok, msg = reload_module(pkg_id)
+    except Exception as exc:
+        ok, msg = False, str(exc)
+
+    if ok:
+        BUILD_TASKS[pkg_id]["logs"].append(f"✅ Backend API reloaded for «{pkg_id}» (no copanel restart).")
+    else:
+        BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
+        BUILD_TASKS[pkg_id]["logs"].append(
+            "ℹ️ Run «systemctl restart copanel» when you need new API routes active."
+        )
+
+
 def restart_backend_service(delay: float = 2.0):
     """
     Restart the copanel systemd service so newly-installed Python modules
@@ -162,7 +210,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.17",
+    "appstore_manager": "1.0.18",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -623,7 +671,13 @@ class AppStoreManager:
 
 
     @staticmethod
-    def install_package(pkg_id: str, download_url: str, version: str = "1.0.0", system_packages: list = None) -> dict:
+    def install_package(
+        pkg_id: str,
+        download_url: str,
+        version: str = "1.0.0",
+        system_packages: list = None,
+        requires_copanel_restart: bool = False,
+    ) -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
         BUILD_TASKS[pkg_id] = {
@@ -696,6 +750,7 @@ class AppStoreManager:
                 src_backend = extracted_dir / "backend"
                 src_frontend = extracted_dir / "frontend"
                 backend_updated = src_backend.exists()
+                frontend_updated = src_frontend.exists()
                 
                 if Path("/opt/copanel").exists():
                     dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
@@ -713,45 +768,51 @@ class AppStoreManager:
                 if src_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
                     shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
-                
-                BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
-                BUILD_TASKS[pkg_id]["progress"] = 60
-                
-                cmd = ["npm", "run", "build"]
-                
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=frontend_cwd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    shell=is_windows,
-                    bufsize=1
-                )
-                
-                while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    if line:
-                        stripped_line = line.strip()
-                        if stripped_line:
-                            BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
-                            
-                return_code = process.wait()
+
+                if frontend_updated:
+                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                    BUILD_TASKS[pkg_id]["progress"] = 60
+
+                    cmd = ["npm", "run", "build"]
+
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=frontend_cwd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        shell=is_windows,
+                        bufsize=1,
+                    )
+
+                    while True:
+                        line = process.stdout.readline()
+                        if not line and process.poll() is not None:
+                            break
+                        if line:
+                            stripped_line = line.strip()
+                            if stripped_line:
+                                BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
+
+                    return_code = process.wait()
+                else:
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
+                    return_code = 0
+
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["progress"] = 100
-                    BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
+                    BUILD_TASKS[pkg_id]["logs"].append("🎉 Installation completed successfully!")
                     try:
                         save_local_version(pkg_id, version)
                     except Exception:
                         pass
-                    if backend_updated:
-                        BUILD_TASKS[pkg_id]["logs"].append("🔄 Restarting copanel in ~3s to load new backend API routes…")
-                        restart_backend_service(delay=3.0)
-                    else:
-                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend restart not required.")
+                    _finalize_module_install(
+                        pkg_id,
+                        backend_updated=backend_updated,
+                        frontend_updated=frontend_updated,
+                        requires_copanel_restart=requires_copanel_restart,
+                    )
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
@@ -922,40 +983,46 @@ class AppStoreManager:
                     dst_backend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
                 backend_updated = bool(found_backend and found_backend.exists())
-                    
+                frontend_updated = bool(found_frontend and found_frontend.exists())
+
                 if found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
                     dst_frontend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_frontend, dst_frontend, dirs_exist_ok=True)
-                
-                BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
-                BUILD_TASKS[pkg_id]["progress"] = 65
-                
-                cmd = ["npm", "run", "build"]
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=frontend_cwd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    shell=is_windows,
-                    bufsize=1
-                )
-                
-                while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    if line:
-                        stripped_line = line.strip()
-                        if stripped_line:
-                            BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
-                            
-                return_code = process.wait()
+
+                if frontend_updated:
+                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                    BUILD_TASKS[pkg_id]["progress"] = 65
+
+                    cmd = ["npm", "run", "build"]
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=frontend_cwd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        shell=is_windows,
+                        bufsize=1,
+                    )
+
+                    while True:
+                        line = process.stdout.readline()
+                        if not line and process.poll() is not None:
+                            break
+                        if line:
+                            stripped_line = line.strip()
+                            if stripped_line:
+                                BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
+
+                    return_code = process.wait()
+                else:
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
+                    return_code = 0
+
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["progress"] = 100
-                    BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
+                    BUILD_TASKS[pkg_id]["logs"].append("🎉 Installation completed successfully!")
                     try:
                         if Path("/opt/copanel").exists():
                             mod_dir = Path(f"/opt/copanel/backend/modules/{pkg_id}")
@@ -966,11 +1033,11 @@ class AppStoreManager:
                             save_local_version(pkg_id, vf.read_text(encoding="utf-8").strip())
                     except Exception:
                         pass
-                    if backend_updated:
-                        BUILD_TASKS[pkg_id]["logs"].append("🔄 Restarting copanel in ~3s to load new backend API routes…")
-                        restart_backend_service(delay=3.0)
-                    else:
-                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend restart not required.")
+                    _finalize_module_install(
+                        pkg_id,
+                        backend_updated=backend_updated,
+                        frontend_updated=frontend_updated,
+                    )
                 else:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
