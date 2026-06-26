@@ -1063,11 +1063,11 @@ def _download_http(
 ) -> None:
     dest_dir = Path(task["destination"])
     dest_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir = Path(task["temp_path"])
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = str(task.get("temp_path") or "")
     final_name = task["name"]
-    temp_file = temp_dir / f"{final_name}.part"
     final_path = dest_dir / final_name
+    # Write .part next to final file (same filesystem — avoids cross-device rename).
+    temp_file = dest_dir / f"{final_name}.part"
 
     if url.startswith("file://"):
         local = Path(url[7:])
@@ -1081,7 +1081,7 @@ def _download_http(
             progress=100.0,
             completed_at=_utc_now(),
         )
-        _cleanup_temp(task["temp_path"])
+        _cleanup_temp(staging_dir)
         return
 
     _update_task(task_id, status="downloading")
@@ -1091,63 +1091,74 @@ def _download_http(
     last_bytes = 0
     speed = 0
 
-    with _http_open(url, headers=headers, timeout=600) as resp:
-        cl = resp.headers.get("Content-Length") or resp.headers.get("content-length")
-        if cl and str(cl).isdigit():
-            total = int(cl)
-        cd = resp.headers.get("Content-Disposition") or resp.headers.get("content-disposition") or ""
-        if "filename=" in cd and task["name"].startswith("google_"):
-            m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";\n]+)"?', cd)
-            if m:
-                final_name = m.group(1).strip()
-                final_path = dest_dir / final_name
-                temp_file = temp_dir / f"{final_name}.part"
-                _update_task(task_id, name=final_name)
+    try:
+        with _http_open(url, headers=headers, timeout=600) as resp:
+            cl = resp.headers.get("Content-Length") or resp.headers.get("content-length")
+            if cl and str(cl).isdigit():
+                total = int(cl)
+            cd = resp.headers.get("Content-Disposition") or resp.headers.get("content-disposition") or ""
+            if "filename=" in cd and task["name"].startswith("google_"):
+                m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";\n]+)"?', cd)
+                if m:
+                    final_name = m.group(1).strip()
+                    final_path = dest_dir / final_name
+                    temp_file = dest_dir / f"{final_name}.part"
+                    _update_task(task_id, name=final_name)
 
-        with open(temp_file, "wb") as fh:
-            while True:
-                chunk = resp.read(256 * 1024)
-                if not chunk:
-                    break
-                cur = get_task(task_id)
-                if not cur or cur["status"] in ("paused", "stopped"):
-                    return
-                fh.write(chunk)
-                downloaded += len(chunk)
-                now = time.time()
-                if now - last_tick >= 1.0:
-                    speed = int((downloaded - last_bytes) / (now - last_tick))
-                    last_bytes = downloaded
-                    last_tick = now
-                    prog = (downloaded / total * 100) if total else 0.0
-                    _update_task(
-                        task_id,
-                        downloaded_bytes=downloaded,
-                        total_bytes=total,
-                        download_speed=speed,
-                        progress=round(prog, 1),
-                    )
+            with open(temp_file, "wb") as fh:
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    cur = get_task(task_id)
+                    if not cur or cur["status"] in ("paused", "stopped"):
+                        return
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.time()
+                    if now - last_tick >= 1.0:
+                        speed = int((downloaded - last_bytes) / (now - last_tick))
+                        last_bytes = downloaded
+                        last_tick = now
+                        prog = (downloaded / total * 100) if total else 0.0
+                        _update_task(
+                            task_id,
+                            downloaded_bytes=downloaded,
+                            total_bytes=total,
+                            download_speed=speed,
+                            progress=round(prog, 1),
+                        )
 
-    _finalize_download_file(temp_file, final_path)
-    size = final_path.stat().st_size
-    _update_task(
-        task_id,
-        status="completed",
-        downloaded_bytes=size,
-        total_bytes=size or size,
-        download_speed=0,
-        progress=100.0,
-        completed_at=_utc_now(),
-    )
-    _cleanup_temp(task["temp_path"])
+        _finalize_download_file(temp_file, final_path)
+        size = final_path.stat().st_size
+        _update_task(
+            task_id,
+            status="completed",
+            downloaded_bytes=size,
+            total_bytes=size or size,
+            download_speed=0,
+            progress=100.0,
+            completed_at=_utc_now(),
+        )
+    except Exception:
+        if temp_file.exists():
+            temp_file.unlink(missing_ok=True)
+        raise
+    finally:
+        _cleanup_temp(staging_dir)
 
 
 def _finalize_download_file(temp_file: Path, final_path: Path) -> None:
-    """Move completed .part file to destination (works across mount points)."""
+    """Move completed .part file to final name (same dir = atomic replace)."""
     final_path.parent.mkdir(parents=True, exist_ok=True)
+    if not temp_file.exists():
+        raise FileNotFoundError(f"Download incomplete: {temp_file}")
     if final_path.exists():
         final_path.unlink()
-    shutil.move(str(temp_file), str(final_path))
+    try:
+        temp_file.replace(final_path)
+    except OSError:
+        shutil.move(str(temp_file), str(final_path))
 
 
 def _cleanup_temp(temp_path: Optional[str]) -> None:
