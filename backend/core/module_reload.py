@@ -24,3 +24,7 @@ def reload_module(module_id: str) -> Tuple[bool, str]:
     if _app is None or _loader is None:
         return False, "Module reload is not configured on this process."
     return _loader.reload_module(_app, module_id)
+
+
+def get_app() -> Optional[FastAPI]:
+    return _app

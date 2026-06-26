@@ -81,6 +81,32 @@ class ModuleLoader:
             if key == prefix or key.startswith(prefix + "."):
                 del sys.modules[key]
 
+    def _ensure_module_package(self, module_path: Path, module_name: str) -> None:
+        """Register parent package so ``from . import logic`` works when hot-reloading."""
+        pkg_name = f"modules.{module_name}"
+        if pkg_name in sys.modules:
+            return
+
+        init_py = module_path / "__init__.py"
+        if init_py.is_file():
+            spec = importlib.util.spec_from_file_location(
+                pkg_name,
+                init_py,
+                submodule_search_locations=[str(module_path)],
+            )
+            if spec and spec.loader:
+                pkg = importlib.util.module_from_spec(spec)
+                sys.modules[pkg_name] = pkg
+                spec.loader.exec_module(pkg)
+                return
+
+        from importlib.machinery import ModuleSpec
+
+        spec = ModuleSpec(pkg_name, loader=None, is_package=True)
+        spec.submodule_search_locations = [str(module_path)]
+        pkg = importlib.util.module_from_spec(spec)
+        sys.modules[pkg_name] = pkg
+
     def _load_module_router(self, module_path: Path) -> Optional:
         """Dynamically import router from module's router.py."""
         try:
@@ -88,6 +114,8 @@ class ModuleLoader:
             if not router_file.exists():
                 logger.debug(f"No router.py found in {module_path.name}")
                 return None
+
+            self._ensure_module_package(module_path, module_path.name)
 
             spec = importlib.util.spec_from_file_location(
                 f"modules.{module_path.name}.router",

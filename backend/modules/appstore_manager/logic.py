@@ -137,6 +137,24 @@ def is_update_available(remote_version: str, local_version: str) -> bool:
 COPANEL_RESTART_RECOMMENDED = frozenset({"appstore_manager"})
 
 
+def _module_api_routes_active(pkg_id: str) -> bool:
+    """True if FastAPI has at least one route under /api/{pkg_id}."""
+    try:
+        from core.module_reload import get_app
+
+        app = get_app()
+        if app is None:
+            return False
+        prefix = f"/api/{pkg_id}"
+        for route in app.routes:
+            path = getattr(route, "path", None) or ""
+            if path == prefix or path.startswith(prefix + "/"):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _finalize_module_install(
     pkg_id: str,
     *,
@@ -174,6 +192,10 @@ def _finalize_module_install(
 
     if ok:
         BUILD_TASKS[pkg_id]["logs"].append(f"✅ Backend API reloaded for «{pkg_id}» (no copanel restart).")
+        if not _module_api_routes_active(pkg_id):
+            BUILD_TASKS[pkg_id]["logs"].append(
+                f"⚠️ «{pkg_id}» routes not visible after reload — run: systemctl restart copanel"
+            )
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
         BUILD_TASKS[pkg_id]["logs"].append(

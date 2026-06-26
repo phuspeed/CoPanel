@@ -48,9 +48,10 @@ def _auth_user(
     return user
 
 
-@router.on_event("startup")
-async def on_startup() -> None:
+try:
     logic.ensure_startup()
+except Exception:
+    pass
 
 
 @router.get("/settings")
