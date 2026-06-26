@@ -1,7 +1,7 @@
 /**
  * MiniTool Partition Wizard–style disk map + partition table + action panel.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Icons from 'lucide-react';
 
 type FormatFsType = 'ext4' | 'xfs' | 'btrfs' | 'vfat' | 'exfat' | 'ntfs' | 'hfsplus';
@@ -108,6 +108,7 @@ export interface PartitionWizardStrings {
   properties: string;
   partitionTable: string;
   confirmPartName: string;
+  confirmDiskName: string;
   dataLossWarning: string;
   deleteWarning: string;
   resizeHint: string;
@@ -250,6 +251,22 @@ export default function PartitionWizard({
 
   const [mountPoint, setMountPoint] = useState('/mnt/data');
   const [mountPersist, setMountPersist] = useState(true);
+  const partitionsApiAvailable = useRef<boolean | null>(null);
+
+  const applyCreateDefaults = useCallback((diskName: string) => {
+    const disk = disks.find((d) => d.name === diskName);
+    const partCount = disk?.partitions?.length ?? layout?.partitions?.length ?? 0;
+    setPartConfirm(diskName);
+    setPartInitGpt(partCount === 0);
+    const firstFree = layout?.unallocated?.[0];
+    if (firstFree) {
+      setPartStart(`${Math.ceil(firstFree.start_mib)}MiB`);
+      setPartEnd(`${Math.floor(firstFree.end_mib)}MiB`);
+    } else {
+      setPartStart('1MiB');
+      setPartEnd('100%');
+    }
+  }, [disks, layout]);
 
   useEffect(() => {
     if (!activeDisk && disks.length > 0) {
@@ -261,13 +278,24 @@ export default function PartitionWizard({
     if (!diskName) return;
     setLayoutLoading(true);
     setLayoutErr(null);
+    if (partitionsApiAvailable.current === false) {
+      const fallback = buildLayoutFromDisks(diskName, disks, volumes);
+      setLayout(fallback ?? null);
+      if (!fallback) {
+        setLayoutErr('Failed to load layout');
+      }
+      setLayoutLoading(false);
+      return;
+    }
     try {
       const data = await fetchJson<DiskPartitionDetail>(
         `/api/storage_manager/disks/${encodeURIComponent(diskName)}/partitions`,
       );
+      partitionsApiAvailable.current = true;
       setLayout(data);
     } catch (err) {
       if (isPartitionsApiMissing(err)) {
+        partitionsApiAvailable.current = false;
         const fallback = buildLayoutFromDisks(diskName, disks, volumes);
         if (fallback) {
           setLayout(fallback);
@@ -315,9 +343,7 @@ export default function PartitionWizard({
       setLabelText(selected.label || '');
     }
     if (kind === 'create') {
-      setPartConfirm(activeDisk);
-      setPartStart('1MiB');
-      setPartEnd('100%');
+      applyCreateDefaults(activeDisk);
     }
   };
 
@@ -642,7 +668,7 @@ export default function PartitionWizard({
                   {tr.initGpt}
                 </label>
                 <label className="block text-[11px] space-y-1">
-                  {tr.confirmPartName}
+                  {tr.confirmDiskName}
                   <input value={partConfirm} onChange={(e) => setPartConfirm(e.target.value)} placeholder={activeDisk} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`} />
                 </label>
                 <div className="flex gap-2">

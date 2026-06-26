@@ -45,6 +45,7 @@ _BAD_REQUEST_CODES = frozenset({
     "invalid_fstype",
     "fstab_conflict",
     "no_partition_table",
+    "no_free_space",
     "device_in_use",
     "smart_test_failed",
     "scrub_failed",

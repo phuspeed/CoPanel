@@ -738,14 +738,16 @@ export default function DownloadManager() {
           {selected && (
             <div className={`h-44 shrink-0 border-t ${isDark ? 'border-slate-700 bg-slate-900/80' : 'border-slate-200 bg-slate-50'}`}>
               <div className="flex gap-4 px-4 pt-2 border-b border-transparent">
-                {([
-                  ['general', t.tabGeneral],
-                  ['transfer', t.tabTransfer],
-                ] as const).map(([key, label]) => (
+                {(
+                  [
+                    { key: 'general' as DetailTab, label: t.tabGeneral },
+                    { key: 'transfer' as DetailTab, label: t.tabTransfer },
+                  ]
+                ).map(({ key, label }) => (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setDetailTab(key as DetailTab)}
+                    onClick={() => setDetailTab(key)}
                     className={`pb-2 text-sm border-b-2 ${
                       detailTab === key
                         ? 'border-blue-500 text-blue-500'

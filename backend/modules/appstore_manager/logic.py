@@ -162,7 +162,7 @@ def restart_backend_service(delay: float = 2.0):
 
 
 CORE_PACKAGE_VERSIONS = {
-    "appstore_manager": "1.0.16",
+    "appstore_manager": "1.0.17",
     "ssl_manager": "1.0.1",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
@@ -756,6 +756,10 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
+                    if any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
+                        )
                     BUILD_TASKS[pkg_id]["progress"] = 100
                     
             except Exception as e:
@@ -971,6 +975,10 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
+                    if any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
+                        )
                     BUILD_TASKS[pkg_id]["progress"] = 100
                     
             except Exception as e:

@@ -1413,6 +1413,21 @@ class StorageService:
         if os.path.exists(partprobe) or shutil.which("partprobe"):
             self._run([partprobe, disk_dev], timeout=30)
 
+    def _parted_free_region(self, disk_name: str) -> Optional[Tuple[str, str]]:
+        """Return (start, end) for the first unallocated region large enough for a partition."""
+        try:
+            detail = self.get_disk_partitions_detail(disk_name)
+        except StorageManagerError:
+            return None
+        for gap in detail.get("unallocated") or []:
+            size_mib = float(gap.get("size_mib") or 0)
+            if size_mib < 2:
+                continue
+            start_mib = int(float(gap.get("start_mib") or 1))
+            end_mib = int(float(gap.get("end_mib") or start_mib + size_mib))
+            return f"{start_mib}MiB", f"{end_mib}MiB"
+        return None
+
     def create_partition(
         self,
         disk_name: str,
@@ -1436,18 +1451,33 @@ class StorageService:
 
         dev = f"/dev/{disk_name}"
         print_out = self._run([parted, "-s", dev, "unit", "MiB", "print"], timeout=60)
-        stdout = print_out.stdout or ""
-        has_table = "Partition Table:" in stdout and "unknown" not in stdout.lower()
-        if not has_table and not disk.get("partitions"):
+        stdout = (print_out.stdout or "").strip()
+        stderr = (print_out.stderr or "").strip()
+        combined = f"{stdout}\n{stderr}".lower()
+        has_table = "partition table:" in combined and "unknown" not in combined and "unrecognised" not in combined
+        existing_parts = disk.get("partitions") or []
+
+        if not has_table and not existing_parts:
             if not initialize_gpt:
                 raise StorageManagerError(
-                    "Disk has no partition table. Enable initialize_gpt for a new disk.",
+                    "Disk has no partition table. Check «Initialize GPT» for a blank disk.",
                     code="no_partition_table",
                 )
             self._run_ok([parted, "-s", dev, "mklabel", "gpt"], "Failed to initialize GPT", code="parted_failed")
 
+        use_start, use_end = start, end
+        if existing_parts and start in ("1MiB", "0MiB", "1049kB") and end in ("100%", "100"):
+            free = self._parted_free_region(disk_name)
+            if free:
+                use_start, use_end = free
+            elif has_table:
+                raise StorageManagerError(
+                    "No unallocated space on this disk. Specify start/end in free space.",
+                    code="no_free_space",
+                )
+
         self._run_ok(
-            [parted, "-s", dev, "unit", "MiB", "mkpart", "primary", start, end],
+            [parted, "-s", dev, "unit", "MiB", "mkpart", "primary", use_start, use_end],
             "Failed to create partition",
             code="parted_failed",
             timeout=120,
@@ -1456,7 +1486,12 @@ class StorageService:
         if os.path.exists(partprobe) or shutil.which("partprobe"):
             self._run([partprobe, dev], timeout=30)
 
-        return {"message": f"Partition created on {disk_name}", "disk": disk_name, "start": start, "end": end}
+        return {
+            "message": f"Partition created on {disk_name}",
+            "disk": disk_name,
+            "start": use_start,
+            "end": use_end,
+        }
 
     def format_device(self, device: str, fstype: str, label: Optional[str], confirm_token: str) -> Dict[str, Any]:
         device, name = self._normalize_device(device)

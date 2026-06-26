@@ -1059,6 +1059,7 @@ export default function StorageManagerDashboard() {
                     properties: tr.properties,
                     partitionTable: tr.partitionTable,
                     confirmPartName: tr.confirmPartName,
+                    confirmDiskName: tr.confirmDiskName,
                     dataLossWarning: tr.dataLossWarning,
                     deleteWarning: tr.deleteWarning,
                     resizeHint: tr.resizeHint,
