@@ -8,7 +8,9 @@ import re
 import platform
 import subprocess
 import shutil
+import shlex
 import threading
+import time
 import zipfile
 import sqlite3
 from pathlib import Path
@@ -335,6 +337,97 @@ def _is_pkg_installed(pkg_manager: str, pkg_name: str) -> bool:
     return False
 
 
+def _is_apt_lock_error(text: str) -> bool:
+    lower = (text or "").lower()
+    return (
+        "lock-frontend" in lower
+        or "could not get lock" in lower
+        or "unable to acquire the dpkg" in lower
+        or "dpkg was interrupted" in lower
+    )
+
+
+def _apt_install_packages(pkg_names: list, max_retries: int = 8, retry_delay: int = 8) -> dict:
+    """Install multiple Debian packages in one apt-get invocation (avoids dpkg lock races)."""
+    names = [p for p in pkg_names if p]
+    if not names:
+        return {"ok": True, "message": "No packages to install."}
+
+    quoted = " ".join(shlex.quote(p) for p in names)
+    cmd = f"sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y {quoted}"
+    last_err = ""
+    for attempt in range(max_retries):
+        if attempt > 0:
+            time.sleep(retry_delay)
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        out = (res.stderr or res.stdout or "").strip()
+        if res.returncode == 0:
+            return {"ok": True, "message": out}
+        last_err = out
+        if not _is_apt_lock_error(out):
+            break
+    return {"ok": False, "message": last_err or "apt-get install failed"}
+
+
+def _install_system_dependencies(deps: list, is_windows: bool) -> list:
+    """Install module system dependencies sequentially; batch apt packages to avoid lock contention."""
+    if not deps:
+        return []
+    if is_windows:
+        return [_install_system_dependency(dep, True) for dep in deps]
+
+    pkg_manager = _detect_pkg_manager()
+    if not pkg_manager:
+        return [
+            {"id": dep.get("id", "unknown"), "ok": False, "message": "No supported package manager found (apt/yum)."}
+            for dep in deps
+        ]
+
+    results: list = []
+    pending: list = []
+
+    for dep in deps:
+        dep_id = dep.get("id", "unknown")
+        target_pkg = dep.get("apt") if pkg_manager == "apt" else dep.get("yum")
+        if not target_pkg:
+            results.append({"id": dep_id, "ok": False, "message": f"No package mapping for {pkg_manager}."})
+            continue
+        if _is_pkg_installed(pkg_manager, target_pkg):
+            results.append({
+                "id": dep_id,
+                "ok": True,
+                "message": f"Dependency '{dep_id}' already installed ({target_pkg}).",
+            })
+        else:
+            pending.append((dep_id, target_pkg, dep))
+
+    if not pending:
+        return results
+
+    if pkg_manager == "apt":
+        batch = _apt_install_packages([t[1] for t in pending])
+        for dep_id, target_pkg, _dep in pending:
+            if batch.get("ok") and _is_pkg_installed(pkg_manager, target_pkg):
+                results.append({
+                    "id": dep_id,
+                    "ok": True,
+                    "message": f"Installed dependency '{dep_id}' ({target_pkg}).",
+                })
+            elif batch.get("ok"):
+                results.append({
+                    "id": dep_id,
+                    "ok": False,
+                    "message": f"Install command ran but package '{target_pkg}' is still missing.",
+                })
+            else:
+                results.append({"id": dep_id, "ok": False, "message": batch.get("message") or f"Failed to install {target_pkg}."})
+        return results
+
+    for _dep_id, _target_pkg, dep in pending:
+        results.append(_install_system_dependency(dep, False))
+    return results
+
+
 def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
     dep_id = dep.get("id", "unknown")
     if is_windows:
@@ -556,21 +649,20 @@ class AppStoreManager:
                 if dep:
                     deps.append(dep)
 
-            dep_results = []
-            dep_threads = []
-            dep_lock = threading.Lock()
-
-            def _dep_worker(dep_item: dict):
-                result = _install_system_dependency(dep_item, is_windows)
-                with dep_lock:
-                    dep_results.append(result)
-
+            dep_results: list = []
             if deps:
-                BUILD_TASKS[pkg_id]["logs"].append(f"Installing {len(deps)} system dependencies in parallel...")
-                for dep in deps:
-                    t = threading.Thread(target=_dep_worker, args=(dep,), daemon=True)
-                    dep_threads.append(t)
-                    t.start()
+                BUILD_TASKS[pkg_id]["logs"].append(f"Checking {len(deps)} system dependencies...")
+                BUILD_TASKS[pkg_id]["progress"] = 5
+                dep_results = _install_system_dependencies(deps, is_windows)
+                for r in dep_results:
+                    BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "Dependency step completed."))
+                dep_failures = [r for r in dep_results if not r.get("ok")]
+                if dep_failures:
+                    BUILD_TASKS[pkg_id]["status"] = "failed"
+                    BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
+                    BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
+                    return
 
             project_root = get_copanel_home()
             tmp_dir = project_root / "tmp"
@@ -647,19 +739,6 @@ class AppStoreManager:
                             
                 return_code = process.wait()
                 if return_code == 0:
-                    # Ensure dependency installs finished and succeeded before marking success.
-                    for t in dep_threads:
-                        t.join()
-                    dep_failures = [r for r in dep_results if not r.get("ok")]
-                    for r in dep_results:
-                        BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "Dependency step completed."))
-                    if dep_failures:
-                        BUILD_TASKS[pkg_id]["status"] = "failed"
-                        BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
-                        BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
-                        BUILD_TASKS[pkg_id]["progress"] = 100
-                        return
-
                     BUILD_TASKS[pkg_id]["status"] = "success"
                     BUILD_TASKS[pkg_id]["progress"] = 100
                     BUILD_TASKS[pkg_id]["logs"].append("🎉 Build completed successfully!")
