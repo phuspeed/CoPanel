@@ -1268,6 +1268,11 @@ class StorageService:
 
         parted = self._parted_bin()
         dev = f"/dev/{disk_name}"
+        
+        wipefs = shutil.which("wipefs")
+        if wipefs:
+            self._run([wipefs, "-a", dev], timeout=30)
+            
         self._run_ok(
             [parted, "-s", dev, "mklabel", label],
             f"Failed to initialize {label.upper()} partition table",
@@ -1283,6 +1288,16 @@ class StorageService:
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
         payload = self._parted_json(disk_name)
         parts = payload.get("partitions") or []
+        
+        match = re.search(r'(\d+)$', part_name)
+        if match:
+            expected_num = int(match.group(1))
+            for p in parts:
+                num = p.get("number")
+                if num is not None and int(num) == expected_num:
+                    return expected_num
+            return expected_num
+
         children = sorted(
             [
                 row for row in self._get_flat_block()
@@ -1519,6 +1534,12 @@ class StorageService:
         parted = self._parted_bin()
         num = self._parted_partition_number(parent, name)
         dev = f"/dev/{parent}"
+        
+        part_dev = f"/dev/{name}"
+        wipefs = shutil.which("wipefs")
+        if wipefs and os.path.exists(part_dev):
+            self._run([wipefs, "-a", part_dev], timeout=30)
+            
         self._run_ok([parted, "-s", dev, "rm", str(num)], f"Failed to delete partition {num}", code="parted_failed")
         self._partprobe(dev)
         return {"message": f"Deleted partition {device}", "device": device, "partition_number": num}
@@ -1691,6 +1712,9 @@ class StorageService:
                     "Disk has no partition table. Initialize the disk (GPT/MBR) first, then create a partition.",
                     code="no_partition_table",
                 )
+            wipefs = shutil.which("wipefs")
+            if wipefs:
+                self._run([wipefs, "-a", dev], timeout=30)
             self._run_ok([parted, "-s", dev, "mklabel", "gpt"], "Failed to initialize GPT", code="parted_failed")
 
         use_start, use_end = start, end
@@ -1706,7 +1730,7 @@ class StorageService:
                 )
 
         self._run_ok(
-            [parted, "-s", dev, "unit", "MiB", "mkpart", "primary", use_start, use_end],
+            [parted, "-s", "-a", "optimal", dev, "unit", "MiB", "mkpart", "primary", use_start, use_end],
             "Failed to create partition",
             code="parted_failed",
             timeout=120,
