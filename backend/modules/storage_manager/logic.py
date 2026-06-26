@@ -4,6 +4,7 @@ Storage Manager — block devices, volumes, SMART health, and admin mount/format
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.system_monitor.logic import SystemMonitor
+
+logger = logging.getLogger(__name__)
 
 IS_WINDOWS = os.name == "nt"
 
