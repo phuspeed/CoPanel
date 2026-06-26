@@ -4,7 +4,6 @@ Storage Manager — block devices, volumes, SMART health, and admin mount/format
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import shutil
@@ -15,8 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.system_monitor.logic import SystemMonitor
-
-logger = logging.getLogger(__name__)
 
 IS_WINDOWS = os.name == "nt"
 
@@ -1274,7 +1271,6 @@ class StorageService:
             payload = self._parted_json(disk_name)
         except StorageManagerError as exc:
             if exc.code in ("parted_failed", "parted_missing"):
-                logger.warning("parted layout failed for %s, lsblk fallback: %s", disk_name, exc)
                 return self._partitions_detail_from_lsblk(disk_name, disk)
             raise
 

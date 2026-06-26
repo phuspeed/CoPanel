@@ -28,6 +28,12 @@ def get_copanel_home() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _purge_module_pycache(module_dir: Path) -> None:
+    cache = module_dir / "__pycache__"
+    if cache.is_dir():
+        shutil.rmtree(cache, ignore_errors=True)
+
+
 def appstore_config_file() -> Path:
     return get_copanel_home() / "config" / "appstore_config.json"
 
@@ -795,6 +801,7 @@ class AppStoreManager:
                     is_new_backend = not (dst_backend / "router.py").is_file()
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
+                    _purge_module_pycache(dst_backend)
                 else:
                     is_new_backend = False
                     
@@ -1017,6 +1024,7 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     dst_backend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
+                    _purge_module_pycache(dst_backend)
                 else:
                     is_new_backend = False
                 backend_updated = bool(found_backend and found_backend.exists())

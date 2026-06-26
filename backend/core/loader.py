@@ -51,6 +51,7 @@ class ModuleLoader:
 
         self._unregister_module_routes(app, module_name)
         self._purge_module_cache(module_name)
+        self._clear_pycache(module_path)
 
         router = self._load_module_router(module_path)
         if router is None:
@@ -80,6 +81,13 @@ class ModuleLoader:
         for key in list(sys.modules.keys()):
             if key == prefix or key.startswith(prefix + "."):
                 del sys.modules[key]
+
+    def _clear_pycache(self, module_path: Path) -> None:
+        import shutil
+
+        cache = module_path / "__pycache__"
+        if cache.is_dir():
+            shutil.rmtree(cache, ignore_errors=True)
 
     def _ensure_module_package(self, module_path: Path, module_name: str) -> None:
         """Register parent package so ``from . import logic`` works when hot-reloading."""
