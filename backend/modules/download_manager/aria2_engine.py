@@ -248,7 +248,6 @@ def ensure_aria2_daemon(
                 "--save-session-interval=30",
                 f"--log={log_file}",
                 "--log-level=notice",
-                f"--pid-file={pid_file}",
             ]
             if secret:
                 cmd.append(f"--rpc-secret={secret}")
@@ -271,6 +270,10 @@ def ensure_aria2_daemon(
                     start_new_session=True,
                     close_fds=True,
                 )
+                try:
+                    pid_file.write_text(str(_aria2_proc.pid), encoding="utf-8")
+                except OSError:
+                    pass
             except OSError as exc:
                 try:
                     with open(log_file, "a", encoding="utf-8") as logfh:
