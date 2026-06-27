@@ -57,7 +57,7 @@ _BAD_REQUEST_CODES = frozenset({
 
 def _http_error(exc: StorageManagerError) -> HTTPException:
     code = exc.code
-    if code == "disk_not_found" or code == "device_not_found" or code == "partition_not_found":
+    if code == "disk_not_found" or code == "device_not_found":
         status = 404
     elif code in {"lsblk_missing", "lsblk_failed", "smartctl_missing", "parted_missing", "parted_failed", "blkid_missing", "mkfs_missing", "lvm_missing", "mdadm_missing", "btrfs_missing", "volume_read_failed", "fsck_missing", "label_failed"}:
         status = 503

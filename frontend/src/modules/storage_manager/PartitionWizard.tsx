@@ -218,13 +218,13 @@ function buildLayoutFromDisks(
 function isPartitionsApiMissing(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
+  if (lower.includes('could not resolve partition number')) return false;
+  if (lower.includes('confirmation must match')) return false;
   return (
     msg === 'Not Found'
-    || msg.includes('404')
-    || msg.includes('503')
-    || lower.includes('not found')
+    || msg.includes('API route not found')
     || lower.includes('service unavailable')
-    || lower.includes('parted')
+    || (lower.includes('parted') && lower.includes('not found'))
   );
 }
 

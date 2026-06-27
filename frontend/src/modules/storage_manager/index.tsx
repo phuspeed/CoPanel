@@ -237,18 +237,21 @@ function isProtectedMount(mountpoint: string): boolean {
 }
 
 function apiErrorMessage(body: Record<string, unknown>, status: number): string {
-  if (status === 404) {
-    return 'API route not found (404). Restart copanel service or reinstall the module from AppStore.';
-  }
-  const wrapped = body.error as { message?: string } | undefined;
+  const wrapped = body.error as { message?: string; code?: string } | undefined;
   if (wrapped?.message) return wrapped.message;
   if (typeof body.detail === 'string') {
+    if (body.detail === 'Not Found') {
+      return 'API route not found (404). Restart copanel service or reinstall the module from AppStore.';
+    }
     if (body.detail.toLowerCase().includes('filesystem type')) {
       return `${body.detail} Format the partition first, then mount.`;
     }
     return body.detail;
   }
   if (typeof body.message === 'string') return body.message;
+  if (status === 404) {
+    return 'API route not found (404). Restart copanel service or reinstall the module from AppStore.';
+  }
   return `HTTP ${status}`;
 }
 

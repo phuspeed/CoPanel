@@ -1365,6 +1365,16 @@ class StorageService:
             "partition_table": label,
         }
 
+    def _lsblk_partitions_on_disk(self, disk_name: str) -> List[Dict[str, Any]]:
+        return sorted(
+            [
+                row for row in self._get_flat_block()
+                if row.get("type") in ("part", "primary", "extended", "logical")
+                and (row.get("pkname") or row.get("_parent_name")) == disk_name
+            ],
+            key=lambda r: str(r.get("name") or ""),
+        )
+
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
         payload = self._parted_json(disk_name)
         parts = payload.get("partitions") or []
@@ -1377,38 +1387,46 @@ class StorageService:
                 if num is not None:
                     return int(num)
 
+        children = self._lsblk_partitions_on_disk(disk_name)
+        for idx, child in enumerate(children):
+            if child.get("name") != part_name:
+                continue
+            if idx < len(parts):
+                num = parts[idx].get("number")
+                if num is not None:
+                    return int(num)
+            if len(parts) == len(children) and idx < len(parts):
+                num = parts[idx].get("number")
+                return int(num) if num is not None else idx + 1
+            break
+
         match = re.search(r"(\d+)$", part_name)
         if match:
             expected_num = int(match.group(1))
-            for p in parts:
-                num = p.get("number")
-                if num is not None and int(num) == expected_num:
-                    return expected_num
-            if parts:
+            part_nums = [int(p["number"]) for p in parts if p.get("number") is not None]
+            if expected_num in part_nums:
                 return expected_num
+            if children and len(children) == len(parts):
+                for idx, child in enumerate(children):
+                    if child.get("name") == part_name:
+                        num = parts[idx].get("number")
+                        return int(num) if num is not None else idx + 1
 
-        children = sorted(
-            [
-                row for row in self._get_flat_block()
-                if row.get("type") in ("part", "primary", "extended", "logical")
-                and (row.get("pkname") or row.get("_parent_name")) == disk_name
-            ],
-            key=lambda r: str(r.get("name") or ""),
-        )
-        for idx, child in enumerate(children):
-            if child.get("name") == part_name:
-                if idx < len(parts):
-                    num = parts[idx].get("number")
-                    if num is not None:
-                        return int(num)
-                break
         for part in parts:
             node = str(part.get("node", ""))
             if node.endswith(part_name):
                 return int(part["number"])
+
+        if self._find_block(part_name) and children:
+            for idx, child in enumerate(children):
+                if child.get("name") == part_name and idx < len(parts):
+                    num = parts[idx].get("number")
+                    if num is not None:
+                        return int(num)
+
         raise StorageManagerError(
-            f"Could not resolve partition number for {part_name} in parted. "
-            f"Try: sudo parted /dev/{disk_name} print",
+            f"Could not resolve partition number for {part_name} on /dev/{disk_name}. "
+            f"Run: sudo parted /dev/{disk_name} print",
             code="partition_not_found",
         )
 
