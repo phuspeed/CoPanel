@@ -11,7 +11,6 @@ interface Settings {
   nginx_gate: { enabled: boolean; username: string; configured: boolean };
   totp: { enabled: boolean; username: string };
   is_linux: boolean;
-  htpasswd_available: boolean;
 }
 
 export default function PanelSettings() {
@@ -52,7 +51,7 @@ export default function PanelSettings() {
       newRootPass: 'New root password',
       confirmRootPass: 'Confirm password',
       applyRoot: 'Change root password',
-      gateHint: 'Extra HTTP password on Nginx before CoPanel UI (port 8686). Separate from panel login.',
+      gateHint: 'Nginx HTTP Basic Auth on port 8686 (built-in, no Apache). Separate from panel login.',
       gateUser: 'Gate username',
       gatePass: 'Gate password',
       enableGate: 'Enable access gate',
@@ -82,7 +81,7 @@ export default function PanelSettings() {
       newRootPass: 'Mật khẩu root mới',
       confirmRootPass: 'Xác nhận mật khẩu',
       applyRoot: 'Đổi mật khẩu root',
-      gateHint: 'Mật khẩu HTTP thêm trên Nginx trước UI CoPanel (cổng 8686). Khác với login panel.',
+      gateHint: 'Nginx HTTP Basic Auth cổng 8686 (tích hợp sẵn, không cần Apache). Khác login panel.',
       gateUser: 'Tài khoản gate',
       gatePass: 'Mật khẩu gate',
       enableGate: 'Bật gate truy cập',
@@ -315,9 +314,6 @@ export default function PanelSettings() {
           <p className={`text-sm mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
             {t.gateHint} — port <strong>{settings.panel_port}</strong>
           </p>
-          {!settings.htpasswd_available && settings.is_linux && (
-            <p className="text-amber-600 text-sm mb-3">apt install apache2-utils</p>
-          )}
           <label className="flex items-center gap-2 text-sm mb-3">
             <input type="checkbox" checked={gateEnabled} onChange={(e) => setGateEnabled(e.target.checked)} />
             {gateEnabled ? t.enableGate : t.disableGate}

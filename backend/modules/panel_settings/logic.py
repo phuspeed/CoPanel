@@ -8,13 +8,14 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pyotp
+
+from passlib.hash import apr_md5_crypt
 
 from core import user_model
 from core.security import verify_password
@@ -147,7 +148,6 @@ def get_settings() -> Dict[str, Any]:
             "username": admin.get("username") if admin else "admin",
         },
         "is_linux": not IS_WINDOWS,
-        "htpasswd_available": bool(shutil.which("htpasswd")),
     }
 
 
@@ -180,7 +180,7 @@ def change_ssh_port(port: int, *, confirm: bool = False) -> Dict[str, Any]:
             lines.append(line)
     if not replaced:
         lines.append(f"Port {port}")
-    _run_file_privileged(SSHD_CONFIG, "\n".join(lines) + "\n")
+    _write_file_privileged(SSHD_CONFIG, "\n".join(lines) + "\n")
 
     test = _run_privileged(["sshd", "-t"])
     if test.returncode != 0:
@@ -251,6 +251,18 @@ def _remove_nginx_gate_block(content: str) -> str:
     )
 
 
+def _write_nginx_htpasswd(username: str, password: str) -> str:
+    """Write nginx auth_basic_user_file using passlib (no apache2-utils)."""
+    ht_line = f"{username}:{apr_md5_crypt.hash(password)}\n"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _write_file_privileged(HTPASSWD_PATH, ht_line)
+    try:
+        HTPASSWD_PATH.chmod(0o644)
+    except OSError:
+        _run_privileged(["chmod", "644", str(HTPASSWD_PATH)])
+    return str(HTPASSWD_PATH)
+
+
 def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optional[str]) -> Dict[str, Any]:
     if IS_WINDOWS:
         raise ValueError("Nginx gate is Linux-only.")
@@ -266,14 +278,8 @@ def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optio
             raise ValueError("Gate username required.")
         if not password:
             raise ValueError("Gate password required when enabling.")
-        if not shutil.which("htpasswd"):
-            raise RuntimeError("htpasswd not found. Install: apt install apache2-utils")
 
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        ht_path = str(HTPASSWD_PATH)
-        proc = _run_privileged(["htpasswd", "-cb", ht_path, user, password])
-        if proc.returncode != 0:
-            raise RuntimeError(f"htpasswd failed: {(proc.stderr or proc.stdout or '').strip()}")
+        ht_path = _write_nginx_htpasswd(user, password)
 
         content = site.read_text(encoding="utf-8")
         content = _inject_nginx_gate_block(content, ht_path)
