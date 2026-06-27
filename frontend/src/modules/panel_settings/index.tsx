@@ -51,12 +51,13 @@ export default function PanelSettings() {
       newRootPass: 'New root password',
       confirmRootPass: 'Confirm password',
       applyRoot: 'Change root password',
-      gateHint: 'Nginx HTTP Basic Auth on port 8686 (built-in, no Apache). Separate from panel login.',
+      gateHint: 'HTTP password for the web UI only (location /). API uses JWT — no repeated browser prompts.',
       gateUser: 'Gate username',
       gatePass: 'Gate password',
       enableGate: 'Enable access gate',
       disableGate: 'Disable access gate',
       saveGate: 'Save gate settings',
+      gateRepair: 'Gate already enabled? Save again with empty password to fix API prompt loop.',
       totpHint: 'Scan QR with Google Authenticator or Microsoft Authenticator.',
       setupTotp: 'Generate QR code',
       enableTotp: 'Enable 2FA',
@@ -81,12 +82,13 @@ export default function PanelSettings() {
       newRootPass: 'Mật khẩu root mới',
       confirmRootPass: 'Xác nhận mật khẩu',
       applyRoot: 'Đổi mật khẩu root',
-      gateHint: 'Nginx HTTP Basic Auth cổng 8686 (tích hợp sẵn, không cần Apache). Khác login panel.',
+      gateHint: 'Mật khẩu HTTP chỉ cho giao diện web (location /). API dùng JWT — không hỏi passwd liên tục.',
       gateUser: 'Tài khoản gate',
       gatePass: 'Mật khẩu gate',
       enableGate: 'Bật gate truy cập',
       disableGate: 'Tắt gate truy cập',
       saveGate: 'Lưu gate',
+      gateRepair: 'Gate đang bật? Lưu lại (để trống mật khẩu) để sửa lỗi hỏi passwd liên tục trên API.',
       totpHint: 'Quét QR bằng Google Authenticator hoặc Microsoft Authenticator.',
       setupTotp: 'Tạo mã QR',
       enableTotp: 'Bật 2FA',
@@ -314,6 +316,7 @@ export default function PanelSettings() {
           <p className={`text-sm mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
             {t.gateHint} — port <strong>{settings.panel_port}</strong>
           </p>
+          <p className={`text-xs mb-3 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.gateRepair}</p>
           <label className="flex items-center gap-2 text-sm mb-3">
             <input type="checkbox" checked={gateEnabled} onChange={(e) => setGateEnabled(e.target.checked)} />
             {gateEnabled ? t.enableGate : t.disableGate}

@@ -210,45 +210,42 @@ def change_root_password(new_password: str, confirm_password: str) -> Dict[str, 
     return {"changed": True, "message": "Linux root password updated."}
 
 
-def _inject_nginx_gate_block(content: str, htpasswd_path: str) -> str:
-    block = (
-        f"    {NGINX_AUTH_START}\n"
-        f'    auth_basic "CoPanel";\n'
-        f"    auth_basic_user_file {htpasswd_path};\n"
-        f"    {NGINX_AUTH_END}\n"
-    )
-    if NGINX_AUTH_START in content:
+def _strip_all_nginx_gate_blocks(content: str) -> str:
+    while NGINX_AUTH_START in content:
         content = re.sub(
             rf"\s*{re.escape(NGINX_AUTH_START)}.*?{re.escape(NGINX_AUTH_END)}\n?",
-            "\n" + block,
+            "\n",
             content,
             count=1,
             flags=re.DOTALL,
         )
-        return content
-    # Server-level auth protects UI + /api/ on the panel port.
-    anchor = "    server_name "
-    idx = content.find(anchor)
-    if idx != -1:
-        eol = content.find("\n", idx)
-        if eol != -1:
-            return content[: eol + 1] + block + content[eol + 1 :]
-    marker = "location / {"
-    if marker in content:
-        return content.replace(marker, block + "\n    " + marker, 1)
-    return content.rstrip() + "\n" + block
+    return content
 
 
 def _remove_nginx_gate_block(content: str) -> str:
-    if NGINX_AUTH_START not in content:
-        return content
-    return re.sub(
-        rf"\s*{re.escape(NGINX_AUTH_START)}.*?{re.escape(NGINX_AUTH_END)}\n?",
-        "\n",
-        content,
-        count=1,
-        flags=re.DOTALL,
+    return _strip_all_nginx_gate_blocks(content)
+
+
+def _inject_nginx_gate_block(content: str, htpasswd_path: str) -> str:
+    """Put auth_basic only in location / (SPA). /api/ stays JWT-only — no repeat prompts."""
+    inner = (
+        f"        {NGINX_AUTH_START}\n"
+        f'        auth_basic "CoPanel";\n'
+        f"        auth_basic_user_file {htpasswd_path};\n"
+        f"        {NGINX_AUTH_END}\n"
     )
+    content = _strip_all_nginx_gate_blocks(content)
+
+    for marker in ("    location / {", "location / {"):
+        idx = content.find(marker)
+        if idx == -1:
+            continue
+        brace = content.find("{", idx)
+        nl = content.find("\n", brace)
+        if nl != -1:
+            return content[: nl + 1] + "\n" + inner + content[nl + 1 :]
+
+    raise RuntimeError("Could not find 'location /' block in nginx site config.")
 
 
 def _write_nginx_htpasswd(username: str, password: str) -> str:
@@ -277,9 +274,12 @@ def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optio
         if not user:
             raise ValueError("Gate username required.")
         if not password:
-            raise ValueError("Gate password required when enabling.")
-
-        ht_path = _write_nginx_htpasswd(user, password)
+            if HTPASSWD_PATH.is_file() and (gate.get("enabled") or _nginx_has_gate()):
+                ht_path = str(HTPASSWD_PATH)
+            else:
+                raise ValueError("Gate password required when enabling.")
+        else:
+            ht_path = _write_nginx_htpasswd(user, password)
 
         content = site.read_text(encoding="utf-8")
         content = _inject_nginx_gate_block(content, ht_path)
