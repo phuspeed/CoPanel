@@ -285,6 +285,11 @@ def detect_url(url: str) -> Dict[str, Any]:
         m = GOOGLE_DRIVE_FILE_RE.search(raw)
         fid = m.group(1) if m else _extract_google_id(raw)
         return {"source_type": "google_drive", "file_id": fid}
+    
+    yt_dlp_domains = ["youtube.com", "youtu.be", "tiktok.com", "facebook.com", "fb.watch", "twitter.com", "x.com", "instagram.com"]
+    if any(d in raw.lower() for d in yt_dlp_domains):
+        return {"source_type": "yt_dlp"}
+
     hosting = match_file_hosting(raw)
     if hosting:
         return {
@@ -1000,6 +1005,9 @@ def _run_download(task_id: str) -> None:
         if task["source_type"] == "torrent":
             _run_torrent_download(task_id, task)
             return
+        if task["source_type"] == "yt_dlp":
+            _run_yt_dlp_download(task_id, task)
+            return
         engine = _get_aria2()
         if engine and engine.is_available():
             direct_url, headers = resolve_download(task)
@@ -1008,7 +1016,10 @@ def _run_download(task_id: str) -> None:
         direct_url, headers = resolve_download(task)
         _download_http(task_id, direct_url, headers, task)
     except Exception as exc:
-        _update_task(task_id, status="error", error_message=str(exc))
+        if str(exc) == "Task stopped by user":
+            pass
+        else:
+            _update_task(task_id, status="error", error_message=str(exc))
 
 
 def _expand_google_folder(task: Dict[str, Any]) -> None:
@@ -1245,6 +1256,74 @@ def _run_torrent_download(task_id: str, task: Dict[str, Any]) -> None:
         task_id,
         status="downloading",
         meta=_merge_meta(task, {"aria2_gid": gid}),
+    )
+
+
+def _run_yt_dlp_download(task_id: str, task: Dict[str, Any]) -> None:
+    try:
+        import yt_dlp
+    except ImportError:
+        raise RuntimeError("yt-dlp is not installed")
+
+    url = task["source_url"] or ""
+    dest_dir = Path(task["destination"])
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    last_tick = [time.time()]
+
+    def progress_hook(d: Dict[str, Any]) -> None:
+        if d.get("status") == "downloading":
+            now = time.time()
+            if now - last_tick[0] >= 1.0:
+                last_tick[0] = now
+                downloaded = d.get("downloaded_bytes", 0)
+                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+                speed = d.get("speed", 0)
+                if speed is None:
+                    speed = 0
+                prog = (downloaded / total * 100) if total else 0.0
+
+                cur = get_task(task_id)
+                if not cur or cur["status"] in ("paused", "stopped"):
+                    raise ValueError("Task stopped by user")
+
+                _update_task(
+                    task_id,
+                    downloaded_bytes=downloaded,
+                    total_bytes=total,
+                    download_speed=int(speed),
+                    progress=round(prog, 1),
+                )
+
+    ydl_opts = {
+        "paths": {"home": str(dest_dir)},
+        "outtmpl": "%(title)s.%(ext)s",
+        "progress_hooks": [progress_hook],
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+    }
+
+    _update_task(task_id, status="downloading")
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False)
+            if info and info.get("title"):
+                title = info["title"]
+                ext = info.get("ext", "mp4")
+                _update_task(task_id, name=f"{title}.{ext}")
+        except Exception:
+            pass
+
+        ydl.download([url])
+
+    _update_task(
+        task_id,
+        status="completed",
+        progress=100.0,
+        download_speed=0,
+        completed_at=_utc_now(),
     )
 
 

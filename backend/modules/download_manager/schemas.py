@@ -12,6 +12,7 @@ SourceType = Literal[
     "google_drive_folder",
     "file_hosting",
     "torrent",
+    "yt_dlp",
 ]
 
 TaskStatus = Literal[

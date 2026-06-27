@@ -1,0 +1,10 @@
+{
+  "bind_address": "0.0.0.0",
+  "webdav_port": 8085,
+  "smb_port": 445,
+  "share_path": "/",
+  "share_name": "copanel",
+  "webdav_enabled": false,
+  "smb_enabled": false,
+  "updated_at": 0.0
+}

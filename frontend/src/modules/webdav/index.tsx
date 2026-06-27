@@ -28,13 +28,6 @@ interface ServiceInfo {
   port: number;
   bind_address?: string;
   service?: { active?: boolean; state?: string; unit?: string };
-  diagnostics?: {
-    share_registered?: boolean;
-    shares_registered?: string[];
-    share_path?: string;
-    path_entry_count?: number;
-    testparm_ok?: boolean;
-  };
 }
 
 interface Status {
@@ -105,10 +98,6 @@ export default function WebdavDashboard() {
       smbPassword: 'Panel password (for SMB sync)',
       smbPasswordHint: 'Required once if the server has no stored admin password file. Must match your CoPanel login password.',
       smbPasswordRequired: 'Enter your panel superadmin password to enable or sync SMB.',
-      smbWindowsHint: 'Windows: open Explorer → right-click This PC → Map network drive → Folder: \\\\IP\\copanel → check Connect using different credentials → user admin + panel password.',
-      smbShares: 'Samba shares on server',
-      smbNotRegistered: 'Share "copanel" not loaded — click Apply SMB config again.',
-      smbPathEmpty: 'Share folder has few/no items — change Share folder (e.g. / or /var/www).',
     },
     vi: {
       title: 'WebDAV & SMB',
@@ -149,10 +138,6 @@ export default function WebdavDashboard() {
       smbPassword: 'Mật khẩu panel (đồng bộ SMB)',
       smbPasswordHint: 'Nhập một lần nếu server chưa có file mật khẩu admin. Phải trùng mật khẩu đăng nhập CoPanel.',
       smbPasswordRequired: 'Nhập mật khẩu superadmin panel để bật hoặc đồng bộ SMB.',
-      smbWindowsHint: 'Windows: Explorer → Chuột phải This PC → Map network drive → \\\\IP\\copanel → chọn Connect using different credentials → user admin + mật khẩu panel.',
-      smbShares: 'Share Samba trên server',
-      smbNotRegistered: 'Share "copanel" chưa load — bấm Áp dụng cấu hình SMB lại.',
-      smbPathEmpty: 'Thư mục share gần như trống — đổi Share folder (vd. / hoặc /var/www).',
     },
   }[language];
 
@@ -420,20 +405,6 @@ export default function WebdavDashboard() {
                 <button className={btn()} disabled={busy} onClick={() => smbAction('restart')}>{t.restart}</button>
                 <button className={btn()} disabled={busy} onClick={syncPassword}>{t.syncPassword}</button>
               </div>
-              {status.smb.diagnostics && (
-                <div className={`mt-3 text-xs space-y-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  <p>{t.smbShares}: {(status.smb.diagnostics.shares_registered || []).join(', ') || '—'}</p>
-                  {!status.smb.diagnostics.share_registered && status.smb.enabled && (
-                    <p className="text-amber-600 dark:text-amber-400">{t.smbNotRegistered}</p>
-                  )}
-                  {status.smb.diagnostics.path_entry_count !== undefined && status.smb.diagnostics.path_entry_count <= 1 && (
-                    <p className="text-amber-600 dark:text-amber-400">
-                      {t.smbPathEmpty} ({status.smb.diagnostics.share_path}, {status.smb.diagnostics.path_entry_count} items)
-                    </p>
-                  )}
-                  <p>{t.smbWindowsHint}</p>
-                </div>
-              )}
             </div>
 
             <div className="border-t pt-4 border-slate-700/30 space-y-2">
