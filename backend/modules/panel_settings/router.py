@@ -85,6 +85,24 @@ def set_nginx_gate(req: NginxGateRequest, user: Dict[str, Any] = Depends(require
     return ok(result)
 
 
+@router.post("/nginx-gate/repair")
+def repair_nginx_gate(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    try:
+        result = logic.repair_nginx_gate()
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.nginx_gate.repair",
+        module="panel_settings",
+        target="nginx",
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
 @router.post("/totp/setup")
 def totp_setup(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
     try:

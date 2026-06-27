@@ -8,7 +8,7 @@ type Tab = 'ssh' | 'root' | 'gate' | 'totp';
 interface Settings {
   ssh_port: number;
   panel_port: number;
-  nginx_gate: { enabled: boolean; username: string; configured: boolean };
+  nginx_gate: { enabled: boolean; username: string; configured: boolean; needs_repair?: boolean };
   totp: { enabled: boolean; username: string };
   is_linux: boolean;
 }
@@ -58,6 +58,8 @@ export default function PanelSettings() {
       disableGate: 'Disable access gate',
       saveGate: 'Save gate settings',
       gateRepair: 'Gate already enabled? Save again with empty password to fix API prompt loop.',
+      repairNginx: 'Repair nginx layout',
+      repairHint: 'Auth is at server level — /api/ gets 401. Click Repair to move gate into location / only.',
       totpHint: 'Scan QR with Google Authenticator or Microsoft Authenticator.',
       setupTotp: 'Generate QR code',
       enableTotp: 'Enable 2FA',
@@ -89,6 +91,8 @@ export default function PanelSettings() {
       disableGate: 'Tắt gate truy cập',
       saveGate: 'Lưu gate',
       gateRepair: 'Gate đang bật? Lưu lại (để trống mật khẩu) để sửa lỗi hỏi passwd liên tục trên API.',
+      repairNginx: 'Sửa cấu hình nginx',
+      repairHint: 'Auth đang ở cấp server — /api/ bị 401. Bấm Sửa để chuyển gate vào location /.',
       totpHint: 'Quét QR bằng Google Authenticator hoặc Microsoft Authenticator.',
       setupTotp: 'Tạo mã QR',
       enableTotp: 'Bật 2FA',
@@ -154,6 +158,20 @@ export default function PanelSettings() {
       setRootPass('');
       setRootPass2('');
       setMsg(t.saved);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const repairGate = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api('/api/panel_settings/nginx-gate/repair', { method: 'POST' });
+      setMsg(t.saved);
+      await load();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -317,6 +335,19 @@ export default function PanelSettings() {
             {t.gateHint} — port <strong>{settings.panel_port}</strong>
           </p>
           <p className={`text-xs mb-3 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.gateRepair}</p>
+          {settings.nginx_gate.needs_repair && (
+            <div className={`mb-3 p-3 rounded-lg border text-sm ${isDark ? 'bg-amber-950/30 border-amber-900 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+              <p className="mb-2">{t.repairHint}</p>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium disabled:opacity-50"
+                disabled={busy}
+                onClick={repairGate}
+              >
+                {t.repairNginx}
+              </button>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm mb-3">
             <input type="checkbox" checked={gateEnabled} onChange={(e) => setGateEnabled(e.target.checked)} />
             {gateEnabled ? t.enableGate : t.disableGate}

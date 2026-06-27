@@ -130,14 +130,28 @@ def _nginx_site_path() -> Path:
     return NGINX_SITE
 
 
-def _nginx_has_gate() -> bool:
+def _nginx_site_content() -> str:
     path = _nginx_site_path()
     if not path.is_file():
-        return False
+        return ""
     try:
-        return NGINX_AUTH_START in path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except OSError:
+        return ""
+
+
+def _nginx_has_gate() -> bool:
+    return NGINX_AUTH_START in _nginx_site_content()
+
+
+def _nginx_gate_at_server_level(content: Optional[str] = None) -> bool:
+    """Gate markers before first location = auth applies to /api/ (broken layout)."""
+    text = content if content is not None else _nginx_site_content()
+    if NGINX_AUTH_START not in text:
         return False
+    gate_idx = text.find(NGINX_AUTH_START)
+    loc_idx = text.find("location ")
+    return loc_idx == -1 or gate_idx < loc_idx
 
 
 def get_settings() -> Dict[str, Any]:
@@ -151,6 +165,7 @@ def get_settings() -> Dict[str, Any]:
             "enabled": bool(gate.get("enabled")) or _nginx_has_gate(),
             "username": gate.get("username") or "copanel",
             "configured": HTPASSWD_PATH.is_file(),
+            "needs_repair": _nginx_gate_at_server_level(),
         },
         "totp": {
             "enabled": bool(admin.get("totp_enabled")) if admin else False,
@@ -375,6 +390,16 @@ def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optio
             f"Nginx password gate {'enabled' if enabled else 'disabled'} on port {PANEL_PORT}."
         ),
     }
+
+
+def repair_nginx_gate() -> Dict[str, Any]:
+    """Re-apply gate layout: move auth into location / and exempt /api/."""
+    store = _load_store()
+    gate = store.get("nginx_gate") or {}
+    if not _nginx_has_gate() and not HTPASSWD_PATH.is_file():
+        raise ValueError("Nginx gate is not configured.")
+    user = (gate.get("username") or "copanel").strip()
+    return configure_nginx_gate(True, user, None)
 
 
 def totp_setup(username: str) -> Dict[str, Any]:
