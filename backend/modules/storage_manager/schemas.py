@@ -94,6 +94,7 @@ class DiskBenchmarkRequest(BaseModel):
 class DeletePartitionRequest(BaseModel):
     device: str = Field(..., description="e.g. /dev/sdb1")
     confirm_token: str = Field(..., min_length=1, max_length=64)
+    partition_number: Optional[int] = Field(None, ge=1, le=128, description="From wizard layout; optional hint")
 
 
 class ResizePartitionRequest(BaseModel):

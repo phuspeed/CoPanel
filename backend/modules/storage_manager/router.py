@@ -206,7 +206,7 @@ async def delete_partition(
     user: Dict[str, Any] = Depends(require_admin),
 ) -> Dict[str, Any]:
     try:
-        result = _service.delete_partition(body.device, body.confirm_token)
+        result = _service.delete_partition(body.device, body.confirm_token, body.partition_number)
         record_audit(
             "storage.partition_delete",
             module="storage_manager",

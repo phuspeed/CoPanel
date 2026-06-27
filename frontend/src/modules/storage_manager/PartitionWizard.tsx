@@ -838,14 +838,23 @@ export default function PartitionWizard({
                 <p className="text-[11px]">{tr.deleteWarning}</p>
                 <p className="text-[11px] font-mono">{selected.path}</p>
                 <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder={tr.confirmPartName} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`} />
+                {selected.name && (
+                  <p className="text-[10px] opacity-60 font-mono">
+                    {language === 'vi' ? 'Gõ:' : 'Type:'} {selected.name}
+                  </p>
+                )}
+                {actionErr && (
+                  <p className="text-[11px] text-red-500 whitespace-pre-wrap">{actionErr}</p>
+                )}
                 <div className="flex gap-2">
                   <button type="button" onClick={closeModal} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>{tr.cancel}</button>
                   <button
                     type="button"
-                    disabled={actionLoading || deleteConfirm !== selected.name}
+                    disabled={actionLoading || deleteConfirm.trim() !== (selected.name || '')}
                     onClick={() => refreshAfter(() => postJson('/api/storage_manager/partitions/delete', {
                       device: selected.path,
-                      confirm_token: deleteConfirm,
+                      confirm_token: deleteConfirm.trim(),
+                      partition_number: selected.number || null,
                     }))}
                     className="flex-1 py-2 rounded-xl text-xs font-bold bg-red-600 text-white disabled:opacity-50"
                   >

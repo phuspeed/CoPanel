@@ -1143,8 +1143,12 @@ class StorageService:
         disk = self._disk_record(parent) if parent else None
         if disk and disk.get("is_system_disk") and not allow_system_disk:
             raise StorageManagerError("Operation blocked on the system disk.", code="protected_disk")
-        if row.get("mountpoint"):
-            raise StorageManagerError("Device is mounted. Unmount it first.", code="device_mounted")
+        mp = self._block_mountpoint_live(block_name)
+        if mp:
+            raise StorageManagerError(
+                f"Device is mounted at {mp}. Unmount it first.",
+                code="device_mounted",
+            )
         return row
 
     def _run_ok(self, args: List[str], error_message: str, code: str = "command_failed", timeout: Optional[int] = None) -> str:
@@ -1430,6 +1434,72 @@ class StorageService:
             code="partition_not_found",
         )
 
+    def _match_parted_number_by_size(self, disk_name: str, part_name: str) -> Optional[int]:
+        row = self._find_block(part_name)
+        if not row:
+            return None
+        size_bytes = int(row.get("size_bytes") or 0) or (self._parse_size(row.get("size")) or 0)
+        if size_bytes <= 0:
+            return None
+        try:
+            payload = self._parted_json(disk_name)
+        except StorageManagerError:
+            return None
+        best_num: Optional[int] = None
+        best_delta = size_bytes
+        for p in payload.get("partitions") or []:
+            num = p.get("number")
+            if num is None:
+                continue
+            psize = self._parse_size(p.get("size")) or 0
+            if psize <= 0:
+                continue
+            delta = abs(psize - size_bytes)
+            if delta <= max(4 * 1024 * 1024, size_bytes * 0.02) and delta < best_delta:
+                best_delta = delta
+                best_num = int(num)
+        return best_num
+
+    def _validate_parted_partition_number(self, disk_name: str, num: int) -> None:
+        payload = self._parted_json(disk_name)
+        valid = {int(p["number"]) for p in (payload.get("partitions") or []) if p.get("number") is not None}
+        if num not in valid:
+            raise StorageManagerError(
+                f"Partition number {num} is not on /dev/{disk_name}. Valid: {sorted(valid) or 'none'}.",
+                code="partition_not_found",
+            )
+
+    def _resolve_delete_partition_number(
+        self,
+        disk_name: str,
+        part_name: str,
+        hint: Optional[int] = None,
+    ) -> int:
+        if hint is not None:
+            try:
+                self._validate_parted_partition_number(disk_name, hint)
+                return hint
+            except StorageManagerError:
+                pass
+        try:
+            return self._parted_partition_number(disk_name, part_name)
+        except StorageManagerError:
+            by_size = self._match_parted_number_by_size(disk_name, part_name)
+            if by_size is not None:
+                return by_size
+            raise
+
+    def _block_mountpoint_live(self, block_name: str) -> Optional[str]:
+        dev = f"/dev/{block_name}"
+        findmnt = shutil.which("findmnt")
+        if findmnt:
+            result = self._run([findmnt, "-n", "-o", "TARGET", "--source", dev], timeout=10)
+            if result.returncode == 0 and (result.stdout or "").strip():
+                return result.stdout.strip().splitlines()[0].strip()
+        row = self._find_block(block_name)
+        mp = (row or {}).get("mountpoint")
+        return str(mp).strip() if mp else None
+
     def _volume_usage_for_device(self, device_path: str) -> Optional[Dict[str, Any]]:
         for vol in self.list_volumes():
             if vol.get("device") == device_path:
@@ -1636,10 +1706,19 @@ class StorageService:
             return lsblk_layout
         return layout
 
-    def delete_partition(self, device: str, confirm_token: str) -> Dict[str, Any]:
+    def delete_partition(
+        self,
+        device: str,
+        confirm_token: str,
+        partition_number: Optional[int] = None,
+    ) -> Dict[str, Any]:
         device, name = self._normalize_device(device)
-        if confirm_token != name:
-            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        token = (confirm_token or "").strip()
+        if token != name:
+            raise StorageManagerError(
+                f"Confirmation must match partition name exactly (type «{name}», not the full path).",
+                code="confirm_mismatch",
+            )
         self._assert_partition_target(name)
         parent = self._parent_disk_name(name)
         if not parent:
@@ -1650,7 +1729,7 @@ class StorageService:
 
         self._require_linux_mutations()
         parted = self._parted_bin()
-        num = self._parted_partition_number(parent, name)
+        num = self._resolve_delete_partition_number(parent, name, partition_number)
         dev = f"/dev/{parent}"
         
         part_dev = f"/dev/{name}"
