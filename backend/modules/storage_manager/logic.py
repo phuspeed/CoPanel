@@ -1290,6 +1290,22 @@ class StorageService:
                 best = (start_raw, end_raw)
         return best
 
+    def _ensure_layout_table(self, disk_name: str, layout: Dict[str, Any]) -> Dict[str, Any]:
+        """Fill partition_table from parted when JSON/lsblk omit it; set disk_state."""
+        out = dict(layout)
+        table = out.get("partition_table")
+        if not table:
+            detected = self._partition_table_type(disk_name)
+            if detected:
+                out["partition_table"] = detected
+        parts = out.get("partitions") or []
+        if not parts and out.get("partition_table"):
+            size_bytes = int(out.get("size_bytes") or 0)
+            if size_bytes > 0 and not out.get("unallocated"):
+                disk_mib = size_bytes / (1024 * 1024)
+                out["unallocated"] = [{"start_mib": 1.0, "end_mib": disk_mib, "size_mib": max(0.0, disk_mib - 1.0)}]
+        return self._attach_disk_state(out)
+
     def _attach_disk_state(self, layout: Dict[str, Any]) -> Dict[str, Any]:
         parts = layout.get("partitions") or []
         table = layout.get("partition_table")
@@ -1329,8 +1345,12 @@ class StorageService:
             return False
 
     def initialize_disk(self, disk_name: str, table_type: str, confirm_token: str) -> Dict[str, Any]:
-        if confirm_token != disk_name:
-            raise StorageManagerError("Confirmation must match disk name exactly.", code="confirm_mismatch")
+        token = (confirm_token or "").strip()
+        if token != disk_name:
+            raise StorageManagerError(
+                f"Confirmation must match disk name exactly (type «{disk_name}»).",
+                code="confirm_mismatch",
+            )
         disk = self._disk_record(disk_name)
         if disk.get("is_system_disk"):
             raise StorageManagerError("Cannot initialize the system disk.", code="protected_disk")
@@ -1349,30 +1369,37 @@ class StorageService:
             }
 
         self._require_linux_mutations()
-        existing_parts = self._partition_rows_for_disk(disk_name)
-        if existing_parts:
+        dev = f"/dev/{disk_name}"
+        self._partprobe(dev)
+        parted_parts = self._parted_partitions_list(disk_name)
+        if parted_parts:
             raise StorageManagerError(
-                "Disk already has partitions. Delete all partitions before re-initializing the partition table.",
+                "Disk still has partitions in the partition table. Delete all partitions first, then initialize.",
                 code="device_in_use",
             )
 
         parted = self._parted_bin()
-        dev = f"/dev/{disk_name}"
-        
         wipefs = shutil.which("wipefs")
         if wipefs:
             self._run([wipefs, "-a", dev], timeout=30)
-            
+
         self._run_ok(
             [parted, "-s", dev, "mklabel", label],
             f"Failed to initialize {label.upper()} partition table",
             code="parted_failed",
         )
         self._partprobe(dev)
+        verified = self._partition_table_type(disk_name)
+        if not verified:
+            raise StorageManagerError(
+                f"mklabel completed but partition table is still not readable on {dev}. "
+                f"Run: sudo parted {dev} print",
+                code="parted_failed",
+            )
         return {
-            "message": f"Initialized {disk_name} with {label.upper()} partition table",
+            "message": f"Initialized {disk_name} with {verified.upper()} partition table — you can create partitions now.",
             "disk": disk_name,
-            "partition_table": label,
+            "partition_table": verified,
         }
 
     def _lsblk_partitions_on_disk(self, disk_name: str) -> List[Dict[str, Any]]:
@@ -1622,21 +1649,20 @@ class StorageService:
             elif cursor < disk_mib - 1:
                 unallocated.append({"start_mib": cursor, "end_mib": disk_mib, "size_mib": disk_mib - cursor})
 
-        table = None
-        try:
-            parted = self._parted_bin()
-            pr = self._run([parted, "-s", f"/dev/{disk_name}", "print"], timeout=30)
-            text = ((pr.stdout or "") + (pr.stderr or "")).lower()
-            if "partition table: gpt" in text:
-                table = "gpt"
-            elif "partition table: msdos" in text:
-                table = "msdos"
-            elif "unrecognised" in text or "unrecognized" in text:
-                table = None
-        except StorageManagerError:
-            pass
+        table = self._partition_table_type(disk_name)
+        if not table:
+            try:
+                parted = self._parted_bin()
+                pr = self._run([parted, "-s", f"/dev/{disk_name}", "print"], timeout=30)
+                text = ((pr.stdout or "") + (pr.stderr or "")).lower()
+                if "partition table: gpt" in text:
+                    table = "gpt"
+                elif "partition table: msdos" in text:
+                    table = "msdos"
+            except StorageManagerError:
+                pass
 
-        return self._attach_disk_state({
+        return self._ensure_layout_table(disk_name, {
             "disk": disk_name,
             "is_system_disk": disk.get("is_system_disk", False),
             "size_bytes": disk_size,
@@ -1751,12 +1777,12 @@ class StorageService:
                     "size_mib": disk_mib - cursor,
                 })
 
-        return self._attach_disk_state(self._merge_lsblk_partitions_if_empty(disk_name, disk, {
+        return self._ensure_layout_table(disk_name, self._merge_lsblk_partitions_if_empty(disk_name, disk, {
             "disk": disk_name,
             "is_system_disk": disk.get("is_system_disk", False),
             "size_bytes": disk_size,
             "model": disk.get("model"),
-            "partition_table": disk_info.get("partitionTable") or disk_info.get("partition_table"),
+            "partition_table": disk_info.get("partitionTable") or disk_info.get("partition_table") or self._partition_table_type(disk_name),
             "partitions": partitions,
             "unallocated": unallocated,
         }))
@@ -1772,7 +1798,9 @@ class StorageService:
         lsblk_layout = self._partitions_detail_from_lsblk(disk_name, disk)
         if lsblk_layout.get("partitions"):
             return lsblk_layout
-        return layout
+        if layout.get("partition_table"):
+            return layout
+        return lsblk_layout
 
     def delete_partition(
         self,

@@ -749,15 +749,21 @@ export default function PartitionWizard({
                   {tr.confirmDiskName}
                   <input value={initConfirm} onChange={(e) => setInitConfirm(e.target.value)} placeholder={activeDisk} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`} />
                 </label>
+                {activeDisk && (
+                  <p className="text-[10px] opacity-60 font-mono">{language === 'vi' ? 'Gõ:' : 'Type:'} {activeDisk}</p>
+                )}
+                {actionErr && (
+                  <p className="text-[11px] text-red-500 whitespace-pre-wrap">{actionErr}</p>
+                )}
                 <div className="flex gap-2">
                   <button type="button" onClick={closeModal} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>{tr.cancel}</button>
                   <button
                     type="button"
-                    disabled={actionLoading || initConfirm !== activeDisk}
+                    disabled={actionLoading || initConfirm.trim() !== activeDisk}
                     onClick={() => refreshAfter(() => postJson(`/api/storage_manager/disks/${encodeURIComponent(activeDisk)}/initialize`, {
                       disk_name: activeDisk,
                       table_type: initTableType,
-                      confirm_token: initConfirm,
+                      confirm_token: initConfirm.trim(),
                     }))}
                     className="flex-1 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white disabled:opacity-50"
                   >
