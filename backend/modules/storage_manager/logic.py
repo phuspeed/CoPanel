@@ -1088,7 +1088,12 @@ class StorageService:
         if panel_root:
             protected.add(panel_root)
         for path in protected:
-            if mp == path or mp.startswith(path.rstrip("/") + "/"):
+            base = (path or "").rstrip("/") or "/"
+            if base == "/":
+                if mp == "/":
+                    return True
+                continue
+            if mp == base or mp.startswith(base + "/"):
                 return True
         return False
 
