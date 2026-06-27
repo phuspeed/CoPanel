@@ -83,6 +83,12 @@ _PARTED_FREE_RE = re.compile(
     r"^\s*([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B)?)\s+Free\s+Space\s*$",
     re.IGNORECASE,
 )
+_PARTED_TABLE_ROW = re.compile(
+    r"^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\S+))?",
+    re.IGNORECASE,
+)
+_SD_PART_NUM = re.compile(r"^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+)(\d+)$", re.IGNORECASE)
+_NVME_PART_NUM = re.compile(r"^nvme\d+n\d+p(\d+)$", re.IGNORECASE)
 # Windows / UEFI GPT partition type GUIDs (lowercase, no braces)
 _PARTTYPE_LABELS: Dict[str, str] = {
     "c12a7328-f81f-11d2-ba4b-00a0c93ec93b": "EFI System",
@@ -1379,9 +1385,103 @@ class StorageService:
             key=lambda r: str(r.get("name") or ""),
         )
 
+    def _parted_partitions_from_text(self, disk_name: str) -> List[Dict[str, Any]]:
+        parted = self._parted_bin()
+        dev = f"/dev/{disk_name}"
+        result = self._run([parted, "-s", dev, "unit", "MiB", "print"], timeout=60)
+        raw = f"{(result.stdout or '')}\n{(result.stderr or '')}"
+        parts: List[Dict[str, Any]] = []
+        for line in raw.splitlines():
+            if "free space" in line.lower():
+                continue
+            m = _PARTED_TABLE_ROW.match(line.strip())
+            if not m:
+                continue
+            parts.append({
+                "number": int(m.group(1)),
+                "start": m.group(2),
+                "end": m.group(3),
+                "size": m.group(4),
+                "filesystem": m.group(5) or "",
+            })
+        return parts
+
+    def _parted_partitions_list(self, disk_name: str) -> List[Dict[str, Any]]:
+        try:
+            payload = self._parted_json(disk_name)
+            parts = payload.get("partitions") or (payload.get("disk") or {}).get("partitions") or []
+            if parts:
+                return parts
+        except StorageManagerError:
+            pass
+        return self._parted_partitions_from_text(disk_name)
+
+    def _partition_table_type(self, disk_name: str) -> Optional[str]:
+        try:
+            payload = self._parted_json(disk_name)
+            table = (payload.get("disk") or {}).get("partitionTable") or payload.get("partitionTable")
+            if table:
+                t = str(table).lower()
+                return "msdos" if t in ("mbr", "msdos") else t
+        except StorageManagerError:
+            pass
+        return self._partition_table_from_text(self._parted_print_combined(disk_name))
+
+    def _kernel_partition_index(self, part_name: str) -> Optional[int]:
+        m = _NVME_PART_NUM.match(part_name)
+        if m:
+            return int(m.group(1))
+        m = _SD_PART_NUM.match(part_name)
+        if m:
+            return int(m.group(1))
+        tail = re.search(r"(\d+)$", part_name)
+        return int(tail.group(1)) if tail else None
+
+    def _resolve_partition_number(
+        self,
+        disk_name: str,
+        part_name: str,
+        hint: Optional[int] = None,
+    ) -> int:
+        if hint is not None:
+            parts = self._parted_partitions_list(disk_name)
+            known = {int(p["number"]) for p in parts if p.get("number") is not None}
+            if hint in known:
+                return hint
+
+        try:
+            return self._parted_partition_number(disk_name, part_name)
+        except StorageManagerError:
+            by_size = self._match_parted_number_by_size(disk_name, part_name)
+            if by_size is not None:
+                return by_size
+
+        kidx = self._kernel_partition_index(part_name)
+        if kidx is not None and self._find_block(part_name):
+            parts = self._parted_partitions_list(disk_name)
+            known = {int(p["number"]) for p in parts if p.get("number") is not None}
+            if kidx in known:
+                return kidx
+            children = self._lsblk_partitions_on_disk(disk_name)
+            if any(c.get("name") == part_name for c in children):
+                return kidx
+
+        raise StorageManagerError(
+            f"Could not resolve partition number for {part_name} on /dev/{disk_name}. "
+            f"Run: sudo parted /dev/{disk_name} print",
+            code="partition_not_found",
+        )
+
+    def _resolve_delete_partition_number(
+        self,
+        disk_name: str,
+        part_name: str,
+        hint: Optional[int] = None,
+    ) -> int:
+        return self._resolve_partition_number(disk_name, part_name, hint)
+
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
-        payload = self._parted_json(disk_name)
-        parts = payload.get("partitions") or []
+        parts = self._parted_partitions_list(disk_name)
         dev_path = f"/dev/{part_name}"
 
         for p in parts:
@@ -1441,13 +1541,10 @@ class StorageService:
         size_bytes = int(row.get("size_bytes") or 0) or (self._parse_size(row.get("size")) or 0)
         if size_bytes <= 0:
             return None
-        try:
-            payload = self._parted_json(disk_name)
-        except StorageManagerError:
-            return None
+        parts = self._parted_partitions_list(disk_name)
         best_num: Optional[int] = None
         best_delta = size_bytes
-        for p in payload.get("partitions") or []:
+        for p in parts:
             num = p.get("number")
             if num is None:
                 continue
@@ -1459,35 +1556,6 @@ class StorageService:
                 best_delta = delta
                 best_num = int(num)
         return best_num
-
-    def _validate_parted_partition_number(self, disk_name: str, num: int) -> None:
-        payload = self._parted_json(disk_name)
-        valid = {int(p["number"]) for p in (payload.get("partitions") or []) if p.get("number") is not None}
-        if num not in valid:
-            raise StorageManagerError(
-                f"Partition number {num} is not on /dev/{disk_name}. Valid: {sorted(valid) or 'none'}.",
-                code="partition_not_found",
-            )
-
-    def _resolve_delete_partition_number(
-        self,
-        disk_name: str,
-        part_name: str,
-        hint: Optional[int] = None,
-    ) -> int:
-        if hint is not None:
-            try:
-                self._validate_parted_partition_number(disk_name, hint)
-                return hint
-            except StorageManagerError:
-                pass
-        try:
-            return self._parted_partition_number(disk_name, part_name)
-        except StorageManagerError:
-            by_size = self._match_parted_number_by_size(disk_name, part_name)
-            if by_size is not None:
-                return by_size
-            raise
 
     def _block_mountpoint_live(self, block_name: str) -> Optional[str]:
         dev = f"/dev/{block_name}"
@@ -1737,7 +1805,22 @@ class StorageService:
         if wipefs and os.path.exists(part_dev):
             self._run([wipefs, "-a", part_dev], timeout=30)
             
-        self._run_ok([parted, "-s", dev, "rm", str(num)], f"Failed to delete partition {num}", code="parted_failed")
+        rm = self._run([parted, "-s", dev, "rm", str(num)], timeout=60)
+        if rm.returncode != 0:
+            table = self._partition_table_type(parent)
+            sgdisk = shutil.which("sgdisk")
+            if table == "gpt" and sgdisk:
+                self._run_ok(
+                    [sgdisk, "-d", str(num), dev],
+                    f"Failed to delete partition {num}",
+                    code="parted_failed",
+                )
+            else:
+                err = (rm.stderr or rm.stdout or "").strip()
+                raise StorageManagerError(
+                    err or f"Failed to delete partition {num}",
+                    code="parted_failed",
+                )
         self._partprobe(dev)
         return {"message": f"Deleted partition {device}", "device": device, "partition_number": num}
 
@@ -1831,10 +1914,20 @@ class StorageService:
             raise StorageManagerError(f"Label change not supported for {fstype}", code="invalid_fstype")
         return {"message": f"Label set on {device}", "device": device, "label": label}
 
-    def set_partition_boot(self, device: str, active: bool, confirm_token: str) -> Dict[str, Any]:
+    def set_partition_boot(
+        self,
+        device: str,
+        active: bool,
+        confirm_token: str,
+        partition_number: Optional[int] = None,
+    ) -> Dict[str, Any]:
         device, name = self._normalize_device(device)
-        if confirm_token != name:
-            raise StorageManagerError("Confirmation must match partition name exactly.", code="confirm_mismatch")
+        token = (confirm_token or "").strip()
+        if token != name:
+            raise StorageManagerError(
+                f"Confirmation must match partition name exactly (type «{name}»).",
+                code="confirm_mismatch",
+            )
         parent = self._parent_disk_name(name)
         if not parent:
             raise StorageManagerError("Parent disk not found.", code="device_not_found")
@@ -1847,18 +1940,33 @@ class StorageService:
 
         self._require_linux_mutations()
         parted = self._parted_bin()
-        num = self._parted_partition_number(parent, name)
+        num = self._resolve_partition_number(parent, name, partition_number)
         dev = f"/dev/{parent}"
-        payload = self._parted_json(parent)
-        table = (payload.get("disk") or {}).get("partitionTable") or ""
-        flag = "esp" if str(table).lower() == "gpt" else "boot"
+        table = (self._partition_table_type(parent) or "gpt").lower()
+        row = self._find_block(name) or {}
+        fstype = self._normalize_fstype(row.get("fstype")) or self._probe_fstype(device) or ""
+
+        if table == "gpt":
+            if fstype in ("vfat",):
+                flag = "esp"
+            elif fstype in ("ext4", "ext3", "xfs", "btrfs"):
+                flag = "legacy_boot"
+            else:
+                raise StorageManagerError(
+                    f"Boot flag on GPT requires FAT32 (EFI) or a Linux filesystem, not {fstype or 'unknown'}. "
+                    "exFAT/NTFS data partitions cannot be marked boot/ESP.",
+                    code="invalid_target",
+                )
+        else:
+            flag = "boot"
+
         state = "on" if active else "off"
         self._run_ok(
             [parted, "-s", dev, "set", str(num), flag, state],
-            "Failed to set boot flag",
+            f"Failed to set {flag} flag (partition {num} on {dev})",
             code="parted_failed",
         )
-        return {"message": f"Boot flag {state} for {device}", "device": device, "flag": flag, "active": active}
+        return {"message": f"{flag} flag {state} for {device}", "device": device, "flag": flag, "active": active}
 
     def _partprobe(self, disk_dev: str) -> None:
         partprobe = shutil.which("partprobe") or "/sbin/partprobe"

@@ -925,16 +925,28 @@ export default function PartitionWizard({
               <>
                 <h3 className="font-bold">{tr.setBoot}</h3>
                 <p className="text-[11px] font-mono">{selected.path}</p>
+                <p className="text-[10px] opacity-70">
+                  {language === 'vi'
+                    ? 'GPT: FAT32 → EFI (esp), ext4/xfs/btrfs → legacy_boot. exFAT/NTFS không hỗ trợ.'
+                    : 'GPT: FAT32 → EFI (esp), ext4/xfs/btrfs → legacy_boot. exFAT/NTFS not supported.'}
+                </p>
                 <input value={bootConfirm} onChange={(e) => setBootConfirm(e.target.value)} placeholder={tr.confirmPartName} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`} />
+                {selected.name && (
+                  <p className="text-[10px] opacity-60 font-mono">{language === 'vi' ? 'Gõ:' : 'Type:'} {selected.name}</p>
+                )}
+                {actionErr && (
+                  <p className="text-[11px] text-red-500 whitespace-pre-wrap">{actionErr}</p>
+                )}
                 <div className="flex gap-2">
                   <button type="button" onClick={closeModal} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>{tr.cancel}</button>
                   <button
                     type="button"
-                    disabled={actionLoading || bootConfirm !== selected.name}
+                    disabled={actionLoading || bootConfirm.trim() !== (selected.name || '')}
                     onClick={() => refreshAfter(() => postJson('/api/storage_manager/partitions/boot', {
                       device: selected.path,
                       active: true,
-                      confirm_token: bootConfirm,
+                      confirm_token: bootConfirm.trim(),
+                      partition_number: selected.number || null,
                     }))}
                     className="flex-1 py-2 rounded-xl text-xs font-bold bg-cyan-600 text-white disabled:opacity-50"
                   >

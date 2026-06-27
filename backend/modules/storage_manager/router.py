@@ -276,7 +276,7 @@ async def set_partition_boot(
     user: Dict[str, Any] = Depends(require_admin),
 ) -> Dict[str, Any]:
     try:
-        result = _service.set_partition_boot(body.device, body.active, body.confirm_token)
+        result = _service.set_partition_boot(body.device, body.active, body.confirm_token, body.partition_number)
         record_audit(
             "storage.partition_boot",
             module="storage_manager",

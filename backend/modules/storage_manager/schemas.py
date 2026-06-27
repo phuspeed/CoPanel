@@ -114,3 +114,4 @@ class PartitionBootRequest(BaseModel):
     device: str
     active: bool = True
     confirm_token: str = Field(..., min_length=1, max_length=64)
+    partition_number: Optional[int] = Field(None, ge=1, le=128)
