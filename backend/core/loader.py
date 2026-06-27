@@ -91,7 +91,7 @@ class ModuleLoader:
         if not module_path.is_dir():
             return False, f"Module directory not found: {module_name}"
 
-        self._unregister_module_routes(app, module_name)
+        # Load new router before removing old routes — failed import must not leave the module with zero routes.
         self._purge_module_cache(module_name)
         self._clear_pycache(module_path)
 
@@ -99,6 +99,7 @@ class ModuleLoader:
         if router is None:
             return False, f"Failed to import router for {module_name}"
 
+        self._unregister_module_routes(app, module_name)
         self._register_router(app, module_name, router)
         self.loaded_modules[module_name] = router
         logger.info("Reloaded module: %s", module_name)

@@ -179,6 +179,7 @@ MODULE_ROUTE_PROBES: Dict[str, List[str]] = {
         "/partitions/create",
         "/disks/{disk_name}/partitions",
         "/disks/{disk_name}/initialize",
+        "/format",
         "/mount",
         "/version",
     ],
@@ -308,15 +309,22 @@ def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
             "message": "systemctl not found. Run manually: sudo systemctl restart copanel",
         }
 
-    def _do_restart():
-        time.sleep(delay)
-        try:
+    def _run_restart() -> subprocess.CompletedProcess:
+        cmd = ["systemctl", "restart", "copanel"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 and shutil.which("sudo"):
             result = subprocess.run(
-                ["systemctl", "restart", "copanel"],
+                ["sudo", "-n", "systemctl", "restart", "copanel"],
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
+        return result
+
+    def _do_restart():
+        time.sleep(delay)
+        try:
+            result = _run_restart()
             if result.returncode != 0:
                 logger.error(
                     "systemctl restart copanel failed (exit %s): %s",

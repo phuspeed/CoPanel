@@ -226,6 +226,7 @@ const REQUIRED_STORAGE_ROUTES = [
   '/api/storage_manager/partitions/delete',
   '/api/storage_manager/partitions/create',
   '/api/storage_manager/disks/{disk_name}/initialize',
+  '/api/storage_manager/format',
   '/api/storage_manager/mount',
 ];
 
