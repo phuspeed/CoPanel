@@ -98,6 +98,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       installed: 'Installed',
       changePassword: 'Change Password',
       logout: 'Logout',
+      settings: 'Settings',
       vpsManagement: 'VPS Management',
       oldPassword: 'Old Password',
       newPassword: 'New Password',
@@ -143,6 +144,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       modules: 'Các Module',
       installed: 'Đã cài đặt',
       changePassword: 'Đổi mật khẩu',
+      settings: 'Cài đặt',
       logout: 'Đăng xuất',
       vpsManagement: 'Quản lý VPS',
       oldPassword: 'Mật khẩu cũ',
@@ -432,6 +434,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const hasAllAccess = permittedModules.includes('all');
 
   const allowedModules = modules.filter((mod) => {
+    if (mod.path === '/settings') return false;
     if (hasAllAccess) return true;
     return permittedModules.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
   });
@@ -539,6 +542,23 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
               </>
             )}
           </nav>
+
+          {user?.role === 'superadmin' && (
+            <div className={`px-4 pb-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+              <Link
+                to="/settings"
+                className={cn(
+                  'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
+                  isActive('/settings')
+                    ? 'bg-blue-600 text-white font-bold'
+                    : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+                )}
+              >
+                <Icons.Settings className="w-5 h-5" />
+                <span>{tr.settings}</span>
+              </Link>
+            </div>
+          )}
 
           {/* Footer */}
           <div className={`p-4 border-t text-xs ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'}`}>

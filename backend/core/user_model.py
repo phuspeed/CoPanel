@@ -39,6 +39,7 @@ def init_db():
     );
     """)
     conn.commit()
+    _migrate_user_totp_columns(conn)
 
     import os
     env_admin_pass = os.environ.get("ADMIN_PASSWORD")
@@ -195,6 +196,58 @@ def delete_user(user_id: int) -> bool:
     rows_affected = cursor.rowcount
     conn.close()
     return rows_affected > 0
+
+
+def _migrate_user_totp_columns(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in cursor.fetchall()}
+    if "totp_secret" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''")
+    if "totp_pending" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''")
+    if "totp_enabled" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
+def set_totp_pending(user_id: int, secret: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET totp_pending = ? WHERE id = ?",
+        (secret, user_id),
+    )
+    conn.commit()
+    ok = cursor.rowcount > 0
+    conn.close()
+    return ok
+
+
+def enable_totp(user_id: int, secret: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET totp_secret = ?, totp_pending = '', totp_enabled = 1 WHERE id = ?",
+        (secret, user_id),
+    )
+    conn.commit()
+    ok = cursor.rowcount > 0
+    conn.close()
+    return ok
+
+
+def disable_totp(user_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET totp_secret = '', totp_pending = '', totp_enabled = 0 WHERE id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    ok = cursor.rowcount > 0
+    conn.close()
+    return ok
 
 
 def change_admin_password(new_password: str) -> bool:

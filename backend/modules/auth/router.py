@@ -6,7 +6,7 @@ compatibility - other modules that imported it directly continue to work.
 New modules should prefer ``core.auth.require_user`` / ``require_admin``.
 """
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
@@ -26,12 +26,14 @@ def _public_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "role": user["role"],
         "permitted_modules": user["permitted_modules"],
         "permitted_folders": user["permitted_folders"],
+        "totp_enabled": bool(user.get("totp_enabled")),
     }
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    totp_code: Optional[str] = None
 
 
 class CreateUserRequest(BaseModel):
@@ -80,6 +82,28 @@ def login(req: LoginRequest) -> Dict[str, Any]:
             status="error",
         )
         raise ApiError("INVALID_CREDENTIALS", "Incorrect username or password.", http_status=401)
+
+    if user.get("totp_enabled"):
+        code = (req.totp_code or "").strip()
+        if not code:
+            raise ApiError(
+                "TOTP_REQUIRED",
+                "Two-factor authentication code required.",
+                http_status=401,
+                details={"need_2fa": True},
+            )
+        secret = user.get("totp_secret") or ""
+        import pyotp
+        if not secret or not pyotp.TOTP(secret).verify(code, valid_window=1):
+            record_audit(
+                "auth.login.fail",
+                module="auth",
+                target=req.username,
+                actor=req.username,
+                status="error",
+                meta={"reason": "totp"},
+            )
+            raise ApiError("INVALID_CREDENTIALS", "Invalid two-factor code.", http_status=401)
 
     token = create_access_token(data={"sub": user["username"]})
     record_audit(

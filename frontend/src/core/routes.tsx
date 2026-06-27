@@ -74,6 +74,9 @@ export function createRoutes() {
 
   // Enforce dynamic module access permissions
   const filteredModules = modules.filter((mod: ModuleConfig) => {
+    if (mod.path === '/settings') {
+      return user.role === 'superadmin';
+    }
     if (user.role === 'superadmin') return true;
 
     // Normal users see permitted modules only
