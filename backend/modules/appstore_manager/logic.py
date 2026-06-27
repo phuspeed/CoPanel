@@ -188,25 +188,21 @@ MODULE_ROUTE_PROBES: Dict[str, List[str]] = {
 def _module_api_routes_active(pkg_id: str) -> bool:
     """True if required API routes for this module are registered on the running process."""
     try:
-        from core.module_reload import get_app
+        from core.module_reload import list_module_route_paths
 
-        app = get_app()
-        if app is None:
+        paths = set(list_module_route_paths(pkg_id))
+        if not paths:
             return False
         prefix = f"/api/{pkg_id}"
-        paths = {getattr(route, "path", None) or "" for route in app.routes}
         required = MODULE_ROUTE_PROBES.get(pkg_id)
         if required:
             for suffix in required:
                 if f"{prefix}{suffix}" not in paths:
                     return False
             return True
-        for path in paths:
-            if path == prefix or path.startswith(prefix + "/"):
-                return True
+        return any(p == prefix or p.startswith(prefix + "/") for p in paths)
     except Exception:
         return False
-    return False
 
 
 def _finalize_module_install(

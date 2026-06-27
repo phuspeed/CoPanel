@@ -799,7 +799,17 @@ export default function StorageManagerDashboard() {
       const routes = modResult.status === 'fulfilled'
         ? modResult.value.modules?.storage_manager?.routes || []
         : [];
-      const routesMissing = REQUIRED_STORAGE_ROUTES.some((path) => !routes.includes(path));
+      const routeCount = modResult.status === 'fulfilled'
+        ? modResult.value.modules?.storage_manager?.route_count ?? routes.length
+        : 0;
+      const hasRouteCatalog = modResult.status === 'fulfilled'
+        && modResult.value.modules?.storage_manager != null
+        && typeof modResult.value.modules === 'object'
+        && !Array.isArray(modResult.value.modules)
+        && routeCount > 0;
+      const routesMissing = hasRouteCatalog
+        ? REQUIRED_STORAGE_ROUTES.some((path) => !routes.includes(path))
+        : false;
       const versionMissing = verResult.status !== 'fulfilled';
       setApiStale(versionMissing || routesMissing);
     } catch {

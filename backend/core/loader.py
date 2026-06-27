@@ -12,6 +12,48 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _included_router_prefix(route) -> str:
+    """Return mount prefix for FastAPI/Starlette _IncludedRouter (Starlette 0.40+)."""
+    if type(route).__name__ != "_IncludedRouter":
+        return ""
+    ctx = getattr(route, "include_context", None)
+    return (getattr(ctx, "prefix", None) or "") if ctx else ""
+
+
+def _join_api_path(prefix: str, subpath: str) -> str:
+    if not subpath:
+        return prefix
+    if subpath.startswith("/"):
+        return f"{prefix.rstrip('/')}{subpath}"
+    return f"{prefix.rstrip('/')}/{subpath}"
+
+
+def collect_module_route_paths(app: FastAPI, module_name: str) -> List[str]:
+    """List full HTTP paths for one module (handles nested _IncludedRouter mounts)."""
+    prefix = f"/api/{module_name}"
+    paths: List[str] = []
+
+    for route in app.routes:
+        inc_prefix = _included_router_prefix(route)
+        if inc_prefix:
+            if inc_prefix != prefix and not inc_prefix.startswith(prefix + "/"):
+                continue
+            inner = getattr(route, "original_router", None)
+            if inner is None:
+                continue
+            for sub in getattr(inner, "routes", []) or []:
+                subpath = getattr(sub, "path", None) or ""
+                if subpath:
+                    paths.append(_join_api_path(inc_prefix, subpath))
+            continue
+
+        path = getattr(route, "path", None) or ""
+        if path == prefix or path.startswith(prefix + "/"):
+            paths.append(path)
+
+    return sorted(set(paths))
+
+
 class ModuleLoader:
     """Dynamically loads and registers FastAPI routers from module folders."""
 
@@ -63,19 +105,17 @@ class ModuleLoader:
         return True, f"Reloaded {module_name}"
 
     def list_route_paths(self, app: FastAPI, module_name: str) -> List[str]:
-        prefix = f"/api/{module_name}"
-        paths: List[str] = []
-        for route in app.routes:
-            path = getattr(route, "path", None) or ""
-            if path == prefix or path.startswith(prefix + "/"):
-                paths.append(path)
-        return sorted(set(paths))
+        return collect_module_route_paths(app, module_name)
 
     def _unregister_module_routes(self, app: FastAPI, module_name: str) -> None:
         prefix = f"/api/{module_name}"
         kept = []
         removed = 0
         for route in app.routes:
+            inc_prefix = _included_router_prefix(route)
+            if inc_prefix and (inc_prefix == prefix or inc_prefix.startswith(prefix + "/")):
+                removed += 1
+                continue
             path = getattr(route, "path", None) or ""
             if path == prefix or path.startswith(prefix + "/"):
                 removed += 1
