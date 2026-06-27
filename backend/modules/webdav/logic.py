@@ -78,6 +78,62 @@ def _run(cmd: List[str], *, input_text: Optional[str] = None, timeout: int = 60)
     )
 
 
+def _run_privileged(cmd: List[str], *, input_text: Optional[str] = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    """Run as root; retry with sudo -n when the panel service is not root."""
+    proc = _run(cmd, input_text=input_text, timeout=timeout)
+    if proc.returncode == 0:
+        return proc
+    if IS_WINDOWS:
+        return proc
+    sudo_cmd = ["sudo", "-n", *cmd]
+    return _run(sudo_cmd, input_text=input_text, timeout=timeout)
+
+
+def _unix_user_exists(username: str) -> bool:
+    return _run(["id", "-u", username]).returncode == 0
+
+
+def _ensure_unix_user(username: str) -> None:
+    """Samba requires a real Linux account matching the SMB login name."""
+    if _unix_user_exists(username):
+        return
+    proc = _run_privileged(
+        ["useradd", "-M", "-s", "/usr/sbin/nologin", username],
+    )
+    if proc.returncode != 0 and not _unix_user_exists(username):
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(
+            f"Cannot create Linux user '{username}' for SMB (Samba needs a system account): {err}"
+        )
+
+
+def _smb_user_exists(username: str) -> bool:
+    proc = _run_privileged(["pdbedit", "-L"])
+    if proc.returncode != 0:
+        return False
+    prefix = f"{username}:"
+    return any(line.startswith(prefix) for line in (proc.stdout or "").splitlines())
+
+
+def _smb_set_password(username: str, password: str) -> None:
+    _ensure_unix_user(username)
+    pwd_input = f"{password}\n{password}\n"
+    if _smb_user_exists(username):
+        proc = _run_privileged(
+            ["smbpasswd", "-s", username],
+            input_text=pwd_input,
+        )
+    else:
+        proc = _run_privileged(
+            ["smbpasswd", "-s", "-a", username],
+            input_text=pwd_input,
+        )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"smbpasswd failed: {err}")
+    _run_privileged(["smbpasswd", "-e", username])
+
+
 def _get_superadmin() -> Optional[Dict[str, Any]]:
     for user in user_model.get_all_users():
         if user.get("role") == "superadmin":
@@ -325,32 +381,47 @@ def apply_smb_config(cfg: Optional[Dict[str, Any]] = None, *, admin_password: Op
     create mask = 0644
     directory mask = 0755
 """
-    SMB_CONF_PATH.write_text(conf_text, encoding="utf-8")
+    write_proc = _run_privileged(
+        ["tee", str(SMB_CONF_PATH)],
+        input_text=conf_text,
+    )
+    if write_proc.returncode != 0:
+        try:
+            SMB_CONF_PATH.write_text(conf_text, encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"Cannot write Samba config: {exc}") from exc
 
     main_conf = Path("/etc/samba/smb.conf")
     if main_conf.is_file():
         content = main_conf.read_text(encoding="utf-8")
         if SMB_CONF_INCLUDE not in content:
-            main_conf.write_text(content.rstrip() + "\n\n" + SMB_CONF_INCLUDE + "\n", encoding="utf-8")
+            include_line = f"\n\n{SMB_CONF_INCLUDE}\n"
+            inc_proc = _run_privileged(
+                ["tee", "-a", str(main_conf)],
+                input_text=include_line,
+            )
+            if inc_proc.returncode != 0:
+                try:
+                    main_conf.write_text(content.rstrip() + include_line, encoding="utf-8")
+                except OSError as exc:
+                    raise RuntimeError(f"Cannot update smb.conf: {exc}") from exc
 
-    # Set global port if non-default
     if smb_port != 445:
         global_snippet = Path("/etc/samba/smb.conf.d/copanel-webdav-global.conf")
-        global_snippet.write_text(f"smb ports = {smb_port}\n", encoding="utf-8")
+        global_snippet.parent.mkdir(parents=True, exist_ok=True)
+        port_text = f"smb ports = {smb_port}\n"
+        port_proc = _run_privileged(["tee", str(global_snippet)], input_text=port_text)
+        if port_proc.returncode != 0:
+            try:
+                global_snippet.write_text(port_text, encoding="utf-8")
+            except OSError as exc:
+                raise RuntimeError(f"Cannot write Samba port config: {exc}") from exc
 
-    # Sync samba password for root panel user
-    proc = _run(
-        ["smbpasswd", "-s", "-a", admin_user],
-        input_text=f"{admin_pass}\n{admin_pass}\n",
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"smbpasswd failed: {(proc.stderr or proc.stdout).strip()}")
+    _smb_set_password(admin_user, admin_pass)
 
-    _run(["smbpasswd", "-e", admin_user])
-
-    restart = _run(["systemctl", "restart", "smbd"])
+    restart = _run_privileged(["systemctl", "restart", "smbd"])
     if restart.returncode != 0:
-        restart = _run(["systemctl", "restart", "samba"])
+        restart = _run_privileged(["systemctl", "restart", "samba"])
 
     return {
         "applied": True,
