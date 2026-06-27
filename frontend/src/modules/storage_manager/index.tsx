@@ -786,7 +786,7 @@ export default function StorageManagerDashboard() {
         fetch('/api/modules', { headers: authHeaders }).then(async (res) => {
           const body = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error('modules list failed');
-          return body as { modules?: Record<string, { routes?: string[] }> };
+          return body as { modules?: Record<string, { routes?: string[]; route_count?: number }> };
         }),
       ]);
 
