@@ -548,6 +548,16 @@ def _apt_install_packages(pkg_names: list, max_retries: int = 8, retry_delay: in
         if res.returncode == 0:
             return {"ok": True, "message": out}
         last_err = out
+        
+        # If the local package index is outdated, we might get 404s. Auto-update and retry immediately.
+        if "404 Not Found" in out or "Unable to fetch some archives" in out:
+            subprocess.run("sudo -n apt-get update", shell=True, capture_output=True, text=True)
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            out = (res.stderr or res.stdout or "").strip()
+            if res.returncode == 0:
+                return {"ok": True, "message": out}
+            last_err = out
+
         if not _is_apt_lock_error(out):
             break
     return {"ok": False, "message": last_err or "apt-get install failed"}
@@ -712,6 +722,15 @@ def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
             capture_output=True,
             text=True,
         )
+        out = (res.stderr or res.stdout or "").strip()
+        if res.returncode != 0 and ("404 Not Found" in out or "Unable to fetch some archives" in out):
+            subprocess.run("sudo -n apt-get update", shell=True, capture_output=True, text=True)
+            res = subprocess.run(
+                "sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y " + target_pkg,
+                shell=True,
+                capture_output=True,
+                text=True,
+            )
     else:
         res = subprocess.run(["sudo", "-n", "yum", "install", "-y", target_pkg], shell=False, capture_output=True, text=True)
 
