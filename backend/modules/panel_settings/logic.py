@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import re
 import subprocess
@@ -36,6 +37,8 @@ PANEL_PORT = 8686
 NGINX_AUTH_START = "# BEGIN COPANEL NGINX GATE"
 NGINX_AUTH_END = "# END COPANEL NGINX GATE"
 NGINX_EXEMPT_TAG = "# COPANEL NGINX GATE EXEMPT"
+
+logger = logging.getLogger(__name__)
 
 # Locations that must not inherit HTTP basic auth (API JWT, static assets, health).
 NGINX_EXEMPT_LOCATION_MARKERS = (
@@ -400,6 +403,26 @@ def repair_nginx_gate() -> Dict[str, Any]:
         raise ValueError("Nginx gate is not configured.")
     user = (gate.get("username") or "copanel").strip()
     return configure_nginx_gate(True, user, None)
+
+
+def maybe_auto_repair_nginx_gate() -> Optional[Dict[str, Any]]:
+    """Startup hook: fix legacy server-level gate after git pull + service restart."""
+    if IS_WINDOWS:
+        return None
+    if not _nginx_gate_at_server_level():
+        return None
+    if not HTPASSWD_PATH.is_file() and not _nginx_has_gate():
+        return None
+    try:
+        result = repair_nginx_gate()
+        logger.info(
+            "Nginx gate auto-repaired (auth moved into location /; /api/ exempt). reload_ok=%s",
+            result.get("reload_ok"),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Nginx gate auto-repair failed (edit nginx manually or use Settings): %s", exc)
+        return None
 
 
 def totp_setup(username: str) -> Dict[str, Any]:

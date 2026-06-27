@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("core.module_reload missing — hot-reload disabled; update CoPanel core (git pull).")
     await job_manager.start(app)
+    try:
+        from modules.panel_settings.logic import maybe_auto_repair_nginx_gate
+
+        maybe_auto_repair_nginx_gate()
+    except Exception as exc:
+        logger.warning("panel_settings startup hook: %s", exc)
     yield
     await job_manager.stop()
     logger.info("CoPanel shutting down...")
