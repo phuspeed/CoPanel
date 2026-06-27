@@ -18,8 +18,12 @@ from fastapi.responses import JSONResponse
 
 from core.loader import ModuleLoader
 from core import api as core_api
-from core import module_reload
 from core.jobs import jobs as job_manager
+
+try:
+    from core import module_reload as module_reload
+except ImportError:
+    module_reload = None  # type: ignore[assignment]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,7 +62,10 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler."""
     logger.info("CoPanel starting...")
     logger.info("Scanning modules in: %s", MODULES_DIR)
-    module_reload.set_event_loop(asyncio.get_running_loop())
+    if module_reload is not None:
+        module_reload.set_event_loop(asyncio.get_running_loop())
+    else:
+        logger.warning("core.module_reload missing — hot-reload disabled; update CoPanel core (git pull).")
     await job_manager.start(app)
     yield
     await job_manager.stop()
@@ -121,7 +128,8 @@ async def api_root():
 
 loader = ModuleLoader(MODULES_DIR)
 loaded_modules = loader.load_modules(app)
-module_reload.configure(app, loader)
+if module_reload is not None:
+    module_reload.configure(app, loader)
 
 
 @app.get("/api/modules")

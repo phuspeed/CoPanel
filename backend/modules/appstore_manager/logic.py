@@ -2,6 +2,7 @@
 AppStore Manager Logic Layer
 Pulls package details from dynamic GitHub index file, handles on-demand installation.
 """
+import logging
 import urllib.request
 import json
 import re
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Optional
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
 CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/contents/packages.json"
 BUILD_TASKS = {}
+logger = logging.getLogger(__name__)
 
 
 def get_copanel_home() -> Path:
@@ -205,6 +207,14 @@ def _module_api_routes_active(pkg_id: str) -> bool:
         return False
 
 
+def _core_hot_reload_available() -> bool:
+    try:
+        from core import module_reload as _mr  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _finalize_module_install(
     pkg_id: str,
     *,
@@ -240,6 +250,20 @@ def _finalize_module_install(
             "new_backend",
             log_line=f"⚠️ New backend module «{pkg_id}» — restart copanel to register API routes.",
         )
+        if platform.system() != "Windows":
+            BUILD_TASKS[pkg_id]["logs"].append("⏳ Scheduling copanel service restart…")
+            restart_backend_service(delay=5.0)
+        return
+
+    if not _core_hot_reload_available():
+        BUILD_TASKS[pkg_id]["logs"].append(
+            "⚠️ CoPanel core is outdated (missing core/module_reload.py). "
+            "Run on the server: cd /opt/copanel && git pull origin main"
+        )
+        _mark_restart_required(pkg_id, "core_outdated")
+        if platform.system() != "Windows":
+            BUILD_TASKS[pkg_id]["logs"].append("⏳ Scheduling copanel service restart (loads module from disk)…")
+            restart_backend_service(delay=5.0)
         return
 
     try:
@@ -287,13 +311,20 @@ def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
     def _do_restart():
         time.sleep(delay)
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["systemctl", "restart", "copanel"],
                 capture_output=True,
-                timeout=10,
+                text=True,
+                timeout=60,
             )
-        except Exception:
-            pass
+            if result.returncode != 0:
+                logger.error(
+                    "systemctl restart copanel failed (exit %s): %s",
+                    result.returncode,
+                    (result.stderr or result.stdout or "").strip(),
+                )
+        except Exception as exc:
+            logger.exception("systemctl restart copanel failed: %s", exc)
 
     threading.Thread(target=_do_restart, daemon=True).start()
     return {

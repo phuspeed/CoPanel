@@ -377,14 +377,14 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     const fetchInstalledPackages = () => {
       fetch('/api/package_manager/list')
         .then(async (r) => {
-          if (!r.ok) {
-            const alt = await fetch('/api/package_manager/');
-            if (alt.ok) return alt;
-            return fetch('/api/package_manager');
-          }
-          return r;
+          if (r.ok) return r;
+          const alt = await fetch('/api/package_manager/');
+          if (alt.ok) return alt;
+          const fallback = await fetch('/api/package_manager');
+          return fallback;
         })
         .then(async (r) => {
+          if (!r.ok) return null;
           const ct = r.headers.get('content-type') || '';
           if (!ct.includes('application/json')) {
             return null;
@@ -396,7 +396,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
             setInstalledPackages(data.packages.filter((p: any) => p.status !== 'not_installed'));
           }
         })
-        .catch((err) => console.error('Error fetching packages in Layout:', err));
+        .catch(() => { /* backend down during restart — ignore */ });
     };
 
     fetchInstalledPackages();
