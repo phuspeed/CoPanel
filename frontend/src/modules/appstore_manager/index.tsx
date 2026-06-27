@@ -23,6 +23,7 @@ interface Package {
   update_status?: UpdateStatus;
   is_core?: boolean;
   system_packages?: string[];
+  pip_packages?: string[];
   requires_copanel_restart?: boolean;
   changelog_en?: string;
   changelog_vi?: string;
@@ -447,6 +448,7 @@ export default function AppStoreDashboard() {
           download_url: pkg.download_url,
           version: pkg.version,
           system_packages: pkg.system_packages,
+          pip_packages: pkg.pip_packages,
           requires_copanel_restart: !!pkg.requires_copanel_restart,
         }),
       });

@@ -490,6 +490,10 @@ DEPENDENCY_PACKAGES = {
     "database_manager": {"id": "mariadb", "apt": "mariadb-server", "yum": "mariadb-server"},
 }
 
+PIP_PACKAGES_BY_MODULE: Dict[str, List[str]] = {
+    "webdav": ["wsgidav==4.3.3", "cheroot==10.0.5"],
+}
+
 
 def _detect_pkg_manager() -> str:
     if shutil.which("apt-get"):
@@ -605,6 +609,81 @@ def _install_system_dependencies(deps: list, is_windows: bool) -> list:
 
     for _dep_id, _target_pkg, dep in pending:
         results.append(_install_system_dependency(dep, False))
+    return results
+
+
+def _resolve_pip_bin() -> Optional[str]:
+    home = get_copanel_home()
+    for candidate in (
+        home / "venv" / "bin" / "pip",
+        home / "venv" / "bin" / "pip3",
+        Path("/opt/copanel/venv/bin/pip"),
+        Path("/opt/copanel/venv/bin/pip3"),
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("pip3") or shutil.which("pip")
+
+
+def _is_pip_package_installed(pip_bin: str, package_name: str) -> bool:
+    try:
+        proc = subprocess.run(
+            [pip_bin, "show", package_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _install_pip_packages(packages: List[str], is_windows: bool) -> List[Dict[str, Any]]:
+    if not packages:
+        return []
+    if is_windows:
+        return [
+            {"package": pkg, "ok": True, "message": f"Skipping pip install of '{pkg}' on Windows."}
+            for pkg in packages
+        ]
+
+    pip_bin = _resolve_pip_bin()
+    if not pip_bin:
+        return [{"package": "pip", "ok": False, "message": "pip not found in CoPanel venv."}]
+
+    results: List[Dict[str, Any]] = []
+    to_install: List[str] = []
+    for pkg in packages:
+        if not isinstance(pkg, str) or not pkg.strip():
+            continue
+        spec = pkg.strip()
+        name = spec.split("==")[0].split("[")[0]
+        if _is_pip_package_installed(pip_bin, name):
+            results.append({"package": name, "ok": True, "message": f"Python package '{name}' already installed."})
+        else:
+            to_install.append(spec)
+
+    if to_install:
+        proc = subprocess.run(
+            [pip_bin, "install", "--disable-pip-version-check", "-q", *to_install],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        out = (proc.stderr or proc.stdout or "").strip()
+        if proc.returncode == 0:
+            for spec in to_install:
+                name = spec.split("==")[0].split("[")[0]
+                results.append({"package": name, "ok": True, "message": f"Installed Python package '{name}'."})
+        else:
+            for spec in to_install:
+                name = spec.split("==")[0].split("[")[0]
+                results.append({
+                    "package": name,
+                    "ok": False,
+                    "message": out or f"pip install failed for {name}.",
+                })
+
     return results
 
 
@@ -808,6 +887,7 @@ class AppStoreManager:
         download_url: str,
         version: str = "1.0.0",
         system_packages: list = None,
+        pip_packages: list = None,
         requires_copanel_restart: bool = False,
     ) -> dict:
         """Starts package installation and frontend build in a background thread."""
@@ -842,6 +922,26 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
                     BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
+                    return
+
+            pip_specs: List[str] = []
+            if isinstance(pip_packages, list) and pip_packages:
+                pip_specs = [p for p in pip_packages if isinstance(p, str) and p.strip()]
+            elif pkg_id in PIP_PACKAGES_BY_MODULE:
+                pip_specs = list(PIP_PACKAGES_BY_MODULE[pkg_id])
+
+            if pip_specs:
+                BUILD_TASKS[pkg_id]["logs"].append(f"Installing {len(pip_specs)} Python package(s)...")
+                BUILD_TASKS[pkg_id]["progress"] = 8
+                pip_results = _install_pip_packages(pip_specs, is_windows)
+                for r in pip_results:
+                    BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "pip step completed."))
+                pip_failures = [r for r in pip_results if not r.get("ok")]
+                if pip_failures:
+                    BUILD_TASKS[pkg_id]["status"] = "failed"
+                    BUILD_TASKS[pkg_id]["error"] = "Python dependency installation failed."
+                    BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more pip packages failed.")
                     BUILD_TASKS[pkg_id]["progress"] = 100
                     return
 

@@ -38,8 +38,14 @@ class CoPanelDomainController:
     def is_share_anonymous(self, share: str) -> bool:
         return False
 
-    def basic_auth_user(self, realm: str, username: str, password: str) -> bool:
-        user = user_model.get_user_by_username(username)
+    def basic_auth_user(
+        self,
+        realm: str,
+        user_name: str,
+        password: str,
+        environ: Dict[str, Any],
+    ) -> bool:
+        user = user_model.get_user_by_username(user_name)
         if not user or user.get("role") != "superadmin":
             return False
         return verify_password(password, user.get("password_hash", ""))
@@ -50,28 +56,24 @@ class CoPanelDomainController:
     def digest_auth_user(
         self,
         realm: str,
-        username: str,
+        user_name: str,
         environ: Dict[str, Any],
     ) -> Optional[bool]:
         return None
 
 
 def _build_wsgidav_app(share_path: str, share_name: str) -> Any:
+    from wsgidav.fs_dav_provider import FilesystemProvider
     from wsgidav.wsgidav_app import WsgiDAVApp
 
     root = Path(share_path).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
-    provider_mapping = {
-        f"/{share_name.lstrip('/')}": {
-            "provider": "filesystem",
-            "readonly": False,
-            "root_path": str(root),
-        },
-    }
+    share_mount = f"/{share_name.strip('/')}" if share_name.strip("/") else "/"
+    provider = FilesystemProvider(str(root), readonly=False)
 
     config = {
-        "provider_mapping": provider_mapping,
+        "provider_mapping": {share_mount: provider},
         "http_authenticator": {
             "domain_controller": CoPanelDomainController,
             "accept_basic": True,
