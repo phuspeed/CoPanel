@@ -27,10 +27,12 @@ from urllib.request import Request, urlopen
 
 from .aria2_engine import (
     Aria2Engine,
+    _port_is_open,
     _resolve_aria2_bin,
     ensure_aria2_daemon,
     get_engine_from_settings,
     parse_aria2_progress,
+    read_aria2_log_tail,
 )
 from .google_oauth import GoogleOAuthService
 
@@ -1371,6 +1373,8 @@ def _ensure_aria2_running() -> bool:
 
 
 def get_engine_status() -> Dict[str, Any]:
+    _init_db()
+    log_file = CONFIG_DIR / "aria2.log"
     engine = _get_aria2()
     if not engine:
         return {"aria2_available": False, "version": "", "message": "aria2 not configured"}
@@ -1387,6 +1391,17 @@ def get_engine_status() -> Dict[str, Any]:
             "message": "aria2 not installed — install via AppStore system packages or: apt install aria2",
         }
 
+    host = str(_get_setting("aria2_rpc_host") or "127.0.0.1")
+    port = int(_get_setting("aria2_rpc_port") or 6800)
+    if _port_is_open(host, port) and not engine.is_available():
+        secret = str(_get_setting("aria2_rpc_secret") or "")
+        if secret:
+            return {
+                "aria2_available": False,
+                "version": "",
+                "message": "aria2 port open but RPC secret mismatch — clear RPC secret in Settings → aria2",
+            }
+
     if _ensure_aria2_running():
         try:
             if engine.is_available():
@@ -1394,10 +1409,12 @@ def get_engine_status() -> Dict[str, Any]:
         except Exception as exc:
             return {"aria2_available": False, "version": "", "message": str(exc)}
 
+    tail = read_aria2_log_tail(log_file)
+    hint = tail or "no log yet — try: apt install aria2 && systemctl restart copanel"
     return {
         "aria2_available": False,
         "version": "",
-        "message": "aria2 RPC unreachable — check Settings → aria2 or /opt/copanel/config/download_manager/aria2.log",
+        "message": f"aria2 RPC unreachable — {hint}",
     }
 
 

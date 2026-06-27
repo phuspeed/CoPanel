@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
+import socket
 import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
@@ -15,7 +18,8 @@ from urllib.request import Request, urlopen
 
 _aria2_start_lock = threading.Lock()
 _last_aria2_start_attempt = 0.0
-_ARIA2_START_COOLDOWN_SEC = 10.0
+_ARIA2_START_COOLDOWN_SEC = 5.0
+_aria2_proc: Optional[subprocess.Popen] = None
 
 
 def _resolve_aria2_bin() -> Optional[str]:
@@ -133,6 +137,62 @@ def _is_local_rpc_host(host: str) -> bool:
     return h in ("127.0.0.1", "localhost", "::1")
 
 
+def _rpc_host_for_socket(host: str) -> str:
+    h = (host or "127.0.0.1").strip().lower()
+    return "127.0.0.1" if h in ("localhost", "::1") else host
+
+
+def _port_is_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((_rpc_host_for_socket(host), int(port or 6800)), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+def read_aria2_log_tail(log_file: Path, max_lines: int = 8) -> str:
+    if not log_file.is_file():
+        return ""
+    try:
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    tail = [ln.strip() for ln in lines[-max_lines:] if ln.strip()]
+    return " | ".join(tail)
+
+
+def _clear_stale_pid(pid_file: Path) -> None:
+    if not pid_file.is_file():
+        return
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pid_file.unlink(missing_ok=True)
+        return
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        pid_file.unlink(missing_ok=True)
+
+
+def _stop_managed_aria2() -> None:
+    global _aria2_proc
+    proc = _aria2_proc
+    _aria2_proc = None
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 def ensure_aria2_daemon(
     *,
     config_dir: Path,
@@ -142,7 +202,7 @@ def ensure_aria2_daemon(
     download_dir: str,
 ) -> bool:
     """Start local aria2c with RPC when unreachable. Returns True if RPC responds."""
-    global _last_aria2_start_attempt
+    global _last_aria2_start_attempt, _aria2_proc
 
     if not _is_local_rpc_host(host):
         return False
@@ -156,7 +216,7 @@ def ensure_aria2_daemon(
         if engine.is_available():
             return True
         if now - _last_aria2_start_attempt < _ARIA2_START_COOLDOWN_SEC:
-            return False
+            return engine.is_available()
         _last_aria2_start_attempt = now
 
         bin_path = _resolve_aria2_bin()
@@ -166,43 +226,81 @@ def ensure_aria2_daemon(
         config_dir.mkdir(parents=True, exist_ok=True)
         session = config_dir / "aria2.session"
         log_file = config_dir / "aria2.log"
-        dest = Path(download_dir or ".")
+        pid_file = config_dir / "aria2.pid"
+        dest = Path(download_dir or config_dir / "downloads")
         dest.mkdir(parents=True, exist_ok=True)
+        session.touch(exist_ok=True)
+        _clear_stale_pid(pid_file)
 
-        cmd = [
-            bin_path,
-            "--enable-rpc",
-            f"--rpc-listen-port={int(port or 6800)}",
-            "--rpc-listen-all=false",
-            "--rpc-allow-origin-all=true",
-            "--continue=true",
-            f"--dir={dest}",
-            f"--input-file={session}",
-            f"--save-session={session}",
-            "--save-session-interval=30",
-            "--daemon=true",
-            "--quiet=true",
-        ]
-        if secret:
-            cmd.append(f"--rpc-secret={secret}")
+        if _aria2_proc and _aria2_proc.poll() is not None:
+            _aria2_proc = None
 
-        try:
-            with open(log_file, "a", encoding="utf-8") as logfh:
-                subprocess.run(
+        if _aria2_proc is None and not _port_is_open(host, port):
+            cmd = [
+                bin_path,
+                "--enable-rpc",
+                f"--rpc-listen-port={int(port or 6800)}",
+                "--rpc-listen-all=false",
+                "--rpc-allow-origin-all=true",
+                "--continue=true",
+                f"--dir={dest}",
+                f"--input-file={session}",
+                f"--save-session={session}",
+                "--save-session-interval=30",
+                f"--log={log_file}",
+                "--log-level=notice",
+                f"--pid-file={pid_file}",
+            ]
+            if secret:
+                cmd.append(f"--rpc-secret={secret}")
+
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                with open(log_file, "a", encoding="utf-8") as logfh:
+                    logfh.write(f"\n--- copanel start {stamp} ---\n")
+                    logfh.write("cmd: " + " ".join(cmd) + "\n")
+                    logfh.flush()
+            except OSError:
+                pass
+
+            try:
+                _aria2_proc = subprocess.Popen(
                     cmd,
-                    stdout=logfh,
-                    stderr=subprocess.STDOUT,
-                    timeout=15,
-                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
                 )
-        except Exception:
-            return False
+            except OSError as exc:
+                try:
+                    with open(log_file, "a", encoding="utf-8") as logfh:
+                        logfh.write(f"spawn failed: {exc}\n")
+                except OSError:
+                    pass
+                return False
 
-        for _ in range(15):
-            time.sleep(0.2)
+        for attempt in range(40):
+            if _aria2_proc and _aria2_proc.poll() is not None:
+                code = _aria2_proc.returncode
+                _aria2_proc = None
+                try:
+                    with open(log_file, "a", encoding="utf-8") as logfh:
+                        logfh.write(f"aria2 exited early (code {code})\n")
+                except OSError:
+                    pass
+                return False
             if engine.is_available():
                 return True
-    return False
+            time.sleep(0.25)
+
+        if _port_is_open(host, port) and not engine.is_available():
+            try:
+                with open(log_file, "a", encoding="utf-8") as logfh:
+                    logfh.write("port open but RPC auth/handshake failed — check RPC secret in Settings\n")
+            except OSError:
+                pass
+    return engine.is_available()
 
 
 def map_aria2_status(status: str) -> str:
