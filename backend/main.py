@@ -6,6 +6,7 @@ Phase 0 (October 2026 upgrade): adds a standardized API envelope, request
 context, audit logging, and a global job/event subsystem so every long-
 running module task can flow through the unified Task Center.
 """
+import asyncio
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler."""
     logger.info("CoPanel starting...")
     logger.info("Scanning modules in: %s", MODULES_DIR)
+    module_reload.set_event_loop(asyncio.get_running_loop())
     await job_manager.start(app)
     yield
     await job_manager.stop()

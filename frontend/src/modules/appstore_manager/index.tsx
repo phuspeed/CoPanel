@@ -76,7 +76,7 @@ export default function AppStoreDashboard() {
   const [showBuildLogs, setShowBuildLogs] = useState(false);
   const [restartRequired, setRestartRequired] = useState(false);
   const [restartReason, setRestartReason] = useState<string | null>(null);
-  const [restartingCopanel, setRestartingCopanel] = useState(false);
+  const [restartUi, setRestartUi] = useState<'idle' | 'submitting' | 'waiting'>('idle');
 
 
   const [communityUrls, setCommunityUrls] = useState<string[]>([]);
@@ -126,8 +126,10 @@ export default function AppStoreDashboard() {
       restartRequiredBody: 'Backend module changed. Restart the copanel service to load new API routes.',
       restartManualHint: 'Or SSH: sudo systemctl restart copanel',
       restartCopanelBtn: 'Restart CoPanel',
-      restartingCopanel: 'Restarting…',
-      restartScheduled: 'Restart scheduled. Page will reload when the service is back (~30s).',
+      restartingCopanel: 'Scheduling restart…',
+      restartWaitingForService: 'Restart in progress — waiting for CoPanel…',
+      restartScheduled: 'CoPanel is back online. Reloading…',
+      restartTimedOut: 'Restart is taking longer than expected. Refresh the page manually or check: sudo systemctl status copanel',
       restartFailed: (err: string) => `Could not schedule restart: ${err}`,
     },
     vi: {
@@ -167,8 +169,10 @@ export default function AppStoreDashboard() {
       restartRequiredBody: 'Module backend đã thay đổi. Restart dịch vụ copanel để nạp API mới.',
       restartManualHint: 'Hoặc SSH: sudo systemctl restart copanel',
       restartCopanelBtn: 'Restart CoPanel',
-      restartingCopanel: 'Đang restart…',
-      restartScheduled: 'Đã lên lịch restart. Trang sẽ tải lại khi dịch vụ sẵn sàng (~30 giây).',
+      restartingCopanel: 'Đang gửi lệnh restart…',
+      restartWaitingForService: 'Đang restart — chờ CoPanel khởi động lại…',
+      restartScheduled: 'CoPanel đã sẵn sàng. Đang tải lại trang…',
+      restartTimedOut: 'Restart lâu hơn dự kiến. Tải lại trang thủ công hoặc kiểm tra: sudo systemctl status copanel',
       restartFailed: (err: string) => `Không thể restart: ${err}`,
     }
   };
@@ -181,7 +185,7 @@ export default function AppStoreDashboard() {
     setBuildProgress(0);
     setRestartRequired(false);
     setRestartReason(null);
-    setRestartingCopanel(false);
+    setRestartUi('idle');
   };
 
   const handleBuildPollResult = (
@@ -216,8 +220,24 @@ export default function AppStoreDashboard() {
     return true;
   };
 
+  const waitForCopanelHealth = async (): Promise<boolean> => {
+    await new Promise((resolve) => window.setTimeout(resolve, 3000));
+    const deadline = Date.now() + 90000;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch('/health', { cache: 'no-store' });
+        if (res.ok) return true;
+      } catch {
+        /* service down while restarting */
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    return false;
+  };
+
   const handleRestartCopanel = async () => {
-    setRestartingCopanel(true);
+    setRestartUi('submitting');
+    setMsg(null);
     try {
       const res = await fetch('/api/appstore_manager/restart-copanel', {
         method: 'POST',
@@ -225,15 +245,22 @@ export default function AppStoreDashboard() {
       });
       const body = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok) {
+        setRestartUi('idle');
         setMsg(tr.restartFailed(formatApiDetail(body.detail) || 'Request failed'));
         return;
       }
-      setMsg(tr.restartScheduled);
-      setTimeout(() => window.location.reload(), 10000);
+      setRestartUi('waiting');
+      const back = await waitForCopanelHealth();
+      if (back) {
+        setMsg(tr.restartScheduled);
+        window.setTimeout(() => window.location.reload(), 800);
+      } else {
+        setRestartUi('idle');
+        setMsg(tr.restartTimedOut);
+      }
     } catch {
+      setRestartUi('idle');
       setMsg(tr.commError);
-    } finally {
-      setRestartingCopanel(false);
     }
   };
 
@@ -725,12 +752,26 @@ export default function AppStoreDashboard() {
                 </div>
                 <button
                   type="button"
-                  disabled={restartingCopanel}
+                  disabled={restartUi !== 'idle'}
                   onClick={() => void handleRestartCopanel()}
-                  className="w-full py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white transition"
+                  className="w-full py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-wait text-white transition flex items-center justify-center gap-2"
                 >
-                  {restartingCopanel ? tr.restartingCopanel : tr.restartCopanelBtn}
+                  {restartUi !== 'idle' && (
+                    <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" aria-hidden />
+                  )}
+                  {restartUi === 'idle' && tr.restartCopanelBtn}
+                  {restartUi === 'submitting' && tr.restartingCopanel}
+                  {restartUi === 'waiting' && tr.restartWaitingForService}
                 </button>
+                {restartUi === 'waiting' && (
+                  <p className={`text-[11px] flex items-center gap-2 ${isDark ? 'text-amber-200/80' : 'text-amber-800'}`}>
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                    </span>
+                    {tr.restartManualHint}
+                  </p>
+                )}
               </div>
             )}
 

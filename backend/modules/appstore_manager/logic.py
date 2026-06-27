@@ -174,6 +174,7 @@ def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] 
 MODULE_ROUTE_PROBES: Dict[str, List[str]] = {
     "storage_manager": [
         "/partitions/delete",
+        "/partitions/create",
         "/disks/{disk_name}/partitions",
         "/disks/{disk_name}/initialize",
         "/mount",
@@ -263,6 +264,11 @@ def _finalize_module_install(
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
     _mark_restart_required(pkg_id, "hot_reload_failed")
+    if platform.system() != "Windows":
+        BUILD_TASKS[pkg_id]["logs"].append(
+            "⏳ Scheduling copanel service restart — required to register backend API routes."
+        )
+        restart_backend_service(delay=5.0)
 
 
 def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:

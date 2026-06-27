@@ -220,6 +220,15 @@ interface FstabEntry {
 
 const PROTECTED_MOUNTS = ['/', '/boot', '/boot/efi', '/usr', '/var'];
 
+/** Mutation routes that must exist after storage_manager install (matches AppStore probes). */
+const REQUIRED_STORAGE_ROUTES = [
+  '/api/storage_manager/version',
+  '/api/storage_manager/partitions/delete',
+  '/api/storage_manager/partitions/create',
+  '/api/storage_manager/disks/{disk_name}/initialize',
+  '/api/storage_manager/mount',
+];
+
 function isProtectedMount(mountpoint: string): boolean {
   if (PROTECTED_MOUNTS.includes(mountpoint)) return true;
   if (mountpoint.startsWith('/opt/copanel')) return true;
@@ -232,7 +241,12 @@ function apiErrorMessage(body: Record<string, unknown>, status: number): string 
   }
   const wrapped = body.error as { message?: string } | undefined;
   if (wrapped?.message) return wrapped.message;
-  if (typeof body.detail === 'string') return body.detail;
+  if (typeof body.detail === 'string') {
+    if (body.detail.toLowerCase().includes('filesystem type')) {
+      return `${body.detail} Format the partition first, then mount.`;
+    }
+    return body.detail;
+  }
   if (typeof body.message === 'string') return body.message;
   return `HTTP ${status}`;
 }
@@ -767,16 +781,34 @@ export default function StorageManagerDashboard() {
     }
 
     try {
-      const ver = await fetchJson<{ version: string }>('/api/storage_manager/version');
-      setBackendVersion(ver.version);
-      setApiStale(false);
+      const [verResult, modResult] = await Promise.allSettled([
+        fetchJson<{ version: string }>('/api/storage_manager/version'),
+        fetch('/api/modules', { headers: authHeaders }).then(async (res) => {
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error('modules list failed');
+          return body as { modules?: Record<string, { routes?: string[] }> };
+        }),
+      ]);
+
+      if (verResult.status === 'fulfilled') {
+        setBackendVersion(verResult.value.version);
+      } else {
+        setBackendVersion(null);
+      }
+
+      const routes = modResult.status === 'fulfilled'
+        ? modResult.value.modules?.storage_manager?.routes || []
+        : [];
+      const routesMissing = REQUIRED_STORAGE_ROUTES.some((path) => !routes.includes(path));
+      const versionMissing = verResult.status !== 'fulfilled';
+      setApiStale(versionMissing || routesMissing);
     } catch {
       setBackendVersion(null);
       setApiStale(true);
     }
 
     setLoading(false);
-  }, [fetchJson]);
+  }, [fetchJson, authHeaders]);
 
   useEffect(() => {
     loadAll();
