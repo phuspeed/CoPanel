@@ -29,9 +29,11 @@ STORE_PATH = (
     else Path("/var/lib/copanel/webdav.json")
 )
 SMB_CONF_PATH = Path("/etc/samba/smb.conf.d/copanel-webdav.conf")
+SMB_GLOBAL_PATH = Path("/etc/samba/smb.conf.d/copanel-webdav-global.conf")
 SMB_CONF_MARKERS = (
     "include = /etc/samba/smb.conf.d/*.conf",
     "include = smb.conf.d/*.conf",
+    str(SMB_CONF_PATH),
     "copanel-webdav.conf",
 )
 
@@ -133,7 +135,7 @@ def _write_file_privileged(path: Path, content: str) -> None:
 
 
 def _ensure_smb_main_include() -> None:
-    """Ensure smb.conf loads smb.conf.d snippets (Debian/Ubuntu default pattern)."""
+    """Ensure smb.conf loads our share snippet (conf.d glob or explicit include)."""
     main_conf = Path("/etc/samba/smb.conf")
     if not main_conf.is_file():
         return
@@ -141,37 +143,36 @@ def _ensure_smb_main_include() -> None:
         content = main_conf.read_text(encoding="utf-8")
     except OSError:
         return
+
+    explicit = f"include = {SMB_CONF_PATH}"
+    if explicit in content or str(SMB_CONF_PATH) in content:
+        return
     if any(marker in content for marker in SMB_CONF_MARKERS):
         return
-    include_line = "\n# CoPanel webdav\ninclude = /etc/samba/smb.conf.d/*.conf\n"
+
+    include_line = f"\n# CoPanel webdav\ninclude = /etc/samba/smb.conf.d/*.conf\n"
+    patched = content.rstrip() + include_line
+    if "[global]" in content and explicit not in patched:
+        patched = content.replace(
+            "[global]\n",
+            f"[global]\n   {explicit}\n",
+            1,
+        )
     try:
-        main_conf.write_text(content.rstrip() + include_line, encoding="utf-8")
+        main_conf.write_text(patched, encoding="utf-8")
         return
     except OSError:
         pass
-    _run_privileged(["tee", "-a", str(main_conf)], input_text=include_line)
+    _run_privileged(["tee", str(main_conf)], input_text=patched)
 
 
 def _build_smb_conf_text(
     share_name: str,
     share_path: str,
     admin_user: str,
-    smb_port: int,
 ) -> str:
+    """Share-only snippet for smb.conf.d (avoid duplicate [global] breaking includes)."""
     return f"""# Managed by CoPanel webdav module — do not edit manually
-[global]
-    map to guest = never
-    load printers = no
-    printing = bsd
-    disable spoolss = yes
-    server min protocol = SMB2
-    client min protocol = SMB2
-    smb ports = {smb_port}
-
-[homes]
-    browseable = no
-    available = no
-
 [{share_name}]
     comment = CoPanel file share
     path = {share_path}
@@ -184,8 +185,75 @@ def _build_smb_conf_text(
     force group = root
     create mask = 0664
     directory mask = 0775
-    acl allow execute always = yes
 """
+
+
+def _build_smb_global_text(smb_port: int) -> str:
+    if smb_port == 445:
+        return ""
+    return f"""# Managed by CoPanel webdav module — global overrides
+[global]
+    smb ports = {smb_port}
+"""
+
+
+def _testparm_share_path(share_name: str) -> Optional[str]:
+    proc = _run_privileged(
+        ["testparm", "-s", "--parameter-name=path", f"--section-name={share_name}"],
+    )
+    val = (proc.stdout or "").strip()
+    if val and val.lower() not in {"", "none"}:
+        return val
+    return None
+
+
+def _list_testparm_shares() -> List[str]:
+    proc = _run_privileged(["testparm", "-s"])
+    blob = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    shares: List[str] = []
+    for line in blob.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            name = stripped[1:-1]
+            if name not in ("global", "homes"):
+                shares.append(name)
+    return shares
+
+
+def _share_registered(share_name: str) -> bool:
+    if _testparm_share_path(share_name):
+        return True
+    return share_name in _list_testparm_shares()
+
+
+SMB_INJECT_START = "# BEGIN COPANEL WEBDAV"
+SMB_INJECT_END = "# END COPANEL WEBDAV"
+
+
+def _inject_share_into_main_conf(share_block: str) -> None:
+    """Fallback: append share directly to smb.conf when conf.d include is ignored."""
+    main_conf = Path("/etc/samba/smb.conf")
+    if not main_conf.is_file():
+        raise RuntimeError("/etc/samba/smb.conf not found.")
+
+    try:
+        content = main_conf.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read smb.conf: {exc}") from exc
+
+    block = f"\n{SMB_INJECT_START}\n{share_block.strip()}\n{SMB_INJECT_END}\n"
+    if SMB_INJECT_START in content:
+        content = re.sub(
+            rf"{re.escape(SMB_INJECT_START)}.*?{re.escape(SMB_INJECT_END)}\n?",
+            block.strip() + "\n",
+            content,
+            count=1,
+            flags=re.DOTALL,
+        )
+    else:
+        content = content.rstrip() + block
+
+    _write_file_privileged(main_conf, content)
 
 
 def _smb_diagnostics(share_name: str, share_path: str) -> Dict[str, Any]:
@@ -209,17 +277,14 @@ def _smb_diagnostics(share_name: str, share_path: str) -> Dict[str, Any]:
             pass
 
     tp = _run_privileged(["testparm", "-s"])
-    if tp.returncode == 0:
-        diag["testparm_ok"] = True
-        for line in (tp.stdout or "").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
-                name = stripped[1:-1]
-                if name not in ("global", "homes"):
-                    diag["shares_registered"].append(name)
-        diag["share_registered"] = share_name in diag["shares_registered"]
-    else:
-        diag["testparm_error"] = (tp.stderr or tp.stdout or "").strip()[:500]
+    diag["testparm_exit"] = tp.returncode
+    diag["testparm_output"] = ((tp.stdout or "") + "\n" + (tp.stderr or "")).strip()[:2000]
+    diag["testparm_ok"] = tp.returncode in (0, 1) and bool(tp.stdout)
+    diag["share_path_resolved"] = _testparm_share_path(share_name)
+    diag["shares_registered"] = _list_testparm_shares()
+    diag["share_registered"] = bool(diag["share_path_resolved"]) or share_name in diag["shares_registered"]
+    if not diag["share_registered"] and tp.returncode not in (0, 1):
+        diag["testparm_error"] = diag["testparm_output"][:500]
 
     try:
         p = Path(share_path)
@@ -487,21 +552,37 @@ def apply_smb_config(cfg: Optional[Dict[str, Any]] = None, *, admin_password: Op
         raise RuntimeError("samba is not installed. Install: apt install samba")
 
     _ensure_smb_main_include()
-    conf_text = _build_smb_conf_text(share_name, share_path, admin_user, smb_port)
+    conf_text = _build_smb_conf_text(share_name, share_path, admin_user)
     _write_file_privileged(SMB_CONF_PATH, conf_text)
+
+    global_text = _build_smb_global_text(smb_port)
+    if global_text:
+        _write_file_privileged(SMB_GLOBAL_PATH, global_text)
+    elif SMB_GLOBAL_PATH.is_file():
+        try:
+            SMB_GLOBAL_PATH.unlink()
+        except OSError:
+            pass
 
     _smb_set_password(admin_user, admin_pass)
 
-    restart = _run_privileged(["systemctl", "restart", "smbd"])
-    if restart.returncode != 0:
-        restart = _run_privileged(["systemctl", "restart", "samba"])
+    _run_privileged(["systemctl", "restart", "smbd"])
+    restart = _run_privileged(["systemctl", "is-active", "smbd"])
+    if (restart.stdout or "").strip() != "active":
+        _run_privileged(["systemctl", "restart", "samba"])
+        restart = _run_privileged(["systemctl", "is-active", "samba"])
 
     diag = _smb_diagnostics(share_name, share_path)
     if not diag.get("share_registered"):
-        err = diag.get("testparm_error") or "Share not loaded by Samba after apply."
+        _inject_share_into_main_conf(conf_text)
+        _run_privileged(["systemctl", "restart", "smbd"])
+        diag = _smb_diagnostics(share_name, share_path)
+
+    if not diag.get("share_registered"):
+        err = diag.get("testparm_error") or diag.get("testparm_output") or "Share not loaded by Samba."
         raise RuntimeError(
-            f"SMB share [{share_name}] not registered. {err} "
-            f"Run: sudo testparm -s | grep -A5 '\\[{share_name}\\]'"
+            f"SMB share [{share_name}] not registered. {err[:400]} "
+            f"Config: {SMB_CONF_PATH}"
         )
 
     return {
@@ -510,7 +591,7 @@ def apply_smb_config(cfg: Optional[Dict[str, Any]] = None, *, admin_password: Op
         "share_path": share_path,
         "admin_username": admin_user,
         "smb_port": smb_port,
-        "restart_ok": restart.returncode == 0,
+        "restart_ok": (restart.stdout or "").strip() == "active",
         "restart_message": (restart.stderr or restart.stdout or "").strip(),
         "diagnostics": diag,
     }

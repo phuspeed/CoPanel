@@ -51,6 +51,12 @@ def save_config(
     return ok(cfg)
 
 
+@router.get("/smb/diagnostics")
+def smb_diagnostics(user: Dict[str, Any] = Depends(require_module("webdav"))) -> Dict[str, Any]:
+    status = logic.get_status()
+    return ok(status.get("smb", {}).get("diagnostics", {}))
+
+
 @router.get("/status")
 def get_status(user: Dict[str, Any] = Depends(require_module("webdav"))) -> Dict[str, Any]:
     return ok(logic.get_status())
