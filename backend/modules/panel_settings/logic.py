@@ -35,6 +35,15 @@ PANEL_PORT = 8686
 
 NGINX_AUTH_START = "# BEGIN COPANEL NGINX GATE"
 NGINX_AUTH_END = "# END COPANEL NGINX GATE"
+NGINX_EXEMPT_TAG = "# COPANEL NGINX GATE EXEMPT"
+
+# Locations that must not inherit HTTP basic auth (API JWT, static assets, health).
+NGINX_EXEMPT_LOCATION_MARKERS = (
+    "location /api/platform/events {",
+    "location /api/ {",
+    "location /health {",
+    "location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {",
+)
 
 
 def _run(cmd: List[str], *, input_text: Optional[str] = None, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -222,19 +231,75 @@ def _strip_all_nginx_gate_blocks(content: str) -> str:
     return content
 
 
+def _strip_auth_exempt_markers(content: str) -> str:
+    return re.sub(
+        rf"\n\s*auth_basic off;\s*{re.escape(NGINX_EXEMPT_TAG)}\n?",
+        "\n",
+        content,
+    )
+
+
+def _strip_server_context_auth_basic(content: str) -> str:
+    """Remove legacy server-level auth_basic (outside location blocks)."""
+    lines = content.splitlines(keepends=True)
+    out: List[str] = []
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip(" "))
+        is_server_auth = (
+            depth == 1
+            and indent == 4
+            and (
+                stripped.startswith('auth_basic "CoPanel"')
+                or stripped.startswith("auth_basic_user_file")
+                or stripped == NGINX_AUTH_START
+                or stripped == NGINX_AUTH_END
+            )
+        )
+        if not is_server_auth:
+            out.append(line)
+        depth += line.count("{") - line.count("}")
+    return "".join(out)
+
+
+def _inject_auth_exemptions(content: str) -> str:
+    snippet = f"        auth_basic off;  {NGINX_EXEMPT_TAG}\n"
+    for marker in NGINX_EXEMPT_LOCATION_MARKERS:
+        idx = content.find(marker)
+        if idx == -1:
+            continue
+        brace = content.find("{", idx)
+        nl = content.find("\n", brace)
+        if nl == -1:
+            continue
+        window = content[idx : idx + 900]
+        if NGINX_EXEMPT_TAG in window:
+            continue
+        content = content[: nl + 1] + snippet + content[nl + 1 :]
+    return content
+
+
 def _remove_nginx_gate_block(content: str) -> str:
-    return _strip_all_nginx_gate_blocks(content)
+    content = _strip_all_nginx_gate_blocks(content)
+    content = _strip_auth_exempt_markers(content)
+    return _strip_server_context_auth_basic(content)
+
+
+def _apply_nginx_gate(content: str, htpasswd_path: str) -> str:
+    content = _remove_nginx_gate_block(content)
+    content = _inject_nginx_gate_block(content, htpasswd_path)
+    return _inject_auth_exemptions(content)
 
 
 def _inject_nginx_gate_block(content: str, htpasswd_path: str) -> str:
-    """Put auth_basic only in location / (SPA). /api/ stays JWT-only — no repeat prompts."""
+    """HTTP basic auth only for SPA shell (location /). API/static exempt."""
     inner = (
         f"        {NGINX_AUTH_START}\n"
         f'        auth_basic "CoPanel";\n'
         f"        auth_basic_user_file {htpasswd_path};\n"
         f"        {NGINX_AUTH_END}\n"
     )
-    content = _strip_all_nginx_gate_blocks(content)
 
     for marker in ("    location / {", "location / {"):
         idx = content.find(marker)
@@ -282,7 +347,7 @@ def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optio
             ht_path = _write_nginx_htpasswd(user, password)
 
         content = site.read_text(encoding="utf-8")
-        content = _inject_nginx_gate_block(content, ht_path)
+        content = _apply_nginx_gate(content, ht_path)
         _write_file_privileged(site, content)
         gate.update({"enabled": True, "username": user})
     else:
