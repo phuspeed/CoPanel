@@ -1298,6 +1298,8 @@ def _run_yt_dlp_download(task_id: str, task: Dict[str, Any]) -> None:
     ydl_opts = {
         "paths": {"home": str(dest_dir)},
         "outtmpl": "%(title)s.%(ext)s",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": True,
