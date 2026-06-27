@@ -83,6 +83,16 @@ _PARTED_FREE_RE = re.compile(
     r"^\s*([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B|%)?)\s+([\d.]+\s*(?:MiB|GiB|MB|GB|kB|KB|B)?)\s+Free\s+Space\s*$",
     re.IGNORECASE,
 )
+# Windows / UEFI GPT partition type GUIDs (lowercase, no braces)
+_PARTTYPE_LABELS: Dict[str, str] = {
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b": "EFI System",
+    "e3c9e316-0b5c-4db8-817d-f83e04c0cb9d": "Microsoft Reserved (MSR)",
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ad": "Windows Recovery",
+    "ebd0a0a2-b9e5-4433-87c8-68b5f264727f": "Microsoft Basic Data",
+}
+_UNMOUNTABLE_PARTTYPES = frozenset({
+    "e3c9e316-0b5c-4db8-817d-f83e04c0cb9d",  # MSR — no filesystem
+})
 
 MOCK_DISKS: List[Dict[str, Any]] = [
     {
@@ -271,12 +281,77 @@ class StorageService:
         return _FSTYPE_ALIASES.get(key, key)
 
     def _probe_fstype(self, device_path: str) -> Optional[str]:
+        if IS_WINDOWS:
+            return None
+        props = self._blkid_props(device_path)
+        for key in ("type", "sec_type"):
+            val = props.get(key)
+            if val:
+                norm = self._normalize_fstype(val)
+                if norm:
+                    return norm
+        if shutil.which("blkid"):
+            result = self._run(["blkid", "-o", "value", "-s", "TYPE", device_path], timeout=15)
+            if result.returncode == 0 and (result.stdout or "").strip():
+                norm = self._normalize_fstype(result.stdout.strip())
+                if norm:
+                    return norm
+        name = device_path.rsplit("/", 1)[-1]
+        row = self._find_block(name)
+        if row:
+            norm = self._normalize_fstype(row.get("fstype"))
+            if norm:
+                return norm
+        file_bin = shutil.which("file")
+        if file_bin:
+            fr = self._run([file_bin, "-s", device_path], timeout=15)
+            text = (fr.stdout or "").lower()
+            if "ntfs" in text:
+                return "ntfs"
+            if "exfat" in text:
+                return "exfat"
+            if "fat" in text or "vfat" in text:
+                return "vfat"
+            if "ext4" in text:
+                return "ext4"
+            if "xfs" in text:
+                return "xfs"
+            if "btrfs" in text:
+                return "btrfs"
+        probe = shutil.which("ntfs-3g.probe") or shutil.which("ntfs-3g.probe.static")
+        if probe:
+            pr = self._run([probe, "--readonly", device_path], timeout=15)
+            if pr.returncode == 0:
+                return "ntfs"
+        return None
+
+    def _blkid_props(self, device_path: str) -> Dict[str, str]:
         if IS_WINDOWS or not shutil.which("blkid"):
-            return None
-        result = self._run(["blkid", "-o", "value", "-s", "TYPE", device_path], timeout=15)
+            return {}
+        result = self._run(["blkid", "-o", "export", device_path], timeout=15)
         if result.returncode != 0:
-            return None
-        return self._normalize_fstype((result.stdout or "").strip())
+            return {}
+        props: Dict[str, str] = {}
+        for line in (result.stdout or "").splitlines():
+            if not line.startswith("BLKID_"):
+                continue
+            key, _, val = line.partition("=")
+            props[key[6:].lower()] = val.strip().strip('"')
+        return props
+
+    def _partition_filesystem_hints(self, path: Optional[str]) -> Dict[str, Any]:
+        if not path or IS_WINDOWS:
+            return {"mountable": True, "parttype_label": None}
+        props = self._blkid_props(path)
+        parttype = (props.get("parttype") or props.get("part_type") or "").lower()
+        label = _PARTTYPE_LABELS.get(parttype)
+        mountable = parttype not in _UNMOUNTABLE_PARTTYPES
+        fstype = self._normalize_fstype(props.get("type")) or self._probe_fstype(path)
+        if not mountable:
+            return {"mountable": False, "parttype_label": label or "Reserved"}
+        if not fstype and parttype == "ebd0a0a2-b9e5-4433-87c8-68b5f264727f":
+            label = label or "Microsoft Basic Data (format or pick NTFS/exFAT to mount)"
+        return {"mountable": True, "parttype_label": label, "inferred_fstype": fstype}
 
     def _enrich_partition_fstype(self, part: Dict[str, Any]) -> Dict[str, Any]:
         path = part.get("path") or ""
@@ -1288,15 +1363,24 @@ class StorageService:
     def _parted_partition_number(self, disk_name: str, part_name: str) -> int:
         payload = self._parted_json(disk_name)
         parts = payload.get("partitions") or []
-        
-        match = re.search(r'(\d+)$', part_name)
+        dev_path = f"/dev/{part_name}"
+
+        for p in parts:
+            node = str(p.get("node") or "")
+            if node and (node == dev_path or node.endswith(f"/{part_name}")):
+                num = p.get("number")
+                if num is not None:
+                    return int(num)
+
+        match = re.search(r"(\d+)$", part_name)
         if match:
             expected_num = int(match.group(1))
             for p in parts:
                 num = p.get("number")
                 if num is not None and int(num) == expected_num:
                     return expected_num
-            return expected_num
+            if parts:
+                return expected_num
 
         children = sorted(
             [
@@ -1314,9 +1398,14 @@ class StorageService:
                         return int(num)
                 break
         for part in parts:
-            if str(part.get("node", "")).endswith(part_name):
+            node = str(part.get("node", ""))
+            if node.endswith(part_name):
                 return int(part["number"])
-        raise StorageManagerError("Could not resolve partition number in parted.", code="partition_not_found")
+        raise StorageManagerError(
+            f"Could not resolve partition number for {part_name} in parted. "
+            f"Try: sudo parted /dev/{disk_name} print",
+            code="partition_not_found",
+        )
 
     def _volume_usage_for_device(self, device_path: str) -> Optional[Dict[str, Any]]:
         for vol in self.list_volumes():
@@ -1342,6 +1431,7 @@ class StorageService:
             if path and not fstype:
                 fstype = self._probe_fstype(path)
             usage = self._volume_usage_for_device(path) if path else None
+            hints = self._partition_filesystem_hints(path)
             partitions.append({
                 "number": idx + 1,
                 "name": name,
@@ -1350,7 +1440,7 @@ class StorageService:
                 "end_mib": end_mib,
                 "size_bytes": size_bytes or None,
                 "fstype": fstype,
-                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or "unknown").upper()) if fstype else None,
+                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or hints.get("parttype_label") or "unknown").upper()) if fstype else hints.get("parttype_label"),
                 "mountpoint": part.get("mountpoint"),
                 "flags": [],
                 "is_boot": False,
@@ -1359,6 +1449,8 @@ class StorageService:
                 "used_bytes": usage.get("used") if usage else None,
                 "free_bytes": usage.get("free") if usage else None,
                 "is_mounted": bool(part.get("mountpoint")),
+                "mountable": hints.get("mountable", True),
+                "parttype_label": hints.get("parttype_label"),
             })
 
         unallocated: List[Dict[str, Any]] = []
@@ -1454,6 +1546,7 @@ class StorageService:
                 lr = self._run(["blkid", "-o", "value", "-s", "LABEL", path], timeout=10)
                 if lr.returncode == 0 and (lr.stdout or "").strip():
                     label = lr.stdout.strip()
+            hints = self._partition_filesystem_hints(path)
 
             partitions.append({
                 "number": number,
@@ -1463,7 +1556,7 @@ class StorageService:
                 "end_mib": pt.get("end"),
                 "size_bytes": self._parse_size(pt.get("size")) or self._parse_size(child.get("size")),
                 "fstype": fstype,
-                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or "unknown").upper()),
+                "fstype_label": _FSTYPE_LABELS.get(fstype or "", (fstype or hints.get("parttype_label") or "unknown").upper()) if fstype else hints.get("parttype_label"),
                 "mountpoint": mountpoint,
                 "flags": flags,
                 "is_boot": any(f in ("boot", "esp", "legacy_boot") for f in flags),
@@ -1472,6 +1565,8 @@ class StorageService:
                 "used_bytes": usage.get("used") if usage else None,
                 "free_bytes": usage.get("free") if usage else None,
                 "is_mounted": bool(mountpoint),
+                "mountable": hints.get("mountable", True),
+                "parttype_label": hints.get("parttype_label"),
             })
 
         disk_size = self._parse_size(disk_info.get("size")) or int(disk.get("size_bytes") or 0)
@@ -1579,8 +1674,19 @@ class StorageService:
         )
         self._partprobe(dev)
         fs_grown = None
-        if grow_filesystem and row.get("mountpoint"):
-            fs_grown = self._grow_filesystem(device)
+        if grow_filesystem:
+            fstype = self._normalize_fstype(row.get("fstype")) or self._probe_fstype(device) or ""
+            if fstype == "ntfs":
+                ntfsresize = shutil.which("ntfsresize")
+                if ntfsresize:
+                    self._run_ok([ntfsresize, device], "Failed to grow NTFS filesystem", code="resize_failed", timeout=600)
+                    fs_grown = "ntfs grown"
+                else:
+                    fs_grown = "partition resized; install ntfs-3g (ntfsresize) to grow NTFS"
+            elif fstype == "xfs" and not row.get("mountpoint"):
+                fs_grown = "partition resized; mount XFS before grow (xfs_growfs)"
+            else:
+                fs_grown = self._grow_filesystem(device)
         return {
             "message": f"Resized partition {device} to end {end}",
             "device": device,
@@ -1827,7 +1933,18 @@ class StorageService:
         if not use_fstype:
             use_fstype = self._probe_fstype(device) or ""
         if not use_fstype:
-            raise StorageManagerError("Filesystem type is required.", code="invalid_fstype")
+            props = self._blkid_props(device)
+            parttype = (props.get("parttype") or "").lower()
+            if parttype in _UNMOUNTABLE_PARTTYPES:
+                raise StorageManagerError(
+                    "This partition has no mountable filesystem (Microsoft Reserved / MSR).",
+                    code="invalid_fstype",
+                )
+            raise StorageManagerError(
+                "Filesystem type is required. For Windows disks try NTFS/exFAT, or format the partition first. "
+                "Install ntfs-3g if mounting NTFS.",
+                code="invalid_fstype",
+            )
 
         if IS_WINDOWS:
             return {"message": f"Mock mounted {device} at {mountpoint}", "device": device, "mountpoint": mountpoint}
@@ -2205,6 +2322,12 @@ class StorageService:
         if fstype == "ext4":
             self._run_ok(["resize2fs", lv_path], "Failed to resize ext4 filesystem", code="resize_failed", timeout=300)
             return "ext4 resized"
+        if fstype == "ntfs":
+            ntfsresize = shutil.which("ntfsresize")
+            if not ntfsresize:
+                return None
+            self._run_ok([ntfsresize, lv_path], "Failed to grow NTFS filesystem", code="resize_failed", timeout=600)
+            return "ntfs grown"
         if fstype == "xfs":
             mountpoint = None
             for vol in self.list_volumes():

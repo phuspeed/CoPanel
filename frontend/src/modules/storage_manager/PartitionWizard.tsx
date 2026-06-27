@@ -46,6 +46,8 @@ export interface WizardPartition {
   used_bytes?: number | null;
   free_bytes?: number | null;
   is_mounted?: boolean;
+  mountable?: boolean;
+  parttype_label?: string | null;
 }
 
 export interface DiskPartitionDetail {
@@ -272,6 +274,7 @@ export default function PartitionWizard({
   const [bootConfirm, setBootConfirm] = useState('');
 
   const [mountPoint, setMountPoint] = useState('/mnt/data');
+  const [mountFs, setMountFs] = useState<FormatFsType>('ntfs');
   const [mountPersist, setMountPersist] = useState(true);
   const partitionsApiAvailable = useRef<boolean | null>(null);
 
@@ -387,6 +390,10 @@ export default function PartitionWizard({
     }
     if (kind === 'create') {
       applyCreateDefaults(activeDisk);
+    }
+    if (kind === 'mount' && selected) {
+      const inferred = (selected.fstype as FormatFsType | null) || 'ntfs';
+      setMountFs(FORMAT_FS_OPTIONS.some((o) => o.value === inferred) ? inferred : 'ntfs');
     }
   };
 
@@ -525,7 +532,7 @@ export default function PartitionWizard({
           {actionBtn(<Icons.MoveHorizontal className="w-3.5 h-3.5" />, tr.resizePartition, () => openModal('resize'), !canMutate || !hasSelection)}
           {actionBtn(<Icons.Tag className="w-3.5 h-3.5" />, tr.changeLabel, () => openModal('label'), !canMutate || !hasSelection || !selected?.fstype)}
           {actionBtn(<Icons.Flag className="w-3.5 h-3.5" />, tr.setBoot, () => openModal('boot'), !canMutate || !hasSelection)}
-          {actionBtn(<Icons.FolderOpen className="w-3.5 h-3.5" />, tr.mountVolume, () => openModal('mount'), !hasSelection || selected?.is_mounted || !selected?.fstype)}
+          {actionBtn(<Icons.FolderOpen className="w-3.5 h-3.5" />, tr.mountVolume, () => openModal('mount'), !hasSelection || selected?.is_mounted || selected?.mountable === false)}
           {actionBtn(<Icons.FolderMinus className="w-3.5 h-3.5" />, tr.unmountVolume, () => openModal('unmount'), !hasSelection || !selected?.is_mounted)}
           {layout?.is_system_disk && (
             <p className={`text-[10px] mt-3 px-1 ${isDark ? 'text-amber-400/80' : 'text-amber-700'}`}>{tr.protectedNote}</p>
@@ -927,6 +934,21 @@ export default function PartitionWizard({
               <>
                 <h3 className="font-bold">{tr.mountVolume}</h3>
                 <p className="text-[11px] font-mono">{selected.path}</p>
+                {selected.parttype_label && !selected.fstype && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">{selected.parttype_label}</p>
+                )}
+                <label className="block text-[11px] space-y-1">
+                  {language === 'vi' ? 'Loại filesystem' : 'Filesystem type'}
+                  <select
+                    value={mountFs}
+                    onChange={(e) => setMountFs(e.target.value as FormatFsType)}
+                    className={`w-full rounded-lg border px-3 py-2 text-xs ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`}
+                  >
+                    {FORMAT_FS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <input value={mountPoint} onChange={(e) => setMountPoint(e.target.value)} placeholder={tr.mountpoint} className={`w-full rounded-lg border px-3 py-2 text-xs font-mono ${isDark ? 'bg-slate-950 border-slate-700' : 'border-slate-200'}`} />
                 <label className="flex items-center gap-2 text-[11px]">
                   <input type="checkbox" checked={mountPersist} onChange={(e) => setMountPersist(e.target.checked)} />
@@ -940,7 +962,7 @@ export default function PartitionWizard({
                     onClick={() => refreshAfter(() => postJson('/api/storage_manager/mount', {
                       device: selected.path,
                       mountpoint: mountPoint,
-                      fstype: selected.fstype || undefined,
+                      fstype: selected.fstype || mountFs,
                       options: 'defaults',
                       persist_fstab: mountPersist,
                     }))}
