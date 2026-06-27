@@ -962,7 +962,7 @@ export default function PartitionWizard({
                     onClick={() => refreshAfter(() => postJson('/api/storage_manager/mount', {
                       device: selected.path,
                       mountpoint: mountPoint,
-                      fstype: selected.fstype || mountFs,
+                      fstype: mountFs || selected.fstype || null,
                       options: 'defaults',
                       persist_fstab: mountPersist,
                     }))}

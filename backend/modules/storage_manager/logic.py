@@ -1533,7 +1533,7 @@ class StorageService:
             node = str(pt.get("node") or "")
             name = child.get("name") or (node.rsplit("/", 1)[-1] if node else None)
             path = child.get("path") or (f"/dev/{name}" if name else None)
-            fstype = self._normalize_fstype(child.get("fstype")) or (pt.get("filesystem") or None)
+            fstype = self._normalize_fstype(child.get("fstype")) or self._normalize_fstype(pt.get("filesystem"))
             if path and not fstype:
                 fstype = self._probe_fstype(path)
             flags = pt.get("flags") or []
@@ -1929,7 +1929,8 @@ class StorageService:
         if row and row.get("mountpoint"):
             raise StorageManagerError("Device is already mounted.", code="device_mounted")
 
-        use_fstype = self._normalize_fstype(fstype or (row or {}).get("fstype")) or ""
+        explicit = self._normalize_fstype(fstype) if (fstype or "").strip() else None
+        use_fstype = explicit or self._normalize_fstype((row or {}).get("fstype")) or ""
         if not use_fstype:
             use_fstype = self._probe_fstype(device) or ""
         if not use_fstype:
@@ -1943,6 +1944,12 @@ class StorageService:
             raise StorageManagerError(
                 "Filesystem type is required. For Windows disks try NTFS/exFAT, or format the partition first. "
                 "Install ntfs-3g if mounting NTFS.",
+                code="invalid_fstype",
+            )
+
+        if use_fstype not in _RECOGNIZED_FSTYPES:
+            raise StorageManagerError(
+                f"Unsupported filesystem type: {use_fstype}. Choose NTFS/exFAT/ext4 in the mount dialog.",
                 code="invalid_fstype",
             )
 

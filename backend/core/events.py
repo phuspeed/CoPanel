@@ -97,6 +97,8 @@ async def sse_stream(topics: Optional[List[str]] = None, heartbeat_seconds: floa
                 if time.monotonic() - last_emit >= heartbeat_seconds:
                     yield ": ping\n\n"
                     last_emit = time.monotonic()
+            except StopAsyncIteration:
+                break
     finally:
         try:
             await sub.aclose()
