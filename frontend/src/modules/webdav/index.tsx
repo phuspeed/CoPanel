@@ -16,6 +16,7 @@ interface Config {
   is_linux: boolean;
   samba_installed: boolean;
   wsgidav_available: boolean;
+  admin_password_file_present?: boolean;
   updated_at?: number;
 }
 
@@ -55,6 +56,7 @@ export default function WebdavDashboard() {
   const [shareName, setShareName] = useState('copanel');
   const [webdavEnabled, setWebdavEnabled] = useState(false);
   const [smbEnabled, setSmbEnabled] = useState(false);
+  const [smbPassword, setSmbPassword] = useState('');
 
   const t = {
     en: {
@@ -93,6 +95,9 @@ export default function WebdavDashboard() {
       linuxOnly: 'SMB requires Linux production host',
       saved: 'Configuration saved.',
       copy: 'Copy',
+      smbPassword: 'Panel password (for SMB sync)',
+      smbPasswordHint: 'Required once if the server has no stored admin password file. Must match your CoPanel login password.',
+      smbPasswordRequired: 'Enter your panel superadmin password to enable or sync SMB.',
     },
     vi: {
       title: 'WebDAV & SMB',
@@ -130,6 +135,9 @@ export default function WebdavDashboard() {
       linuxOnly: 'SMB cần máy chủ Linux production',
       saved: 'Đã lưu cấu hình.',
       copy: 'Sao chép',
+      smbPassword: 'Mật khẩu panel (đồng bộ SMB)',
+      smbPasswordHint: 'Nhập một lần nếu server chưa có file mật khẩu admin. Phải trùng mật khẩu đăng nhập CoPanel.',
+      smbPasswordRequired: 'Nhập mật khẩu superadmin panel để bật hoặc đồng bộ SMB.',
     },
   }[language];
 
@@ -154,23 +162,29 @@ export default function WebdavDashboard() {
   }, [load]);
 
   const save = async () => {
+    if (smbEnabled && !config?.admin_password_file_present && !smbPassword.trim()) {
+      setError(t.smbPasswordRequired);
+      return;
+    }
     setBusy(true);
     setError(null);
     setMsg(null);
     try {
-      await api('/api/webdav/config', {
-        method: 'PUT',
-        body: {
-          bind_address: bindAddress,
-          webdav_port: webdavPort,
-          smb_port: smbPort,
-          share_path: sharePath,
-          share_name: shareName,
-          webdav_enabled: webdavEnabled,
-          smb_enabled: smbEnabled,
-        },
-      });
+      const body: Record<string, unknown> = {
+        bind_address: bindAddress,
+        webdav_port: webdavPort,
+        smb_port: smbPort,
+        share_path: sharePath,
+        share_name: shareName,
+        webdav_enabled: webdavEnabled,
+        smb_enabled: smbEnabled,
+      };
+      if (smbPassword.trim()) {
+        body.smb_password = smbPassword;
+      }
+      await api('/api/webdav/config', { method: 'PUT', body });
       setMsg(t.saved);
+      setSmbPassword('');
       await load();
     } catch (e: any) {
       setError(e.message || 'Save failed');
@@ -193,10 +207,16 @@ export default function WebdavDashboard() {
   };
 
   const smbAction = async (action: 'start' | 'stop' | 'restart' | 'apply') => {
+    if (action === 'apply' && !config?.admin_password_file_present && !smbPassword.trim()) {
+      setError(t.smbPasswordRequired);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api(`/api/webdav/smb/${action}`, { method: 'POST' });
+      const body = smbPassword.trim() ? { password: smbPassword } : {};
+      await api(`/api/webdav/smb/${action}`, { method: 'POST', body });
+      if (smbPassword.trim()) setSmbPassword('');
       await load();
     } catch (e: any) {
       setError(e.message || 'Action failed');
@@ -206,10 +226,16 @@ export default function WebdavDashboard() {
   };
 
   const syncPassword = async () => {
+    if (!config?.admin_password_file_present && !smbPassword.trim()) {
+      setError(t.smbPasswordRequired);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api('/api/webdav/smb/sync-password', { method: 'POST' });
+      const body = smbPassword.trim() ? { password: smbPassword } : {};
+      await api('/api/webdav/smb/sync-password', { method: 'POST', body });
+      setSmbPassword('');
       setMsg(language === 'vi' ? 'Đã đồng bộ mật khẩu SMB.' : 'SMB password synced.');
     } catch (e: any) {
       setError(e.message || 'Sync failed');
@@ -324,6 +350,20 @@ export default function WebdavDashboard() {
               <input type="checkbox" checked={smbEnabled} onChange={(e) => setSmbEnabled(e.target.checked)} />
               {t.enableSmb}
             </label>
+            {(smbEnabled || !config.admin_password_file_present) && (
+              <div>
+                <label className={label}>{t.smbPassword}</label>
+                <input
+                  className={input}
+                  type="password"
+                  value={smbPassword}
+                  onChange={(e) => setSmbPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder={config.admin_username}
+                />
+                <p className={`mt-1 text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.smbPasswordHint}</p>
+              </div>
+            )}
             <button className={btn(true)} disabled={busy} onClick={save}>
               {busy ? t.saving : t.save}
             </button>

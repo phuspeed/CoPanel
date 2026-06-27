@@ -169,6 +169,7 @@ def update_user(user_id: int, role: str, permitted_modules: str, permitted_folde
 
 def change_password(user_id: int, new_password_plain: str) -> bool:
     """Updates the password hash for a user."""
+    user = get_user_by_id(user_id)
     conn = get_db_connection()
     cursor = conn.cursor()
     pwd_hash = hash_password(new_password_plain)
@@ -179,6 +180,9 @@ def change_password(user_id: int, new_password_plain: str) -> bool:
     conn.commit()
     rows_affected = cursor.rowcount
     conn.close()
+    if rows_affected > 0 and user and user.get("role") == "superadmin":
+        PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PWD_PATH.write_text(new_password_plain)
     return rows_affected > 0
 
 

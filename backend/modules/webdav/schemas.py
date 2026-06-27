@@ -14,7 +14,8 @@ class SaveConfigRequest(BaseModel):
     share_name: Optional[str] = None
     webdav_enabled: Optional[bool] = None
     smb_enabled: Optional[bool] = None
+    smb_password: Optional[str] = None
 
 
-class ServiceActionRequest(BaseModel):
-    action: str = Field(..., pattern="^(start|stop|restart|apply)$")
+class SyncPasswordRequest(BaseModel):
+    password: Optional[str] = None

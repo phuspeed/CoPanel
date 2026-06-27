@@ -10,7 +10,7 @@ from core.audit import record_audit
 from core.auth import require_admin, require_module
 
 from . import logic
-from .schemas import SaveConfigRequest
+from .schemas import SaveConfigRequest, SyncPasswordRequest
 
 router = APIRouter()
 
@@ -82,12 +82,13 @@ def webdav_service(
 @router.post("/smb/{action}")
 def smb_service(
     action: str,
+    req: SyncPasswordRequest = SyncPasswordRequest(),
     user: Dict[str, Any] = Depends(require_admin),
 ) -> Dict[str, Any]:
     if action not in {"start", "stop", "restart", "apply"}:
         raise ApiError("VALIDATION_ERROR", "Action must be start, stop, restart, or apply.", http_status=400)
     try:
-        result = logic.smb_action(action)
+        result = logic.smb_action(action, admin_password=req.password)
     except ValueError as exc:
         raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
     except RuntimeError as exc:
@@ -103,9 +104,12 @@ def smb_service(
 
 
 @router.post("/smb/sync-password")
-def sync_smb_password(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+def sync_smb_password(
+    req: SyncPasswordRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
     try:
-        result = logic.sync_smb_password()
+        result = logic.sync_smb_password(admin_password=req.password)
     except ValueError as exc:
         raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
     except RuntimeError as exc:

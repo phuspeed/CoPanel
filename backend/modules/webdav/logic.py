@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core import user_model
+from core.security import verify_password
 
 from . import webdav_server
 
@@ -96,6 +97,34 @@ def _admin_password_plain() -> Optional[str]:
     return None
 
 
+def _save_admin_password_file(password: str) -> None:
+    user_model.PWD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    user_model.PWD_PATH.write_text(password)
+
+
+def _resolve_admin_password(plain: Optional[str] = None) -> str:
+    """Return superadmin plaintext password for smbpasswd (file or verified input)."""
+    if plain:
+        admin = _get_superadmin()
+        if not admin:
+            raise ValueError("No superadmin user found in CoPanel.")
+        if not verify_password(plain, admin.get("password_hash", "")):
+            raise ValueError("Password does not match the panel superadmin account.")
+        _save_admin_password_file(plain)
+        return plain
+
+    stored = _admin_password_plain()
+    if stored:
+        admin = _get_superadmin()
+        if admin and verify_password(stored, admin.get("password_hash", "")):
+            return stored
+        # Stale file — ignore and ask user to re-enter
+    raise ValueError(
+        "Enter your panel superadmin password below to sync SMB. "
+        "It must match the account you use to log in to CoPanel."
+    )
+
+
 def _local_ips() -> List[str]:
     ips: List[str] = []
     try:
@@ -168,6 +197,7 @@ def get_public_config() -> Dict[str, Any]:
         "is_linux": not IS_WINDOWS,
         "samba_installed": shutil.which("smbd") is not None or Path("/usr/sbin/smbd").exists(),
         "wsgidav_available": _wsgidav_available(),
+        "admin_password_file_present": user_model.PWD_PATH.is_file(),
     }
 
 
@@ -181,6 +211,7 @@ def _wsgidav_available() -> bool:
 
 
 def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
+    smb_password = updates.pop("smb_password", None)
     cfg = _load_store()
     if updates.get("bind_address") is not None:
         cfg["bind_address"] = _validate_bind_address(updates["bind_address"])
@@ -197,11 +228,11 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     if updates.get("smb_enabled") is not None:
         cfg["smb_enabled"] = bool(updates["smb_enabled"])
     _save_store(cfg)
-    _apply_services(cfg)
+    _apply_services(cfg, smb_password=smb_password)
     return get_public_config()
 
 
-def _apply_services(cfg: Dict[str, Any]) -> None:
+def _apply_services(cfg: Dict[str, Any], *, smb_password: Optional[str] = None) -> None:
     if cfg.get("webdav_enabled"):
         if not _wsgidav_available():
             raise RuntimeError("wsgidav is not installed. Run: pip install wsgidav")
@@ -215,7 +246,7 @@ def _apply_services(cfg: Dict[str, Any]) -> None:
         webdav_server.stop_server()
 
     if cfg.get("smb_enabled"):
-        apply_smb_config(cfg)
+        apply_smb_config(cfg, admin_password=smb_password)
 
 
 def get_status() -> Dict[str, Any]:
@@ -263,7 +294,7 @@ def _smb_service_status() -> Dict[str, Any]:
     return {"active": False, "state": "unknown"}
 
 
-def apply_smb_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def apply_smb_config(cfg: Optional[Dict[str, Any]] = None, *, admin_password: Optional[str] = None) -> Dict[str, Any]:
     if IS_WINDOWS:
         return {"applied": False, "message": "SMB is only supported on Linux."}
 
@@ -277,12 +308,7 @@ def apply_smb_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         raise ValueError("No superadmin user found in CoPanel.")
 
     admin_user = admin["username"]
-    admin_pass = _admin_password_plain()
-    if not admin_pass:
-        raise ValueError(
-            "Cannot sync SMB password: admin password file missing. "
-            "Reset admin password in Users module first."
-        )
+    admin_pass = _resolve_admin_password(admin_password)
 
     if not shutil.which("smbpasswd") and not Path("/usr/bin/smbpasswd").exists():
         raise RuntimeError("samba is not installed. Install: apt install samba")
@@ -337,12 +363,12 @@ def apply_smb_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     }
 
 
-def sync_smb_password() -> Dict[str, Any]:
-    """Re-sync Samba password from panel admin password file."""
+def sync_smb_password(admin_password: Optional[str] = None) -> Dict[str, Any]:
+    """Re-sync Samba password from panel admin password file or verified input."""
     cfg = _load_store()
     if not cfg.get("smb_enabled"):
         return {"synced": False, "message": "SMB is disabled."}
-    result = apply_smb_config(cfg)
+    result = apply_smb_config(cfg, admin_password=admin_password)
     return {"synced": True, **result}
 
 
@@ -369,12 +395,12 @@ def webdav_action(action: str) -> Dict[str, Any]:
     raise ValueError(f"Unknown action: {action}")
 
 
-def smb_action(action: str) -> Dict[str, Any]:
+def smb_action(action: str, admin_password: Optional[str] = None) -> Dict[str, Any]:
     if IS_WINDOWS:
         return {"ok": False, "message": "SMB is Linux-only."}
     cfg = _load_store()
     if action == "apply":
-        return apply_smb_config(cfg)
+        return apply_smb_config(cfg, admin_password=admin_password)
     unit = "smbd"
     proc = _run(["systemctl", action, unit])
     if proc.returncode != 0:
