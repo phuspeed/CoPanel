@@ -1927,30 +1927,42 @@ class StorageService:
 
         row = self._find_block(name)
         if row and row.get("mountpoint"):
-            raise StorageManagerError("Device is already mounted.", code="device_mounted")
-
-        explicit = self._normalize_fstype(fstype) if (fstype or "").strip() else None
-        use_fstype = explicit or self._normalize_fstype((row or {}).get("fstype")) or ""
-        if not use_fstype:
-            use_fstype = self._probe_fstype(device) or ""
-        if not use_fstype:
-            props = self._blkid_props(device)
-            parttype = (props.get("parttype") or "").lower()
-            if parttype in _UNMOUNTABLE_PARTTYPES:
-                raise StorageManagerError(
-                    "This partition has no mountable filesystem (Microsoft Reserved / MSR).",
-                    code="invalid_fstype",
-                )
+            mp = row.get("mountpoint")
             raise StorageManagerError(
-                "Filesystem type is required. For Windows disks try NTFS/exFAT, or format the partition first. "
-                "Install ntfs-3g if mounting NTFS.",
-                code="invalid_fstype",
+                f"Device is already mounted at {mp}. Unmount it first or pick another partition.",
+                code="device_mounted",
             )
 
-        if use_fstype not in _RECOGNIZED_FSTYPES:
+        explicit = self._normalize_fstype(fstype) if (fstype or "").strip() else None
+        if explicit and explicit in _ALLOWED_FSTYPES:
+            use_fstype = explicit
+        else:
+            use_fstype = explicit or self._normalize_fstype((row or {}).get("fstype")) or ""
+            if not use_fstype:
+                use_fstype = self._probe_fstype(device) or ""
+            if not use_fstype:
+                props = self._blkid_props(device)
+                parttype = (props.get("parttype") or "").lower()
+                if parttype in _UNMOUNTABLE_PARTTYPES:
+                    raise StorageManagerError(
+                        "This partition has no mountable filesystem (Microsoft Reserved / MSR).",
+                        code="invalid_fstype",
+                    )
+                raise StorageManagerError(
+                    "Filesystem type is required. For Windows disks try NTFS/exFAT, or format the partition first. "
+                    "Install ntfs-3g if mounting NTFS.",
+                    code="invalid_fstype",
+                )
+            if use_fstype not in _RECOGNIZED_FSTYPES:
+                raise StorageManagerError(
+                    f"Unsupported filesystem type: {use_fstype}. Choose NTFS/exFAT/ext4 in the mount dialog.",
+                    code="invalid_fstype",
+                )
+
+        if use_fstype == "ntfs" and not IS_WINDOWS and not shutil.which("ntfs-3g"):
             raise StorageManagerError(
-                f"Unsupported filesystem type: {use_fstype}. Choose NTFS/exFAT/ext4 in the mount dialog.",
-                code="invalid_fstype",
+                "ntfs-3g is not installed. Run: apt install ntfs-3g",
+                code="mkfs_missing",
             )
 
         if IS_WINDOWS:
@@ -1962,15 +1974,20 @@ class StorageService:
         mount_cmd = self._mount_command(use_fstype, device, mountpoint, opts)
         self._run_ok(mount_cmd, "Mount failed", code="mount_failed")
         fstab_type = _MOUNT_FSTYPES.get(use_fstype, use_fstype)
+        fstab_note = ""
         if persist_fstab:
             uuid = self._device_uuid(device)
-            self._fstab_add(uuid, mountpoint, fstab_type, opts)
+            entries = self.read_fstab()
+            if any(e.get("mountpoint") == mountpoint for e in entries):
+                fstab_note = f" (fstab already lists {mountpoint}; mount OK, skipped duplicate entry)"
+            else:
+                self._fstab_add(uuid, mountpoint, fstab_type, opts)
 
         return {
-            "message": f"Mounted {device} at {mountpoint}",
+            "message": f"Mounted {device} at {mountpoint}{fstab_note}",
             "device": device,
             "mountpoint": mountpoint,
-            "persist_fstab": persist_fstab,
+            "persist_fstab": persist_fstab and not fstab_note,
         }
 
     def _mount_command(self, fstype: str, device: str, mountpoint: str, options: str) -> List[str]:

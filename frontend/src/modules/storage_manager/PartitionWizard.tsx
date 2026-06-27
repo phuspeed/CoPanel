@@ -149,9 +149,10 @@ interface PartitionWizardProps {
   language: 'en' | 'vi';
   isDark: boolean;
   actionLoading: boolean;
+  actionErr?: string | null;
   formatBytes: (bytes: number, language: 'en' | 'vi') => string;
   fetchJson: <T>(path: string) => Promise<T>;
-  runAction: (fn: () => Promise<{ message?: string }>) => Promise<void>;
+  runAction: (fn: () => Promise<{ message?: string }>) => Promise<boolean>;
   postJson: <T>(path: string, payload: unknown) => Promise<T>;
   tr: PartitionWizardStrings;
 }
@@ -240,6 +241,7 @@ export default function PartitionWizard({
   language,
   isDark,
   actionLoading,
+  actionErr,
   formatBytes,
   fetchJson,
   runAction,
@@ -394,18 +396,21 @@ export default function PartitionWizard({
     if (kind === 'mount' && selected) {
       const inferred = (selected.fstype as FormatFsType | null) || 'ntfs';
       setMountFs(FORMAT_FS_OPTIONS.some((o) => o.value === inferred) ? inferred : 'ntfs');
+      const partName = selected.name || selected.path?.replace('/dev/', '') || 'data';
+      setMountPoint(`/mnt/${partName}`);
+      setMountPersist(false);
     }
   };
 
   const closeModal = () => setModal(null);
 
   const refreshAfter = async (fn: () => Promise<{ message?: string }>) => {
-    await runAction(async () => {
+    const ok = await runAction(async () => {
       const result = await fn();
       await loadLayout(activeDisk);
       return result;
     });
-    closeModal();
+    if (ok) closeModal();
   };
 
   const mapSegments = useMemo(() => {
@@ -935,7 +940,15 @@ export default function PartitionWizard({
                 <h3 className="font-bold">{tr.mountVolume}</h3>
                 <p className="text-[11px] font-mono">{selected.path}</p>
                 {selected.parttype_label && !selected.fstype && (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400">{selected.parttype_label}</p>
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                    {selected.parttype_label}
+                    {language === 'vi'
+                      ? ' — chọn NTFS/exFAT bên dưới. Nếu ổ trống, Format trước rồi Mount.'
+                      : ' — pick NTFS/exFAT below. If empty, Format first, then Mount.'}
+                  </p>
+                )}
+                {actionErr && (
+                  <p className="text-[11px] text-red-500 whitespace-pre-wrap">{actionErr}</p>
                 )}
                 <label className="block text-[11px] space-y-1">
                   {language === 'vi' ? 'Loại filesystem' : 'Filesystem type'}
@@ -958,11 +971,11 @@ export default function PartitionWizard({
                   <button type="button" onClick={closeModal} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>{tr.cancel}</button>
                   <button
                     type="button"
-                    disabled={actionLoading || !mountPoint.trim()}
+                    disabled={actionLoading || !mountPoint.trim() || !mountPoint.trim().startsWith('/')}
                     onClick={() => refreshAfter(() => postJson('/api/storage_manager/mount', {
                       device: selected.path,
-                      mountpoint: mountPoint,
-                      fstype: mountFs || selected.fstype || null,
+                      mountpoint: mountPoint.trim(),
+                      fstype: mountFs,
                       options: 'defaults',
                       persist_fstab: mountPersist,
                     }))}

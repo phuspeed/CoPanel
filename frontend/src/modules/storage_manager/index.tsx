@@ -921,7 +921,7 @@ export default function StorageManagerDashboard() {
     [volumes],
   );
 
-  const runAction = async (fn: () => Promise<{ message?: string }>) => {
+  const runAction = async (fn: () => Promise<{ message?: string }>): Promise<boolean> => {
     setActionLoading(true);
     setActionErr(null);
     setActionMsg(null);
@@ -929,8 +929,10 @@ export default function StorageManagerDashboard() {
       const result = await fn();
       setActionMsg(result.message || tr.success);
       await loadAll();
+      return true;
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : 'Action failed');
+      return false;
     } finally {
       setActionLoading(false);
     }
@@ -1123,6 +1125,7 @@ export default function StorageManagerDashboard() {
                   language={language || 'en'}
                   isDark={isDark}
                   actionLoading={actionLoading}
+                  actionErr={actionErr}
                   formatBytes={formatBytes}
                   fetchJson={fetchJson}
                   runAction={runAction}
