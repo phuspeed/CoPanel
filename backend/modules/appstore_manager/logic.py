@@ -492,6 +492,8 @@ DEPENDENCY_PACKAGES = {
 
 PIP_PACKAGES_BY_MODULE: Dict[str, List[str]] = {
     "webdav": ["wsgidav==4.3.3", "cheroot==10.0.1"],
+    "cloudflare_ddns": ["httpx==0.27.0"],
+    "download_manager": ["yt-dlp"],
 }
 
 
