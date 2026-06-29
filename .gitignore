@@ -124,7 +124,9 @@ backend/modules/cloudflare_ddns/
 backend/modules/download_manager/
 backend/modules/storage_manager/
 backend/modules/webdav/
+backend/modules/audio_station/
 frontend/src/modules/cloudflare_ddns/
 frontend/src/modules/download_manager/
 frontend/src/modules/storage_manager/
 frontend/src/modules/webdav/
+frontend/src/modules/audio_station/
