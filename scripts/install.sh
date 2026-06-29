@@ -283,7 +283,7 @@ install_dependencies() {
         apt-get install -y \
             python3 python3-pip python3-venv \
             nginx \
-            curl wget git \
+            curl wget git unzip zip rsync \
             build-essential \
             nodejs npm \
             ufw inotify-tools certbot python3-certbot-nginx \
@@ -473,26 +473,46 @@ setup_backend() {
     
     # CoPanel's Python stack runs only inside this venv ($VENV_PATH). system-site-packages is not used;
     # all `pip` commands below install into the venv, and systemd runs uvicorn with $VENV_PATH/bin/python.
+    # shellcheck disable=SC1091
     source "$VENV_PATH/bin/activate"
+
+    export PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
     
-    pip install --upgrade pip setuptools wheel >/dev/null 2>&1
+    log_info "Upgrading pip, setuptools, wheel..."
+    if ! pip install --upgrade pip setuptools wheel; then
+        log_error "Failed to upgrade pip inside $VENV_PATH"
+        deactivate 2>/dev/null || true
+        exit 1
+    fi
     
     if [[ -f "$CoPanel_HOME/backend/requirements.txt" ]]; then
-        pip install -r "$CoPanel_HOME/backend/requirements.txt" >/dev/null 2>&1
+        log_info "Installing Python packages from requirements.txt (may take several minutes on first run)..."
+        if ! pip install -r "$CoPanel_HOME/backend/requirements.txt"; then
+            log_error "pip install -r requirements.txt failed. Check network, disk space, and compiler packages (build-essential)."
+            deactivate 2>/dev/null || true
+            exit 1
+        fi
+    else
+        log_warning "requirements.txt not found at $CoPanel_HOME/backend/requirements.txt"
     fi
     # AppStore Manager (same venv) compares catalog vs installed versions via PEP 440; also in requirements.txt
-    pip install -q "packaging>=23.2" >/dev/null 2>&1 || true
+    pip install -q "packaging>=23.2" || true
     log_success "Python dependencies installed"
 
-     # Pre-initialize database to immediately create initial admin user & password file
+    log_info "Initializing CoPanel database..."
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
-    sudo -u "$CoPanel_USER" ADMIN_PASSWORD="$ADMIN_PASSWORD" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"
+    if ! sudo -u "$CoPanel_USER" ADMIN_PASSWORD="${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
+        log_error "Database initialization failed (core.user_model.init_db)."
+        deactivate 2>/dev/null || true
+        exit 1
+    fi
+    log_success "Database initialized"
     
     # Final ownership check
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
     chmod -R u+rwX,go+rX "$CoPanel_HOME"
     
-    deactivate
+    deactivate 2>/dev/null || true
 }
 
 ###############################################################################
