@@ -491,7 +491,7 @@ DEPENDENCY_PACKAGES = {
 }
 
 PIP_PACKAGES_BY_MODULE: Dict[str, List[str]] = {
-    "webdav": ["wsgidav==4.3.3", "cheroot==10.0.5"],
+    "webdav": ["wsgidav==4.3.3", "cheroot==10.0.1"],
 }
 
 
