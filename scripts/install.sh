@@ -495,8 +495,6 @@ setup_backend() {
     else
         log_warning "requirements.txt not found at $CoPanel_HOME/backend/requirements.txt"
     fi
-    # AppStore Manager (same venv) compares catalog vs installed versions via PEP 440; also in requirements.txt
-    pip install -q "packaging>=23.2" || true
     log_success "Python dependencies installed"
 
     log_info "Initializing CoPanel database..."
