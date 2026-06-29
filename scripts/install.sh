@@ -62,7 +62,7 @@ log_step() {
 
 # -----------------------------------------------------------------------------
 # Panel version for banner / summary (no hardcoded semver).
-# Order: repo VERSION → /opt/copanel/VERSION → git tag in repo → git in install dir → fallback.
+# Order: repo VERSION → /opt/copanel/VERSION → git tag/describe → GitHub raw VERSION → fallback.
 # -----------------------------------------------------------------------------
 copanel_read_version_file() {
     local f="$1"
@@ -95,6 +95,23 @@ copanel_git_version_describe() {
     printf '%s' "$t"
 }
 
+copanel_fetch_github_version() {
+    local url="${COPANEL_VERSION_URL:-https://raw.githubusercontent.com/phuspeed/CoPanel/main/VERSION}"
+    local raw=""
+    if command -v curl &>/dev/null; then
+        raw="$(curl -fsSL --max-time 12 "$url" 2>/dev/null || true)"
+    elif command -v wget &>/dev/null; then
+        raw="$(wget -qO- --timeout=12 "$url" 2>/dev/null || true)"
+    fi
+    [[ -n "$raw" ]] || return 1
+    local line
+    line="$(printf '%s' "$raw" | grep -v '^[[:space:]]*#' | head -1 | tr -d '\r')"
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)"
+    [[ -n "$line" ]] || return 1
+    printf '%s' "$line"
+}
+
 copanel_resolve_panel_version() {
     local script_dir repo_dir v=""
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,6 +123,7 @@ copanel_resolve_panel_version() {
     [[ -n "$v" ]] || v="$(copanel_git_version_nearest_tag "$CoPanel_HOME" || true)"
     [[ -n "$v" ]] || v="$(copanel_git_version_describe "$repo_dir" || true)"
     [[ -n "$v" ]] || v="$(copanel_git_version_describe "$CoPanel_HOME" || true)"
+    [[ -n "$v" ]] || v="$(copanel_fetch_github_version || true)"
 
     if [[ -z "$v" ]]; then
         v="1.0.0"
