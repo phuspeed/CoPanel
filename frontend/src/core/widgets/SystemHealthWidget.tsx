@@ -6,7 +6,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 import { api, PlatformError } from '../platform';
+import { moduleRegistry } from '../registry';
 import Widget from './Widget';
+
+const STORAGE_MANAGER_PATH = '/storage-manager';
+const hasStorageManager = () => Boolean(moduleRegistry.getByPath(STORAGE_MANAGER_PATH));
 
 type Lang = 'en' | 'vi';
 
@@ -155,8 +159,16 @@ export default function SystemHealthWidget() {
   }, [language]);
 
   useEffect(() => {
+    if (!hasStorageManager()) {
+      setStorageAlerts(null);
+      return;
+    }
     let active = true;
     const tick = async () => {
+      if (!hasStorageManager()) {
+        if (active) setStorageAlerts(null);
+        return;
+      }
       try {
         const data = await api<StorageAlertsPayload>('/api/storage_manager/alerts');
         if (active) setStorageAlerts(data || null);
@@ -293,7 +305,12 @@ export default function SystemHealthWidget() {
       icon="Cpu"
       status={status}
       loading={!stats && !error}
-      action={{ label: tr.details, onClick: () => navigate(storageAlerts?.alert_count ? '/storage-manager' : '/system-monitor') }}
+      action={{
+        label: tr.details,
+        onClick: () => navigate(
+          storageAlerts?.alert_count && hasStorageManager() ? STORAGE_MANAGER_PATH : '/system-monitor',
+        ),
+      }}
     >
       {error ? (
         <p className="text-xs text-red-500">{error}</p>
@@ -323,7 +340,7 @@ export default function SystemHealthWidget() {
           {storageFootnote && (
             <button
               type="button"
-              onClick={() => navigate('/storage-manager')}
+              onClick={() => navigate(STORAGE_MANAGER_PATH)}
               className="w-full text-left text-[10px] font-semibold px-2 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition"
             >
               {storageFootnote}
