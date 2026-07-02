@@ -18,7 +18,7 @@ import json
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import Header
+from fastapi import Header, Query
 
 from .api import ApiError
 from .security import verify_token
@@ -48,16 +48,22 @@ def _normalize_permitted(value: Any) -> List[str]:
     return []
 
 
+def _user_from_bearer_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not token:
+        return None
+    payload = verify_token(token)
+    if not payload or "sub" not in payload:
+        return None
+    return user_model.get_user_by_username(payload["sub"])
+
+
 def _user_from_token(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
     if not authorization:
         return None
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
-    payload = verify_token(parts[1])
-    if not payload or "sub" not in payload:
-        return None
-    return user_model.get_user_by_username(payload["sub"])
+    return _user_from_bearer_token(parts[1])
 
 
 def require_user(authorization: str = Header(None)) -> Dict[str, Any]:
@@ -105,3 +111,11 @@ def require_module(module_id: str) -> Callable[..., Dict[str, Any]]:
 def optional_user(authorization: str = Header(None)) -> Optional[Dict[str, Any]]:
     """Returns the user if a valid token is present, else ``None``."""
     return _user_from_token(authorization)
+
+
+def optional_user_sse(
+    authorization: str = Header(None),
+    access_token: Optional[str] = Query(None),
+) -> Optional[Dict[str, Any]]:
+    """EventSource cannot send Authorization headers; accept ``access_token`` query param."""
+    return _user_from_token(authorization) or _user_from_bearer_token(access_token)

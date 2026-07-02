@@ -99,6 +99,12 @@ async def sse_stream(topics: Optional[List[str]] = None, heartbeat_seconds: floa
                     last_emit = time.monotonic()
             except StopAsyncIteration:
                 break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("SSE stream error on topics %s", chosen)
+                yield ": error\n\n"
+                await asyncio.sleep(1.0)
     finally:
         try:
             await sub.aclose()

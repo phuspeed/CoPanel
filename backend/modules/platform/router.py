@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from core.api import ApiError, ok
 from core.audit import query_audit, record_audit
-from core.auth import require_admin, require_user
+from core.auth import optional_user_sse, require_admin, require_user
 from core.events import sse_stream
 from core.jobs import jobs
 from core import notifications as notif
@@ -69,14 +69,20 @@ def cancel_job(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dic
 # ----- Events ------------------------------------------------------------
 
 @router.get("/events")
-async def event_stream(topics: str = Query("jobs,notifications")) -> StreamingResponse:
+async def event_stream(
+    topics: str = Query("jobs,notifications"),
+    user: Optional[Dict[str, Any]] = Depends(optional_user_sse),
+) -> StreamingResponse:
     """SSE stream. ``topics`` is a comma-separated subscription list."""
+    if user is None and os.environ.get("COPANEL_DISABLE_AUTH") != "1":
+        raise ApiError("UNAUTHORIZED", "Authentication required.", http_status=401)
     chosen = [t.strip() for t in topics.split(",") if t.strip()]
     return StreamingResponse(
         sse_stream(chosen),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

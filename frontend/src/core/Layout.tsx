@@ -14,7 +14,7 @@ import AppLauncher from './shell/AppLauncher';
 import NotificationCenter from './shell/NotificationCenter';
 import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
-import { jobsApi, notificationsApi, reconnectPlatformEvents, useInbox, useJobs } from './platform';
+import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs } from './platform';
 
 interface IconProps {
   className?: string;
@@ -355,6 +355,26 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     jobsApi.refresh().catch(() => {});
     notificationsApi.refresh().catch(() => {});
     reconnectPlatformEvents();
+  }, [sessionKey]);
+
+  useEffect(() => {
+    if (!sessionKey) return;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const onDegraded = () => {
+      jobsApi.refresh().catch(() => {});
+      notificationsApi.refresh().catch(() => {});
+      if (!pollTimer) {
+        pollTimer = setInterval(() => {
+          jobsApi.refresh().catch(() => {});
+          notificationsApi.refresh().catch(() => {});
+        }, 30000);
+      }
+    };
+    window.addEventListener(PLATFORM_SSE_DEGRADED_EVENT, onDegraded);
+    return () => {
+      window.removeEventListener(PLATFORM_SSE_DEGRADED_EVENT, onDegraded);
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [sessionKey]);
 
   // Global keyboard shortcut: Cmd/Ctrl+K opens the App Launcher
