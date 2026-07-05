@@ -5,15 +5,19 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
 import json
 import logging
 import os
+import platform
 import re
+import socket
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import psutil
 import pyotp
 
 from passlib.hash import apr_md5_crypt
@@ -46,6 +50,20 @@ NGINX_EXEMPT_LOCATION_MARKERS = (
     "location /api/ {",
     "location /health {",
     "location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {",
+)
+
+_VIRTUAL_IFACE_PREFIXES = (
+    "docker",
+    "veth",
+    "br-",
+    "virbr",
+    "vmnet",
+    "tun",
+    "tap",
+    "wg",
+    "tailscale",
+    "cni",
+    "flannel",
 )
 
 
@@ -122,6 +140,467 @@ def _read_ssh_port() -> int:
     except Exception:
         pass
     return 22
+
+
+def _cmd_json(cmd: List[str]) -> Any:
+    proc = _run(cmd, timeout=30)
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "null")
+    except json.JSONDecodeError:
+        return None
+
+
+def _is_virtual_iface(name: str) -> bool:
+    n = name.lower()
+    if n in ("lo", "lo0"):
+        return True
+    return any(n.startswith(p) for p in _VIRTUAL_IFACE_PREFIXES)
+
+
+def _ipv4_is_private(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr)
+        return bool(ip.is_private and not ip.is_loopback)
+    except ValueError:
+        return False
+
+
+def _iface_ipv4_entries(name: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for row in psutil.net_if_addrs().get(name, []):
+        if row.family != socket.AF_INET:
+            continue
+        prefix = None
+        if row.netmask:
+            try:
+                prefix = ipaddress.ip_network(f"0.0.0.0/{row.netmask}", strict=False).prefixlen
+            except ValueError:
+                prefix = None
+        rows.append(
+            {
+                "address": row.address,
+                "netmask": row.netmask,
+                "prefix": prefix,
+                "broadcast": row.broadcast,
+            }
+        )
+    return rows
+
+
+def _iface_mac(name: str) -> Optional[str]:
+    for row in psutil.net_if_addrs().get(name, []):
+        fam = getattr(psutil, "AF_LINK", None)
+        if fam is not None and row.family == fam and row.address:
+            return row.address
+    return None
+
+
+def _read_default_gateway() -> Optional[str]:
+    data = _cmd_json(["ip", "-j", "route", "show", "default"])
+    if isinstance(data, list):
+        for route in data:
+            if route.get("dst") in ("default", "0.0.0.0/0"):
+                gw = route.get("gateway")
+                if gw:
+                    return str(gw)
+    proc = _run(["ip", "route", "show", "default"], timeout=15)
+    if proc.returncode == 0 and proc.stdout:
+        parts = proc.stdout.split()
+        for i, part in enumerate(parts):
+            if part == "via" and i + 1 < len(parts):
+                return parts[i + 1]
+    return None
+
+
+def _read_dns_servers() -> List[str]:
+    servers: List[str] = []
+    resolve = _run(["resolvectl", "status"], timeout=15)
+    if resolve.returncode == 0 and resolve.stdout:
+        for line in resolve.stdout.splitlines():
+            s = line.strip()
+            if "DNS Servers:" in s or s.startswith("DNS Server:"):
+                tail = s.split(":", 1)[-1].strip()
+                if tail:
+                    servers.extend(x.strip() for x in tail.split() if x.strip())
+    if servers:
+        return list(dict.fromkeys(servers))
+    resolv = Path("/etc/resolv.conf")
+    if resolv.is_file():
+        for line in resolv.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if s.startswith("nameserver "):
+                ip = s.split()[1]
+                if ip not in ("127.0.0.53", "127.0.0.1"):
+                    servers.append(ip)
+    return list(dict.fromkeys(servers))
+
+
+def _nmcli_available() -> bool:
+    if IS_WINDOWS:
+        return False
+    proc = _run(["which", "nmcli"], timeout=10)
+    return proc.returncode == 0
+
+
+def _nmcli_connection_for_device(device: str) -> Optional[str]:
+    proc = _run(["nmcli", "-t", "-f", "DEVICE,CONNECTION", "device", "status"], timeout=20)
+    if proc.returncode != 0:
+        return None
+    for line in (proc.stdout or "").splitlines():
+        if not line:
+            continue
+        parts = line.split(":", 1)
+        if len(parts) != 2:
+            continue
+        dev, conn = parts[0].strip(), parts[1].strip()
+        if dev == device and conn and conn != "--":
+            return conn
+    return None
+
+
+def _nmcli_ipv4_method(connection: str) -> Optional[str]:
+    proc = _run(["nmcli", "-g", "ipv4.method", "connection", "show", connection], timeout=20)
+    if proc.returncode != 0:
+        return None
+    method = (proc.stdout or "").strip().lower()
+    if method in ("auto", "dhcp"):
+        return "dhcp"
+    if method in ("manual", "static", "link-local"):
+        return "static"
+    return method or None
+
+
+def _netplan_files() -> List[Path]:
+    root = Path("/etc/netplan")
+    if not root.is_dir():
+        return []
+    return sorted(root.glob("*.yaml")) + sorted(root.glob("*.yml"))
+
+
+def _netplan_method_for_iface(iface: str) -> Optional[str]:
+    for path in _netplan_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        block = re.search(
+            rf"(?ms)^\s*{re.escape(iface)}:\s*\n(.*?)(?=^\s*\S|\Z)",
+            text,
+        )
+        if not block:
+            continue
+        chunk = block.group(1)
+        if re.search(r"dhcp4:\s*true", chunk, re.I):
+            return "dhcp"
+        if re.search(r"dhcp4:\s*false", chunk, re.I) or re.search(r"addresses:", chunk):
+            return "static"
+    return None
+
+
+def detect_lan_ip() -> Optional[str]:
+    """Best-effort private IPv4 on a live, non-virtual interface."""
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    private: List[str] = []
+    public: List[str] = []
+    for name, rows in addrs.items():
+        if _is_virtual_iface(name):
+            continue
+        st = stats.get(name)
+        if st and not st.isup:
+            continue
+        for row in rows:
+            if row.family != socket.AF_INET or not row.address or row.address.startswith("127."):
+                continue
+            if _ipv4_is_private(row.address):
+                private.append(row.address)
+            else:
+                public.append(row.address)
+    return (private[0] if private else public[0]) if (private or public) else None
+
+
+def get_network_summary() -> Dict[str, Any]:
+    primary = _primary_interface()
+    return {
+        "hostname": platform.node(),
+        "lan_ip": detect_lan_ip(),
+        "primary_interface": primary,
+        "gateway": _read_default_gateway(),
+        "dns": _read_dns_servers(),
+        "is_linux": not IS_WINDOWS,
+    }
+
+
+def _primary_interface() -> Optional[str]:
+    data = _cmd_json(["ip", "-j", "route", "show", "default"])
+    if isinstance(data, list):
+        for route in data:
+            dev = route.get("dev")
+            if dev and not _is_virtual_iface(str(dev)):
+                return str(dev)
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    for name in sorted(addrs.keys()):
+        if _is_virtual_iface(name):
+            continue
+        st = stats.get(name)
+        if st and st.isup and _iface_ipv4_entries(name):
+            return name
+    return None
+
+
+def list_network_interfaces() -> Dict[str, Any]:
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    gateway = _read_default_gateway()
+    dns = _read_dns_servers()
+    nmcli = _nmcli_available()
+    interfaces: List[Dict[str, Any]] = []
+
+    for name in sorted(addrs.keys()):
+        if _is_virtual_iface(name):
+            continue
+        st = stats.get(name)
+        ipv4_rows = _iface_ipv4_entries(name)
+        ipv6 = [
+            row.address
+            for row in addrs.get(name, [])
+            if row.family == socket.AF_INET6 and row.address and not row.address.startswith("fe80")
+        ]
+        connection = _nmcli_connection_for_device(name) if nmcli else None
+        method = None
+        if connection:
+            method = _nmcli_ipv4_method(connection)
+        if not method:
+            method = _netplan_method_for_iface(name)
+        interfaces.append(
+            {
+                "name": name,
+                "mac": _iface_mac(name),
+                "state": "up" if (st and st.isup) else "down",
+                "ipv4": [r["address"] for r in ipv4_rows],
+                "ipv4_prefix": [r["prefix"] for r in ipv4_rows],
+                "ipv4_netmask": [r["netmask"] for r in ipv4_rows],
+                "ipv6": ipv6,
+                "gateway": gateway,
+                "dns": dns,
+                "method": method or "unknown",
+                "connection": connection,
+                "mtu": st.mtu if st else None,
+                "speed_mbps": st.speed if st and st.speed > 0 else None,
+                "backend": "nmcli" if nmcli and connection else ("netplan" if _netplan_files() else "manual"),
+            }
+        )
+
+    return {
+        "summary": get_network_summary(),
+        "interfaces": interfaces,
+        "nmcli_available": nmcli,
+        "netplan_available": bool(_netplan_files()),
+    }
+
+
+def _validate_ipv4(addr: str, field: str) -> str:
+    try:
+        return str(ipaddress.ip_address(addr.strip()))
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} address.") from exc
+
+
+def _apply_nmcli_network(
+    device: str,
+    connection: str,
+    *,
+    method: str,
+    address: Optional[str],
+    prefix: Optional[int],
+    gateway: Optional[str],
+    dns: Optional[List[str]],
+) -> Dict[str, Any]:
+    if method == "dhcp":
+        cmds = [
+            ["nmcli", "connection", "modify", connection, "ipv4.method", "auto"],
+            ["nmcli", "connection", "modify", connection, "ipv4.addresses", ""],
+            ["nmcli", "connection", "modify", connection, "ipv4.gateway", ""],
+            ["nmcli", "connection", "modify", connection, "ipv4.dns", ""],
+            ["nmcli", "connection", "up", connection],
+        ]
+    else:
+        if not address or prefix is None:
+            raise ValueError("Static IP requires address and prefix (CIDR).")
+        addr = _validate_ipv4(address, "IPv4")
+        cidr = f"{addr}/{prefix}"
+        gw = _validate_ipv4(gateway, "gateway") if gateway else ""
+        dns_list = ",".join(_validate_ipv4(x, "DNS") for x in (dns or [])) if dns else ""
+        cmds = [
+            ["nmcli", "connection", "modify", connection, "ipv4.method", "manual"],
+            ["nmcli", "connection", "modify", connection, "ipv4.addresses", cidr],
+            ["nmcli", "connection", "modify", connection, "ipv4.gateway", gw],
+            ["nmcli", "connection", "modify", connection, "ipv4.dns", dns_list],
+            ["nmcli", "connection", "up", connection],
+        ]
+
+    for cmd in cmds:
+        proc = _run_privileged(cmd, timeout=60)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            raise RuntimeError(f"nmcli failed ({' '.join(cmd)}): {err}")
+
+    return {
+        "interface": device,
+        "connection": connection,
+        "method": method,
+        "message": f"Network settings applied on {device} via NetworkManager.",
+        "backend": "nmcli",
+    }
+
+
+def _netplan_iface_block(
+    iface: str,
+    *,
+    method: str,
+    address: Optional[str],
+    prefix: Optional[int],
+    gateway: Optional[str],
+    dns: Optional[List[str]],
+) -> str:
+    if method == "dhcp":
+        return (
+            f"  {iface}:\n"
+            f"    dhcp4: true\n"
+            f"    dhcp6: false\n"
+        )
+    if not address or prefix is None:
+        raise ValueError("Static IP requires address and prefix (CIDR).")
+    addr = _validate_ipv4(address, "IPv4")
+    gw = _validate_ipv4(gateway, "gateway") if gateway else None
+    dns_rows = [_validate_ipv4(x, "DNS") for x in (dns or [])]
+    lines = [
+        f"  {iface}:",
+        "    dhcp4: false",
+        "    dhcp6: false",
+        f"    addresses:",
+        f"      - {addr}/{prefix}",
+    ]
+    if gw:
+        lines.extend(
+            [
+                "    routes:",
+                "      - to: default",
+                f"        via: {gw}",
+            ]
+        )
+    if dns_rows:
+        lines.append("    nameservers:")
+        lines.append("      addresses:")
+        lines.extend(f"        - {d}" for d in dns_rows)
+    return "\n".join(lines) + "\n"
+
+
+def _apply_netplan_network(
+    device: str,
+    *,
+    method: str,
+    address: Optional[str],
+    prefix: Optional[int],
+    gateway: Optional[str],
+    dns: Optional[List[str]],
+) -> Dict[str, Any]:
+    files = _netplan_files()
+    if not files:
+        raise RuntimeError("No netplan files found under /etc/netplan.")
+
+    target = files[0]
+    for path in files:
+        try:
+            if device in path.read_text(encoding="utf-8"):
+                target = path
+                break
+        except OSError:
+            continue
+
+    block = _netplan_iface_block(
+        device,
+        method=method,
+        address=address,
+        prefix=prefix,
+        gateway=gateway,
+        dns=dns,
+    )
+    content = (
+        "network:\n"
+        "  version: 2\n"
+        "  renderer: networkd\n"
+        "  ethernets:\n"
+        f"{block}"
+    )
+    _write_file_privileged(target, content)
+    gen = _run_privileged(["netplan", "generate"], timeout=60)
+    if gen.returncode != 0:
+        raise RuntimeError(f"netplan generate failed: {(gen.stderr or gen.stdout or '').strip()}")
+    apply = _run_privileged(["netplan", "apply"], timeout=90)
+    if apply.returncode != 0:
+        raise RuntimeError(f"netplan apply failed: {(apply.stderr or apply.stdout or '').strip()}")
+
+    return {
+        "interface": device,
+        "method": method,
+        "message": f"Network settings applied on {device} via netplan ({target.name}).",
+        "backend": "netplan",
+        "file": str(target),
+    }
+
+
+def apply_interface_network(
+    interface_name: str,
+    *,
+    method: str,
+    address: Optional[str] = None,
+    prefix: Optional[int] = None,
+    gateway: Optional[str] = None,
+    dns: Optional[List[str]] = None,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    if IS_WINDOWS:
+        raise ValueError("Network configuration is Linux-only.")
+    if not confirm:
+        raise ValueError("Set confirm=true — wrong IP/gateway may disconnect SSH.")
+    iface = interface_name.strip()
+    if not iface or _is_virtual_iface(iface):
+        raise ValueError("Invalid network interface.")
+    if iface not in psutil.net_if_addrs():
+        raise ValueError(f"Interface not found: {iface}")
+    if method not in ("dhcp", "static"):
+        raise ValueError("method must be dhcp or static.")
+
+    if _nmcli_available():
+        conn = _nmcli_connection_for_device(iface)
+        if conn:
+            return _apply_nmcli_network(
+                iface,
+                conn,
+                method=method,
+                address=address,
+                prefix=prefix,
+                gateway=gateway,
+                dns=dns,
+            )
+
+    if _netplan_files():
+        return _apply_netplan_network(
+            iface,
+            method=method,
+            address=address,
+            prefix=prefix,
+            gateway=gateway,
+            dns=dns,
+        )
+
+    raise RuntimeError(
+        "No supported network backend (NetworkManager/nmcli or netplan). Configure the interface manually on the host."
+    )
 
 
 def _nginx_site_path() -> Path:

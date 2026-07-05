@@ -10,7 +10,14 @@ from core.audit import record_audit
 from core.auth import require_admin
 
 from . import logic
-from .schemas import NginxGateRequest, RootPasswordRequest, SshPortRequest, TotpDisableRequest, TotpVerifyRequest
+from .schemas import (
+    NetworkConfigRequest,
+    NginxGateRequest,
+    RootPasswordRequest,
+    SshPortRequest,
+    TotpDisableRequest,
+    TotpVerifyRequest,
+)
 
 router = APIRouter()
 
@@ -124,6 +131,47 @@ def totp_enable(req: TotpVerifyRequest, user: Dict[str, Any] = Depends(require_a
         target=user.get("username"),
         actor=user.get("username"),
         actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
+@router.get("/network/summary")
+def get_network_summary(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    return ok(logic.get_network_summary())
+
+
+@router.get("/network")
+def list_network(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    return ok(logic.list_network_interfaces())
+
+
+@router.put("/network/{interface_name}")
+def set_network(
+    interface_name: str,
+    req: NetworkConfigRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = logic.apply_interface_network(
+            interface_name,
+            method=req.method,
+            address=req.address,
+            prefix=req.prefix,
+            gateway=req.gateway,
+            dns=req.dns,
+            confirm=req.confirm,
+        )
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.network",
+        module="panel_settings",
+        target=interface_name,
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+        meta={"method": req.method, "address": req.address},
     )
     return ok(result)
 

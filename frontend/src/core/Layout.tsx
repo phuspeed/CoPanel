@@ -14,7 +14,7 @@ import AppLauncher from './shell/AppLauncher';
 import NotificationCenter from './shell/NotificationCenter';
 import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
-import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs } from './platform';
+import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs, api } from './platform';
 
 interface IconProps {
   className?: string;
@@ -88,6 +88,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const [upgradeProgress, setUpgradeProgress] = useState(0);
   const [upgradeSuccess, setUpgradeSuccess] = useState(false);
   const upgradeLogRef = useRef<HTMLPreElement>(null);
+  const [lanIp, setLanIp] = useState<string | null>(null);
+  const [serverHostname, setServerHostname] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
 
@@ -123,6 +125,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       checkUpdateFailed: 'Could not reach GitHub to check for updates.',
       upToDate: 'You are on the latest version.',
       viewReleases: 'View on GitHub',
+      lanIp: 'LAN IP',
+      hostname: 'Host',
       modulesNames: {
         'appstore_manager': 'App Store',
         'app_store': 'App Store',
@@ -170,6 +174,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
       checkUpdateFailed: 'Không kiểm tra được bản cập nhật từ GitHub.',
       upToDate: 'Bạn đang dùng phiên bản mới nhất.',
       viewReleases: 'Xem trên GitHub',
+      lanIp: 'IP LAN',
+      hostname: 'Máy chủ',
       modulesNames: {
         'appstore_manager': 'Kho ứng dụng',
         'app_store': 'Kho ứng dụng',
@@ -298,6 +304,21 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
     };
     check();
     const id = window.setInterval(check, 30 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'superadmin') return;
+    const loadNetworkSummary = () => {
+      api<{ lan_ip: string | null; hostname: string }>('/api/panel_settings/network/summary')
+        .then((data) => {
+          setLanIp(data.lan_ip);
+          setServerHostname(data.hostname);
+        })
+        .catch(() => {});
+    };
+    loadNetworkSummary();
+    const id = window.setInterval(loadNetworkSummary, 60_000);
     return () => window.clearInterval(id);
   }, [user?.role]);
 
@@ -565,6 +586,26 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
 
           {user?.role === 'superadmin' && (
             <div className={`px-4 pb-2 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+              {(lanIp || serverHostname) && (
+                <div
+                  className={`mb-2 px-4 py-2 rounded-lg text-xs font-mono ${
+                    isDark ? 'bg-slate-800/80 text-slate-300' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {serverHostname && (
+                    <p className="truncate">
+                      <span className={isDark ? 'text-slate-500' : 'text-slate-400'}>{tr.hostname}: </span>
+                      {serverHostname}
+                    </p>
+                  )}
+                  {lanIp && (
+                    <p className="truncate mt-0.5">
+                      <span className={isDark ? 'text-slate-500' : 'text-slate-400'}>{tr.lanIp}: </span>
+                      {lanIp}
+                    </p>
+                  )}
+                </div>
+              )}
               <Link
                 to="/settings"
                 className={cn(

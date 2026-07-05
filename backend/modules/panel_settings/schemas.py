@@ -1,7 +1,7 @@
 """Panel settings API models."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -29,3 +29,12 @@ class TotpVerifyRequest(BaseModel):
 class TotpDisableRequest(BaseModel):
     password: str
     code: str = Field(..., min_length=6, max_length=8)
+
+
+class NetworkConfigRequest(BaseModel):
+    method: Literal["dhcp", "static"]
+    address: Optional[str] = None
+    prefix: Optional[int] = Field(None, ge=1, le=32)
+    gateway: Optional[str] = None
+    dns: Optional[List[str]] = None
+    confirm: bool = False

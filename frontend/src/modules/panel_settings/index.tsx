@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 
-type Tab = 'ssh' | 'root' | 'gate' | 'totp';
+type Tab = 'ssh' | 'root' | 'gate' | 'totp' | 'network';
 
 interface Settings {
   ssh_port: number;
@@ -11,6 +11,35 @@ interface Settings {
   nginx_gate: { enabled: boolean; username: string; configured: boolean; needs_repair?: boolean };
   totp: { enabled: boolean; username: string };
   is_linux: boolean;
+}
+
+interface NetworkIface {
+  name: string;
+  mac: string | null;
+  state: string;
+  ipv4: string[];
+  ipv4_prefix: (number | null)[];
+  ipv6: string[];
+  gateway: string | null;
+  dns: string[];
+  method: string;
+  connection: string | null;
+  mtu: number | null;
+  speed_mbps: number | null;
+  backend: string;
+}
+
+interface NetworkPayload {
+  summary: {
+    hostname: string;
+    lan_ip: string | null;
+    primary_interface: string | null;
+    gateway: string | null;
+    dns: string[];
+  };
+  interfaces: NetworkIface[];
+  nmcli_available: boolean;
+  netplan_available: boolean;
 }
 
 export default function PanelSettings() {
@@ -34,6 +63,16 @@ export default function PanelSettings() {
   const [totpQr, setTotpQr] = useState<string | null>(null);
   const [totpSecret, setTotpSecret] = useState('');
   const [disablePass, setDisablePass] = useState('');
+
+  const [network, setNetwork] = useState<NetworkPayload | null>(null);
+  const [netLoading, setNetLoading] = useState(false);
+  const [editIface, setEditIface] = useState<string | null>(null);
+  const [netMethod, setNetMethod] = useState<'dhcp' | 'static'>('dhcp');
+  const [netAddress, setNetAddress] = useState('');
+  const [netPrefix, setNetPrefix] = useState(24);
+  const [netGateway, setNetGateway] = useState('');
+  const [netDns, setNetDns] = useState('');
+  const [netConfirm, setNetConfirm] = useState(false);
 
   const t = {
     en: {
@@ -68,6 +107,35 @@ export default function PanelSettings() {
       panelPass: 'Panel password',
       saved: 'Saved.',
       linuxOnly: 'Linux server only.',
+      network: 'Network',
+      networkDesc: 'LAN IP, interfaces, gateway, and static/DHCP configuration.',
+      lanIp: 'LAN IP',
+      hostname: 'Hostname',
+      gateway: 'Gateway',
+      dns: 'DNS',
+      ifaceCards: 'Network interfaces',
+      mac: 'MAC',
+      state: 'State',
+      method: 'Mode',
+      ipv4: 'IPv4',
+      ipv6: 'IPv6',
+      mtu: 'MTU',
+      speed: 'Speed',
+      up: 'Up',
+      down: 'Down',
+      dhcp: 'DHCP',
+      static: 'Static',
+      unknown: 'Unknown',
+      configure: 'Configure',
+      cancelEdit: 'Cancel',
+      netHint: 'Wrong IP or gateway can disconnect SSH. Keep this session open and test before closing.',
+      netConfirm: 'I understand — apply network change',
+      applyNet: 'Apply network settings',
+      address: 'IPv4 address',
+      prefix: 'Prefix (CIDR)',
+      refreshNet: 'Refresh',
+      noIfaces: 'No physical interfaces detected.',
+      backend: 'Backend',
     },
     vi: {
       title: 'Cài đặt',
@@ -101,6 +169,35 @@ export default function PanelSettings() {
       panelPass: 'Mật khẩu panel',
       saved: 'Đã lưu.',
       linuxOnly: 'Chỉ trên Linux.',
+      network: 'Mạng',
+      networkDesc: 'IP LAN, card mạng, gateway và cấu hình DHCP/tĩnh.',
+      lanIp: 'IP LAN',
+      hostname: 'Hostname',
+      gateway: 'Gateway',
+      dns: 'DNS',
+      ifaceCards: 'Card mạng',
+      mac: 'MAC',
+      state: 'Trạng thái',
+      method: 'Chế độ',
+      ipv4: 'IPv4',
+      ipv6: 'IPv6',
+      mtu: 'MTU',
+      speed: 'Tốc độ',
+      up: 'Bật',
+      down: 'Tắt',
+      dhcp: 'DHCP',
+      static: 'Tĩnh',
+      unknown: 'Không rõ',
+      configure: 'Cấu hình',
+      cancelEdit: 'Hủy',
+      netHint: 'Sai IP/gateway có thể mất SSH. Giữ phiên hiện tại; thử kết nối mới trước khi đóng.',
+      netConfirm: 'Tôi hiểu — áp dụng đổi mạng',
+      applyNet: 'Áp dụng cấu hình mạng',
+      address: 'Địa chỉ IPv4',
+      prefix: 'Prefix (CIDR)',
+      refreshNet: 'Làm mới',
+      noIfaces: 'Không phát hiện card mạng vật lý.',
+      backend: 'Backend',
     },
   }[language];
 
@@ -115,6 +212,60 @@ export default function PanelSettings() {
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
+
+  const loadNetwork = useCallback(async () => {
+    setNetLoading(true);
+    try {
+      const data = await api<NetworkPayload>('/api/panel_settings/network');
+      setNetwork(data);
+    } finally {
+      setNetLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'network') {
+      loadNetwork().catch((e) => setError(e.message));
+    }
+  }, [tab, loadNetwork]);
+
+  const openNetEdit = (iface: NetworkIface) => {
+    setEditIface(iface.name);
+    setNetMethod(iface.method === 'dhcp' ? 'dhcp' : 'static');
+    setNetAddress(iface.ipv4[0] || '');
+    setNetPrefix(iface.ipv4_prefix[0] || 24);
+    setNetGateway(iface.gateway || '');
+    setNetDns((iface.dns || []).join(', '));
+    setNetConfirm(false);
+  };
+
+  const applyNetwork = async () => {
+    if (!editIface) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/panel_settings/network/${encodeURIComponent(editIface)}`, {
+        method: 'PUT',
+        body: {
+          method: netMethod,
+          address: netMethod === 'static' ? netAddress : undefined,
+          prefix: netMethod === 'static' ? netPrefix : undefined,
+          gateway: netMethod === 'static' ? netGateway || undefined : undefined,
+          dns: netMethod === 'static' && netDns.trim()
+            ? netDns.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean)
+            : undefined,
+          confirm: netConfirm,
+        },
+      });
+      setMsg(t.saved);
+      setEditIface(null);
+      await loadNetwork();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const card = `${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border rounded-xl p-5`;
   const input = `w-full px-3 py-2 rounded-lg border text-sm ${
@@ -282,7 +433,7 @@ export default function PanelSettings() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {(['ssh', 'root', 'gate', 'totp'] as Tab[]).map((id) => (
+        {(['ssh', 'root', 'gate', 'totp', 'network'] as Tab[]).map((id) => (
           <button key={id} type="button" className={tabBtn(id)} onClick={() => setTab(id)}>
             {t[id]}
           </button>
@@ -417,6 +568,189 @@ export default function PanelSettings() {
                 {t.disableTotp}
               </button>
             </>
+          )}
+        </div>
+      )}
+
+      {tab === 'network' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.networkDesc}</p>
+            <button
+              type="button"
+              className={`px-3 py-1.5 rounded-lg text-sm border ${isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'}`}
+              disabled={netLoading}
+              onClick={() => loadNetwork().catch((e) => setError(e.message))}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Icons.RefreshCw className={`w-3.5 h-3.5 ${netLoading ? 'animate-spin' : ''}`} />
+                {t.refreshNet}
+              </span>
+            </button>
+          </div>
+
+          {network?.summary && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {[
+                { icon: Icons.Wifi, label: t.lanIp, value: network.summary.lan_ip || '—' },
+                { icon: Icons.Server, label: t.hostname, value: network.summary.hostname || '—' },
+                { icon: Icons.Router, label: t.gateway, value: network.summary.gateway || '—' },
+                { icon: Icons.Globe, label: t.dns, value: network.summary.dns?.join(', ') || '—' },
+              ].map((item) => (
+                <div key={item.label} className={card}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <item.icon className="w-4 h-4 text-blue-500" />
+                    <span className={`text-xs font-medium uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {item.label}
+                    </span>
+                  </div>
+                  <p className="font-mono text-sm break-all">{item.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div>
+            <h2 className="text-sm font-semibold mb-3">{t.ifaceCards}</h2>
+            {netLoading && !network && (
+              <Icons.Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+            )}
+            {network && network.interfaces.length === 0 && (
+              <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.noIfaces}</p>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {network?.interfaces.map((iface) => (
+                <div key={iface.name} className={card}>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div>
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <Icons.Network className="w-4 h-4 text-emerald-500" />
+                        {iface.name}
+                      </h3>
+                      <p className={`text-xs mt-1 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                        {iface.connection || iface.backend}
+                      </p>
+                    </div>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full ${
+                        iface.state === 'up'
+                          ? 'bg-emerald-500/15 text-emerald-500'
+                          : 'bg-slate-500/15 text-slate-400'
+                      }`}
+                    >
+                      {iface.state === 'up' ? t.up : t.down}
+                    </span>
+                  </div>
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                    <div>
+                      <dt className={label}>{t.mac}</dt>
+                      <dd className="font-mono text-xs">{iface.mac || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className={label}>{t.method}</dt>
+                      <dd>
+                        {iface.method === 'dhcp' ? t.dhcp : iface.method === 'static' ? t.static : t.unknown}
+                      </dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className={label}>{t.ipv4}</dt>
+                      <dd className="font-mono text-xs">
+                        {iface.ipv4.length
+                          ? iface.ipv4.map((ip, i) => (
+                              <span key={ip}>
+                                {ip}
+                                {iface.ipv4_prefix[i] ? `/${iface.ipv4_prefix[i]}` : ''}
+                                {i < iface.ipv4.length - 1 ? ', ' : ''}
+                              </span>
+                            ))
+                          : '—'}
+                      </dd>
+                    </div>
+                    {iface.ipv6.length > 0 && (
+                      <div className="col-span-2">
+                        <dt className={label}>{t.ipv6}</dt>
+                        <dd className="font-mono text-xs break-all">{iface.ipv6.join(', ')}</dd>
+                      </div>
+                    )}
+                    <div>
+                      <dt className={label}>{t.mtu}</dt>
+                      <dd>{iface.mtu ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className={label}>{t.speed}</dt>
+                      <dd>{iface.speed_mbps ? `${iface.speed_mbps} Mbps` : '—'}</dd>
+                    </div>
+                  </dl>
+                  <button
+                    type="button"
+                    className="mt-4 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium disabled:opacity-50"
+                    disabled={busy || !settings.is_linux}
+                    onClick={() => openNetEdit(iface)}
+                  >
+                    {t.configure}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {editIface && (
+            <div className={card}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold">
+                  {t.configure}: <code>{editIface}</code>
+                </h3>
+                <button
+                  type="button"
+                  className={`text-xs ${isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'}`}
+                  onClick={() => setEditIface(null)}
+                >
+                  {t.cancelEdit}
+                </button>
+              </div>
+              <p className={`text-sm mb-4 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>{t.netHint}</p>
+              <div className="flex flex-wrap gap-3 mb-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    checked={netMethod === 'dhcp'}
+                    onChange={() => setNetMethod('dhcp')}
+                  />
+                  {t.dhcp}
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    checked={netMethod === 'static'}
+                    onChange={() => setNetMethod('static')}
+                  />
+                  {t.static}
+                </label>
+              </div>
+              {netMethod === 'static' && (
+                <>
+                  <label className={label}>{t.address}</label>
+                  <input className={input} value={netAddress} onChange={(e) => setNetAddress(e.target.value)} placeholder="192.168.1.100" />
+                  <label className={`${label} mt-3`}>{t.prefix}</label>
+                  <input className={input} type="number" min={1} max={32} value={netPrefix} onChange={(e) => setNetPrefix(Number(e.target.value))} />
+                  <label className={`${label} mt-3`}>{t.gateway}</label>
+                  <input className={input} value={netGateway} onChange={(e) => setNetGateway(e.target.value)} placeholder="192.168.1.1" />
+                  <label className={`${label} mt-3`}>{t.dns}</label>
+                  <input className={input} value={netDns} onChange={(e) => setNetDns(e.target.value)} placeholder="8.8.8.8, 1.1.1.1" />
+                </>
+              )}
+              <label className="flex items-center gap-2 mt-4 text-sm">
+                <input type="checkbox" checked={netConfirm} onChange={(e) => setNetConfirm(e.target.checked)} />
+                {t.netConfirm}
+              </label>
+              <button
+                className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50"
+                disabled={busy || !settings.is_linux || !netConfirm}
+                onClick={applyNetwork}
+              >
+                {t.applyNet}
+              </button>
+            </div>
           )}
         </div>
       )}
