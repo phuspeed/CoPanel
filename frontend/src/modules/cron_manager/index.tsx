@@ -159,14 +159,39 @@ export default function CronManager() {
   const [draft, setDraft] = useState<Job>({ ...EMPTY });
   const [builder, setBuilder] = useState<BuilderState>({ ...DEFAULT_BUILDER });
   const [error, setError] = useState<string | null>(null);
+  const [system, setSystem] = useState<{ crontab_available?: boolean; install_hint?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadSystem = async () => {
+    try {
+      const st = await api<{ crontab_available: boolean; install_hint?: string }>('/api/cron_manager/system');
+      setSystem(st);
+    } catch {
+      setSystem(null);
+    }
+  };
 
   const refresh = async () => {
     try {
       const list = await api<Job[]>('/api/cron_manager/jobs');
       setJobs(list || []);
       setError(null);
+      await loadSystem();
     } catch (err: any) {
       setError(err?.message || 'Failed to load cron jobs');
+    }
+  };
+
+  const installCron = async () => {
+    setBusy(true);
+    try {
+      await api('/api/cron_manager/system/ensure-cron', { method: 'POST' });
+      await refresh();
+      setError(null);
+    } catch (err: any) {
+      setError(err?.message || 'Install cron failed');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -251,6 +276,24 @@ export default function CronManager() {
           Managed jobs store: /opt/copanel/config/cron_manager.db
         </p>
       </header>
+
+      {system && !system.crontab_available && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200">
+          <p className="font-semibold">Cron hệ thống chưa sẵn sàng</p>
+          <p className="text-xs mt-1 opacity-90">
+            Module Cron Manager chỉ là giao diện — cần gói <code className="font-mono">cron</code> (lệnh{' '}
+            <code className="font-mono">crontab</code>) trên Linux. {system.install_hint}
+          </p>
+          <button
+            type="button"
+            onClick={installCron}
+            disabled={busy}
+            className="mt-3 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-50"
+          >
+            Cài cron &amp; sync
+          </button>
+        </div>
+      )}
 
       <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2">

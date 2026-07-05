@@ -282,7 +282,7 @@ install_dependencies() {
         apt_update_or_recover || { copanel_remove_apt_timeouts; exit 1; }
         apt-get install -y \
             python3 python3-pip python3-venv \
-            nginx \
+            nginx cron \
             curl wget git unzip zip rsync \
             build-essential \
             nodejs npm \
@@ -292,12 +292,17 @@ install_dependencies() {
     elif command_exists yum; then
         yum install -y \
             python3 python3-pip \
-            nginx \
+            nginx cronie \
             curl wget git unzip zip \
             gcc gcc-c++ make \
             nodejs npm \
             ufw inotify-tools certbot \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
+    fi
+
+    # Cron daemon (required by cron_manager, backup_manager, cloudflare_ddns, etc.)
+    if command_exists systemctl; then
+        systemctl enable --now cron 2>/dev/null || systemctl enable --now crond 2>/dev/null || true
     fi
 
     # Install Node.js 20 LTS if not installed or older than 18

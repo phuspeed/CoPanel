@@ -26,6 +26,26 @@ class SetJobStateRequest(BaseModel):
     active: bool
 
 
+@router.get("/system")
+def system_status(_user: Dict[str, Any] = Depends(require_module("cron_manager"))) -> Dict[str, Any]:
+    return ok(logic.get_system_status())
+
+
+@router.post("/system/ensure-cron")
+def ensure_cron(user: Dict[str, Any] = Depends(require_module("cron_manager"))) -> Dict[str, Any]:
+    result = logic.ensure_crontab()
+    if not result.get("ok"):
+        raise ApiError("SERVICE_ERROR", result.get("message", "Failed to install cron"), http_status=503)
+    record_audit(
+        "cron.ensure_system",
+        module="cron_manager",
+        target="cron",
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
 @router.get("/jobs")
 def list_jobs(user: Dict[str, Any] = Depends(require_module("cron_manager"))) -> Dict[str, Any]:
     return ok(logic.list_jobs())

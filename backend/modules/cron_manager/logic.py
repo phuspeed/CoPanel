@@ -158,6 +158,60 @@ def _sync_managed_crontab() -> None:
     _write_crontab(content)
 
 
+def _ensure_cron_service() -> None:
+    for svc in ("cron", "crond"):
+        probe = subprocess.run(["systemctl", "status", svc], capture_output=True, text=True)
+        if probe.returncode in (0, 3):
+            subprocess.run(["systemctl", "enable", "--now", svc], capture_output=True, text=True)
+            return
+
+
+def get_system_status() -> Dict[str, Any]:
+    has = _has_crontab()
+    return {
+        "crontab_available": has,
+        "install_hint": (
+            ""
+            if has
+            else "Gói cron hệ thống chưa cài. Chạy: apt install cron && systemctl enable --now cron"
+        ),
+    }
+
+
+def ensure_crontab() -> Dict[str, Any]:
+    """Install cron package on Debian/RHEL when crontab binary is missing."""
+    if _has_crontab():
+        _ensure_cron_service()
+        _sync_managed_crontab()
+        return {"ok": True, "message": "crontab available", "installed": False}
+    if IS_WINDOWS:
+        return {"ok": False, "message": "Windows has no crontab."}
+    if shutil.which("apt-get"):
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        cmd = (
+            ["apt-get", "install", "-y", "cron"]
+            if os.geteuid() == 0
+            else ["sudo", "-n", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "cron"]
+        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            return {"ok": False, "message": f"apt install cron failed: {err or proc.returncode}"}
+    elif shutil.which("yum"):
+        cmd = ["yum", "install", "-y", "cronie"] if os.geteuid() == 0 else ["sudo", "-n", "yum", "install", "-y", "cronie"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            return {"ok": False, "message": f"yum install cronie failed: {err or proc.returncode}"}
+    else:
+        return {"ok": False, "message": "Install cron manually (apt install cron or yum install cronie)."}
+    _ensure_cron_service()
+    if not _has_crontab():
+        return {"ok": False, "message": "Package installed but crontab still missing."}
+    _sync_managed_crontab()
+    return {"ok": True, "message": "Installed cron and synced jobs.", "installed": True}
+
+
 def list_jobs() -> List[Dict[str, Any]]:
     _init_db()
     with _db() as conn:
@@ -175,6 +229,11 @@ def list_jobs() -> List[Dict[str, Any]]:
 
 def add_job(schedule: Dict[str, str], command: str) -> Dict[str, Any]:
     _init_db()
+    if not _has_crontab():
+        raise ValueError(
+            "System crontab unavailable. Open Cron Manager and click «Install cron», "
+            "or run: apt install cron && systemctl enable --now cron"
+        )
     if not command or not command.strip():
         raise ValueError("Command is required.")
     cid = str(uuid.uuid4())
