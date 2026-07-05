@@ -15,6 +15,7 @@ interface Settings {
 
 interface NetworkIface {
   name: string;
+  netplan_key?: string | null;
   mac: string | null;
   state: string;
   ipv4: string[];
@@ -136,6 +137,8 @@ export default function PanelSettings() {
       refreshNet: 'Refresh',
       noIfaces: 'No physical interfaces detected.',
       backend: 'Backend',
+      primaryIface: 'Primary interface',
+      netplanRename: 'Netplan file uses «{old}» — will write as «{name}» on apply',
     },
     vi: {
       title: 'Cài đặt',
@@ -198,6 +201,8 @@ export default function PanelSettings() {
       refreshNet: 'Làm mới',
       noIfaces: 'Không phát hiện card mạng vật lý.',
       backend: 'Backend',
+      primaryIface: 'Card mạng chính',
+      netplanRename: 'Netplan đang dùng «{old}» — khi áp dụng sẽ ghi thành «{name}»',
     },
   }[language];
 
@@ -590,9 +595,10 @@ export default function PanelSettings() {
           </div>
 
           {network?.summary && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
               {[
                 { icon: Icons.Wifi, label: t.lanIp, value: network.summary.lan_ip || '—' },
+                { icon: Icons.Network, label: t.primaryIface, value: network.summary.primary_interface || '—' },
                 { icon: Icons.Server, label: t.hostname, value: network.summary.hostname || '—' },
                 { icon: Icons.Router, label: t.gateway, value: network.summary.gateway || '—' },
                 { icon: Icons.Globe, label: t.dns, value: network.summary.dns?.join(', ') || '—' },
@@ -629,6 +635,11 @@ export default function PanelSettings() {
                       </h3>
                       <p className={`text-xs mt-1 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                         {iface.connection || iface.backend}
+                        {iface.netplan_key && iface.netplan_key !== iface.name && (
+                          <span className="block text-amber-500 mt-0.5">
+                            {t.netplanRename.replace('{old}', iface.netplan_key).replace('{name}', iface.name)}
+                          </span>
+                        )}
                       </p>
                     </div>
                     <span

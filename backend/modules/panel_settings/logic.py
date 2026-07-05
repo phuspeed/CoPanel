@@ -279,24 +279,198 @@ def _netplan_files() -> List[Path]:
     return sorted(root.glob("*.yaml")) + sorted(root.glob("*.yml"))
 
 
+def _ethernets_child_indent(content: str) -> str:
+    match = re.search(r"(?m)^(\s*)ethernets:\s*\n(\s+)\S", content)
+    if match:
+        return match.group(2)
+    return "    "
+
+
+def _normalize_mac(mac: str) -> str:
+    return re.sub(r"[^0-9a-f]", "", mac.lower())
+
+
+def _validate_iface_name(name: str) -> str:
+    iface = name.strip()
+    if not iface or not re.match(r"^[A-Za-z0-9_.:-]+$", iface):
+        raise ValueError("Invalid network interface name.")
+    return iface
+
+
+def _resolve_interface_name(name: str) -> str:
+    """Map requested name to live kernel interface (ens33, eth0, enp0s3, …)."""
+    iface = _validate_iface_name(name)
+    addrs = psutil.net_if_addrs()
+    if iface in addrs:
+        return iface
+    by_lower = {k.lower(): k for k in addrs}
+    resolved = by_lower.get(iface.lower())
+    if resolved:
+        return resolved
+    raise ValueError(f"Interface not found: {iface}")
+
+
+def _list_netplan_ethernet_keys(content: str) -> List[str]:
+    child = _ethernets_child_indent(content)
+    pattern = re.compile(rf"(?m)^{re.escape(child)}([A-Za-z0-9_.:-]+):\s*$")
+    return [match.group(1) for match in pattern.finditer(content)]
+
+
+def _netplan_iface_block_text(content: str, key: str) -> Optional[str]:
+    child = _ethernets_child_indent(content)
+    prop = child + "  "
+    iface_line = re.escape(f"{child}{key}:")
+    match = re.compile(rf"(?ms)^{iface_line}\s*\n(?:{re.escape(prop)}.*\n)*").search(content)
+    return match.group(0) if match else None
+
+
+def _netplan_stanza_mac(content: str, key: str) -> Optional[str]:
+    block = _netplan_iface_block_text(content, key) or ""
+    match = re.search(r"macaddress:\s*([0-9a-f:]+)", block, re.I)
+    if match:
+        return match.group(1)
+    match = re.search(
+        r"match:\s*\n(?:[ \t]+.*\n)*?[ \t]+macaddress:\s*([0-9a-f:]+)",
+        block,
+        re.I,
+    )
+    return match.group(1) if match else None
+
+
+def _netplan_keys_for_device(content: str, device: str) -> List[str]:
+    """Netplan ethernet keys that belong to the same NIC as ``device``."""
+    keys = _list_netplan_ethernet_keys(content)
+    if not keys:
+        return []
+
+    if device in keys:
+        return [device]
+
+    device_mac = _iface_mac(device)
+    if device_mac:
+        norm = _normalize_mac(device_mac)
+        by_mac = [
+            key
+            for key in keys
+            if _netplan_stanza_mac(content, key)
+            and _normalize_mac(_netplan_stanza_mac(content, key) or "") == norm
+        ]
+        if by_mac:
+            return by_mac
+
+    live_keys = [key for key in keys if key in psutil.net_if_addrs() and not _is_virtual_iface(key)]
+    stale_keys = [key for key in keys if key not in live_keys]
+
+    if len(keys) == 1 and keys[0] != device:
+        return [keys[0]]
+
+    if stale_keys and device not in keys:
+        if len(stale_keys) == 1:
+            return stale_keys
+
+    return []
+
+
+def _remove_netplan_iface_block(content: str, iface: str) -> str:
+    child = _ethernets_child_indent(content)
+    prop = child + "  "
+    iface_line = re.escape(f"{child}{iface}:")
+    block_pat = re.compile(rf"(?ms)^{iface_line}\s*\n(?:{re.escape(prop)}.*\n)*")
+    return block_pat.sub("", content)
+
+
 def _netplan_method_for_iface(iface: str) -> Optional[str]:
     for path in _netplan_files():
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        block = re.search(
-            rf"(?ms)^\s*{re.escape(iface)}:\s*\n(.*?)(?=^\s*\S|\Z)",
-            text,
-        )
-        if not block:
-            continue
-        chunk = block.group(1)
-        if re.search(r"dhcp4:\s*true", chunk, re.I):
-            return "dhcp"
-        if re.search(r"dhcp4:\s*false", chunk, re.I) or re.search(r"addresses:", chunk):
-            return "static"
+        keys = _netplan_keys_for_device(text, iface)
+        if not keys and iface in _list_netplan_ethernet_keys(text):
+            keys = [iface]
+        for key in keys:
+            block = _netplan_iface_block_text(text, key)
+            if not block:
+                continue
+            if re.search(r"dhcp4:\s*(true|yes)", block, re.I):
+                return "dhcp"
+            if re.search(r"dhcp4:\s*(false|no)", block, re.I) or re.search(r"addresses:", block):
+                return "static"
     return None
+
+
+def _netplan_key_for_device(device: str) -> Optional[str]:
+    for path in _netplan_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        keys = _netplan_keys_for_device(text, device)
+        if keys:
+            return keys[0]
+        if device in _list_netplan_ethernet_keys(text):
+            return device
+    return None
+
+
+def _pick_netplan_file(device: str, files: List[Path]) -> Path:
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _netplan_keys_for_device(text, device) or device in _list_netplan_ethernet_keys(text):
+            return path
+    for path in files:
+        if path.name in ("50-cloud-init.yaml", "50-cloud-init.yml"):
+            return path
+    return files[0]
+
+
+def _ensure_netplan_scaffold(content: str) -> str:
+    if not content.strip():
+        return "network:\n  version: 2\n  ethernets:\n"
+    if "network:" not in content:
+        return f"network:\n  version: 2\n  ethernets:\n{content.lstrip()}"
+    if not re.search(r"(?m)^\s*version:", content):
+        content = re.sub(r"(?m)^(network:\s*\n)", r"\1  version: 2\n", content, count=1)
+    if not re.search(r"(?m)^\s*ethernets:", content):
+        if re.search(r"(?m)^\s*version:", content):
+            content = re.sub(r"(?m)^(\s*version:.*\n)", r"\1  ethernets:\n", content, count=1)
+        else:
+            content = re.sub(
+                r"(?m)^(network:\s*\n)",
+                r"\1  version: 2\n  ethernets:\n",
+                content,
+                count=1,
+            )
+    return content
+
+
+def _merge_netplan_iface(content: str, iface: str, iface_block: str) -> str:
+    """Patch one ethernet stanza; preserve comments, renderer, and other interfaces."""
+    content = _ensure_netplan_scaffold(content)
+    child = _ethernets_child_indent(content)
+    prop = child + "  "
+    iface_line = re.escape(f"{child}{iface}:")
+    block_pat = re.compile(rf"(?ms)^{iface_line}\s*\n(?:{re.escape(prop)}.*\n)*")
+    match = block_pat.search(content)
+    if match:
+        return content[: match.start()] + iface_block + content[match.end() :]
+    eth = re.search(r"(?m)^(\s*ethernets:\s*\n)", content)
+    if eth:
+        return content[: eth.end()] + iface_block + content[eth.end() :]
+    return content.rstrip() + "\n" + iface_block
+
+
+def _netplan_full_template(iface_block: str) -> str:
+    return (
+        "network:\n"
+        "  version: 2\n"
+        "  renderer: networkd\n"
+        "  ethernets:\n"
+        f"{iface_block}"
+    )
 
 
 def detect_lan_ip() -> Optional[str]:
@@ -375,9 +549,11 @@ def list_network_interfaces() -> Dict[str, Any]:
             method = _nmcli_ipv4_method(connection)
         if not method:
             method = _netplan_method_for_iface(name)
+        netplan_key = _netplan_key_for_device(name)
         interfaces.append(
             {
                 "name": name,
+                "netplan_key": netplan_key,
                 "mac": _iface_mac(name),
                 "state": "up" if (st and st.isup) else "down",
                 "ipv4": [r["address"] for r in ipv4_rows],
@@ -465,37 +641,36 @@ def _netplan_iface_block(
     prefix: Optional[int],
     gateway: Optional[str],
     dns: Optional[List[str]],
+    indent: str = "    ",
 ) -> str:
+    """Build one ethernet stanza (4-space indent under ``ethernets:``)."""
+    prop = indent + "  "
+    nested = prop + "  "
     if method == "dhcp":
-        return (
-            f"  {iface}:\n"
-            f"    dhcp4: true\n"
-            f"    dhcp6: false\n"
-        )
+        return f"{indent}{iface}:\n{prop}dhcp4: true\n"
     if not address or prefix is None:
         raise ValueError("Static IP requires address and prefix (CIDR).")
     addr = _validate_ipv4(address, "IPv4")
     gw = _validate_ipv4(gateway, "gateway") if gateway else None
     dns_rows = [_validate_ipv4(x, "DNS") for x in (dns or [])]
     lines = [
-        f"  {iface}:",
-        "    dhcp4: false",
-        "    dhcp6: false",
-        f"    addresses:",
-        f"      - {addr}/{prefix}",
+        f"{indent}{iface}:",
+        f"{prop}dhcp4: no",
+        f"{prop}addresses:",
+        f"{nested}- {addr}/{prefix}",
     ]
     if gw:
         lines.extend(
             [
-                "    routes:",
-                "      - to: default",
-                f"        via: {gw}",
+                f"{prop}routes:",
+                f"{nested}- to: default",
+                f"{nested}  via: {gw}",
             ]
         )
     if dns_rows:
-        lines.append("    nameservers:")
-        lines.append("      addresses:")
-        lines.extend(f"        - {d}" for d in dns_rows)
+        lines.append(f"{prop}nameservers:")
+        lines.append(f"{nested}addresses:")
+        lines.extend(f"{nested}  - {d}" for d in dns_rows)
     return "\n".join(lines) + "\n"
 
 
@@ -512,15 +687,17 @@ def _apply_netplan_network(
     if not files:
         raise RuntimeError("No netplan files found under /etc/netplan.")
 
-    target = files[0]
-    for path in files:
-        try:
-            if device in path.read_text(encoding="utf-8"):
-                target = path
-                break
-        except OSError:
-            continue
+    target = _pick_netplan_file(device, files)
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except OSError:
+        existing = ""
 
+    stale_keys = [key for key in _netplan_keys_for_device(existing, device) if key != device]
+    for stale_key in stale_keys:
+        existing = _remove_netplan_iface_block(existing, stale_key)
+
+    child_indent = _ethernets_child_indent(existing) if existing.strip() else "    "
     block = _netplan_iface_block(
         device,
         method=method,
@@ -528,14 +705,12 @@ def _apply_netplan_network(
         prefix=prefix,
         gateway=gateway,
         dns=dns,
+        indent=child_indent,
     )
-    content = (
-        "network:\n"
-        "  version: 2\n"
-        "  renderer: networkd\n"
-        "  ethernets:\n"
-        f"{block}"
-    )
+    if not existing.strip() or "network:" not in existing:
+        content = _netplan_full_template(block)
+    else:
+        content = _merge_netplan_iface(existing, device, block)
     _write_file_privileged(target, content)
     gen = _run_privileged(["netplan", "generate"], timeout=60)
     if gen.returncode != 0:
@@ -550,6 +725,8 @@ def _apply_netplan_network(
         "message": f"Network settings applied on {device} via netplan ({target.name}).",
         "backend": "netplan",
         "file": str(target),
+        "netplan_key": device,
+        "replaced_keys": stale_keys,
     }
 
 
@@ -567,11 +744,9 @@ def apply_interface_network(
         raise ValueError("Network configuration is Linux-only.")
     if not confirm:
         raise ValueError("Set confirm=true — wrong IP/gateway may disconnect SSH.")
-    iface = interface_name.strip()
-    if not iface or _is_virtual_iface(iface):
+    iface = _resolve_interface_name(interface_name)
+    if _is_virtual_iface(iface):
         raise ValueError("Invalid network interface.")
-    if iface not in psutil.net_if_addrs():
-        raise ValueError(f"Interface not found: {iface}")
     if method not in ("dhcp", "static"):
         raise ValueError("method must be dhcp or static.")
 
