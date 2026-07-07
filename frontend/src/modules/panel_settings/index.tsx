@@ -3,13 +3,21 @@ import { useOutletContext } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 
-type Tab = 'ssh' | 'root' | 'gate' | 'totp' | 'network';
+type Tab = 'ssh' | 'root' | 'gate' | 'totp' | 'network' | 'branding';
+
+interface BrandingSettings {
+  site_title: string;
+  site_subtitle: string;
+  favicon_data_url: string | null;
+  logo_data_url: string | null;
+}
 
 interface Settings {
   ssh_port: number;
   panel_port: number;
   nginx_gate: { enabled: boolean; username: string; configured: boolean; needs_repair?: boolean };
   totp: { enabled: boolean; username: string };
+  branding: BrandingSettings;
   is_linux: boolean;
 }
 
@@ -64,6 +72,12 @@ export default function PanelSettings() {
   const [totpQr, setTotpQr] = useState<string | null>(null);
   const [totpSecret, setTotpSecret] = useState('');
   const [disablePass, setDisablePass] = useState('');
+  const [siteTitle, setSiteTitle] = useState('CoPanel');
+  const [siteSubtitle, setSiteSubtitle] = useState('Lightweight VPS Management');
+  const [faviconDataUrl, setFaviconDataUrl] = useState<string | null>(null);
+  const [faviconName, setFaviconName] = useState('');
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  const [logoName, setLogoName] = useState('');
 
   const [network, setNetwork] = useState<NetworkPayload | null>(null);
   const [netLoading, setNetLoading] = useState(false);
@@ -83,6 +97,7 @@ export default function PanelSettings() {
       root: 'Root Password',
       gate: 'Panel access gate',
       totp: 'Two-factor (2FA)',
+      branding: 'Branding',
       sshPort: 'SSH port',
       sshHint: 'Changing SSH port may lock you out. Keep current session open and test before closing.',
       sshConfirm: 'I understand — apply port change',
@@ -139,6 +154,22 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Primary interface',
       netplanRename: 'Netplan file uses «{old}» — will write as «{name}» on apply',
+      brandingDesc: 'Customize browser tab title and favicon used by CoPanel.',
+      siteTitle: 'Site title',
+      siteTitleHint: 'Shown in browser tab, login page, and sidebar header.',
+      siteSubtitle: 'Site subtitle',
+      siteSubtitleHint: 'Shown below title in login page and sidebar header.',
+      favicon: 'Favicon',
+      faviconHint: 'Recommended: square PNG, SVG, or ICO. Max 256 KB.',
+      faviconCurrent: 'Current favicon preview',
+      faviconUpload: 'Choose favicon',
+      faviconRemove: 'Remove favicon',
+      logo: 'Logo',
+      logoHint: 'Shown in login page and sidebar. Recommended: square PNG or SVG. Max 1 MB.',
+      logoCurrent: 'Current logo preview',
+      logoUpload: 'Choose logo',
+      logoRemove: 'Remove logo',
+      saveBranding: 'Save branding',
     },
     vi: {
       title: 'Cài đặt',
@@ -147,6 +178,7 @@ export default function PanelSettings() {
       root: 'Mật khẩu Root',
       gate: 'Bảo vệ truy cập panel',
       totp: 'Xác thực 2 lớp (2FA)',
+      branding: 'Nhận diện',
       sshPort: 'Cổng SSH',
       sshHint: 'Đổi cổng SSH có thể khóa SSH. Giữ phiên hiện tại; thử cổng mới trước khi đóng.',
       sshConfirm: 'Tôi hiểu — áp dụng đổi cổng',
@@ -203,6 +235,22 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Card mạng chính',
       netplanRename: 'Netplan đang dùng «{old}» — khi áp dụng sẽ ghi thành «{name}»',
+      brandingDesc: 'Tùy chỉnh tiêu đề tab trình duyệt và favicon của CoPanel.',
+      siteTitle: 'Tiêu đề site',
+      siteTitleHint: 'Hiện ở tab trình duyệt, trang đăng nhập và tiêu đề sidebar.',
+      siteSubtitle: 'Dòng phụ',
+      siteSubtitleHint: 'Hiện dưới tiêu đề ở trang đăng nhập và đầu sidebar.',
+      favicon: 'Favicon',
+      faviconHint: 'Khuyên dùng: PNG vuông, SVG hoặc ICO. Tối đa 256 KB.',
+      faviconCurrent: 'Xem trước favicon hiện tại',
+      faviconUpload: 'Chọn favicon',
+      faviconRemove: 'Xóa favicon',
+      logo: 'Logo',
+      logoHint: 'Hiện ở trang đăng nhập và sidebar. Khuyên dùng: PNG vuông hoặc SVG. Tối đa 1 MB.',
+      logoCurrent: 'Xem trước logo hiện tại',
+      logoUpload: 'Chọn logo',
+      logoRemove: 'Xóa logo',
+      saveBranding: 'Lưu nhận diện',
     },
   }[language];
 
@@ -212,6 +260,12 @@ export default function PanelSettings() {
     setSshPort(data.ssh_port);
     setGateEnabled(data.nginx_gate.enabled);
     setGateUser(data.nginx_gate.username || 'copanel');
+    setSiteTitle(data.branding?.site_title || 'CoPanel');
+    setSiteSubtitle(data.branding?.site_subtitle || 'Lightweight VPS Management');
+    setFaviconDataUrl(data.branding?.favicon_data_url || null);
+    setLogoDataUrl(data.branding?.logo_data_url || null);
+    setFaviconName('');
+    setLogoName('');
   }, []);
 
   useEffect(() => {
@@ -270,6 +324,40 @@ export default function PanelSettings() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const onPickFavicon = async (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('Favicon must be an image file.');
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read favicon file.'));
+      reader.readAsDataURL(file);
+    });
+    setFaviconDataUrl(dataUrl);
+    setFaviconName(file.name);
+    setError(null);
+  };
+
+  const onPickLogo = async (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('Logo must be an image file.');
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read logo file.'));
+      reader.readAsDataURL(file);
+    });
+    setLogoDataUrl(dataUrl);
+    setLogoName(file.name);
+    setError(null);
   };
 
   const card = `${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border rounded-xl p-5`;
@@ -408,6 +496,34 @@ export default function PanelSettings() {
     }
   };
 
+  const saveBranding = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await api<BrandingSettings>('/api/panel_settings/branding', {
+        method: 'PUT',
+        body: {
+          site_title: siteTitle,
+          site_subtitle: siteSubtitle,
+          favicon_data_url: faviconDataUrl,
+          logo_data_url: logoDataUrl,
+        },
+      });
+      setSiteTitle(data.site_title || 'CoPanel');
+      setSiteSubtitle(data.site_subtitle || 'Lightweight VPS Management');
+      setFaviconDataUrl(data.favicon_data_url || null);
+      setLogoDataUrl(data.logo_data_url || null);
+      setFaviconName('');
+      setLogoName('');
+      setMsg(t.saved);
+      await load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!settings) {
     return (
       <div className={`p-6 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
@@ -438,7 +554,7 @@ export default function PanelSettings() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {(['ssh', 'root', 'gate', 'totp', 'network'] as Tab[]).map((id) => (
+        {(['ssh', 'root', 'gate', 'totp', 'network', 'branding'] as Tab[]).map((id) => (
           <button key={id} type="button" className={tabBtn(id)} onClick={() => setTab(id)}>
             {t[id]}
           </button>
@@ -763,6 +879,146 @@ export default function PanelSettings() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {tab === 'branding' && (
+        <div className={card}>
+          <p className={`text-sm mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.brandingDesc}</p>
+
+          <label className={label}>{t.siteTitle}</label>
+          <input
+            className={input}
+            value={siteTitle}
+            maxLength={80}
+            onChange={(e) => setSiteTitle(e.target.value)}
+            placeholder="CoPanel"
+          />
+          <p className={`mt-1 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.siteTitleHint}</p>
+
+          <label className={`${label} mt-4`}>{t.siteSubtitle}</label>
+          <input
+            className={input}
+            value={siteSubtitle}
+            maxLength={120}
+            onChange={(e) => setSiteSubtitle(e.target.value)}
+            placeholder="Lightweight VPS Management"
+          />
+          <p className={`mt-1 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.siteSubtitleHint}</p>
+
+          <label className={`${label} mt-4`}>{t.favicon}</label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer ${
+                isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
+              }`}
+            >
+              <Icons.ImagePlus className="w-4 h-4" />
+              {t.faviconUpload}
+              <input
+                type="file"
+                accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={(e) => onPickFavicon(e.target.files?.[0] || null).catch((err) => setError(err.message))}
+              />
+            </label>
+            <button
+              type="button"
+              className={`px-3 py-2 rounded-lg border text-sm ${
+                isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
+              }`}
+              onClick={() => {
+                setFaviconDataUrl(null);
+                setFaviconName('');
+              }}
+            >
+              {t.faviconRemove}
+            </button>
+            {faviconName && (
+              <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{faviconName}</span>
+            )}
+          </div>
+          <p className={`mt-1 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.faviconHint}</p>
+
+          <div className={`mt-4 rounded-lg border p-3 ${isDark ? 'border-slate-800 bg-slate-950/60' : 'border-slate-200 bg-slate-50'}`}>
+            <p className={`text-xs mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.faviconCurrent}</p>
+            <div className="flex items-center gap-3">
+              {faviconDataUrl ? (
+                <img src={faviconDataUrl} alt="Favicon preview" className="w-8 h-8 rounded" />
+              ) : (
+                <div className={`w-8 h-8 rounded flex items-center justify-center ${isDark ? 'bg-slate-800' : 'bg-white border border-slate-200'}`}>
+                  <Icons.Server className="w-4 h-4 text-blue-500" />
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-medium">{siteTitle || 'CoPanel'}</p>
+                <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                  {siteSubtitle || 'browser tab preview'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <label className={`${label} mt-4`}>{t.logo}</label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer ${
+                isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
+              }`}
+            >
+              <Icons.Image className="w-4 h-4" />
+              {t.logoUpload}
+              <input
+                type="file"
+                accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={(e) => onPickLogo(e.target.files?.[0] || null).catch((err) => setError(err.message))}
+              />
+            </label>
+            <button
+              type="button"
+              className={`px-3 py-2 rounded-lg border text-sm ${
+                isDark ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-300 hover:bg-slate-100'
+              }`}
+              onClick={() => {
+                setLogoDataUrl(null);
+                setLogoName('');
+              }}
+            >
+              {t.logoRemove}
+            </button>
+            {logoName && (
+              <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{logoName}</span>
+            )}
+          </div>
+          <p className={`mt-1 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.logoHint}</p>
+
+          <div className={`mt-4 rounded-lg border p-3 ${isDark ? 'border-slate-800 bg-slate-950/60' : 'border-slate-200 bg-slate-50'}`}>
+            <p className={`text-xs mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.logoCurrent}</p>
+            <div className="flex items-center gap-3">
+              {logoDataUrl ? (
+                <img src={logoDataUrl} alt="Logo preview" className="w-12 h-12 rounded-xl object-cover" />
+              ) : (
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isDark ? 'bg-slate-800' : 'bg-white border border-slate-200'}`}>
+                  <Icons.Server className="w-6 h-6 text-blue-500" />
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-medium">{siteTitle || 'CoPanel'}</p>
+                <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                  {siteSubtitle || 'Lightweight VPS Management'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <button
+            className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50"
+            disabled={busy || !siteTitle.trim()}
+            onClick={saveBranding}
+          >
+            {t.saveBranding}
+          </button>
         </div>
       )}
     </div>

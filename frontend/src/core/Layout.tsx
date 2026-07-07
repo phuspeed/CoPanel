@@ -46,7 +46,15 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   HardDrive: Icons.HardDrive,
 };
 
-export default function Layout({ user, onLogout }: { user?: any; onLogout?: () => void }) {
+export default function Layout({
+  user,
+  onLogout,
+  branding,
+}: {
+  user?: any;
+  onLogout?: () => void;
+  branding?: { site_title?: string; site_subtitle?: string; logo_data_url?: string | null };
+}) {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const location = useLocation();
   const modules = moduleRegistry.getAll();
@@ -92,6 +100,7 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   const [serverHostname, setServerHostname] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
+  const siteTitle = branding?.site_title?.trim() || 'CoPanel';
 
   const t = {
     en: {
@@ -195,6 +204,8 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
   };
 
   const tr = t[language];
+  const siteSubtitle = branding?.site_subtitle?.trim() || tr.vpsManagement;
+  const logoDataUrl = branding?.logo_data_url || null;
 
   const pollHealthUntilVersion = useCallback(
     (want: string) => {
@@ -507,11 +518,15 @@ export default function Layout({ user, onLogout }: { user?: any; onLogout?: () =
           {/* Header */}
           <div className={`p-6 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
             <h1 className="text-xl font-bold flex items-center gap-2">
-              <Icons.Server className={`w-6 h-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-              CoPanel
+              {logoDataUrl ? (
+                <img src={logoDataUrl} alt={`${siteTitle} logo`} className="w-6 h-6 rounded object-cover shrink-0" />
+              ) : (
+                <Icons.Server className={`w-6 h-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              )}
+              {siteTitle}
             </h1>
             <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              {tr.vpsManagement}
+              {siteSubtitle}
             </p>
           </div>
 

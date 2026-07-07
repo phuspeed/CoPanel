@@ -22,6 +22,13 @@ class NginxGateRequest(BaseModel):
     password: Optional[str] = None
 
 
+class BrandingSettingsRequest(BaseModel):
+    site_title: str = Field(..., min_length=1, max_length=80)
+    site_subtitle: Optional[str] = Field(None, max_length=120)
+    favicon_data_url: Optional[str] = None
+    logo_data_url: Optional[str] = None
+
+
 class TotpVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=8)
 

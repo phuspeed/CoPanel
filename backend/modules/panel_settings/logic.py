@@ -100,6 +100,12 @@ def _write_file_privileged(path: Path, content: str) -> None:
 def _default_store() -> Dict[str, Any]:
     return {
         "nginx_gate": {"enabled": False, "username": "copanel"},
+        "branding": {
+            "site_title": "CoPanel",
+            "site_subtitle": "Lightweight VPS Management",
+            "favicon_data_url": None,
+            "logo_data_url": None,
+        },
         "updated_at": time.time(),
     }
 
@@ -828,8 +834,104 @@ def get_settings() -> Dict[str, Any]:
             "enabled": bool(admin.get("totp_enabled")) if admin else False,
             "username": admin.get("username") if admin else "admin",
         },
+        "branding": get_public_branding(),
         "is_linux": not IS_WINDOWS,
     }
+
+
+def get_public_branding() -> Dict[str, Any]:
+    store = _load_store()
+    branding = store.get("branding") or {}
+    site_title = str(branding.get("site_title") or "CoPanel").strip() or "CoPanel"
+    site_subtitle = str(branding.get("site_subtitle") or "Lightweight VPS Management").strip()
+    favicon_data_url = branding.get("favicon_data_url")
+    if favicon_data_url is not None:
+        favicon_data_url = str(favicon_data_url).strip() or None
+    logo_data_url = branding.get("logo_data_url")
+    if logo_data_url is not None:
+        logo_data_url = str(logo_data_url).strip() or None
+    return {
+        "site_title": site_title,
+        "site_subtitle": site_subtitle,
+        "favicon_data_url": favicon_data_url,
+        "logo_data_url": logo_data_url,
+    }
+
+
+def _validate_site_title(site_title: str) -> str:
+    value = str(site_title or "").strip()
+    if not value:
+        raise ValueError("Site title is required.")
+    if len(value) > 80:
+        raise ValueError("Site title too long (max 80 characters).")
+    return value
+
+
+def _validate_site_subtitle(site_subtitle: Optional[str]) -> str:
+    value = str(site_subtitle or "").strip()
+    if len(value) > 120:
+        raise ValueError("Site subtitle too long (max 120 characters).")
+    return value
+
+
+def _validate_favicon_data_url(favicon_data_url: Optional[str]) -> Optional[str]:
+    if favicon_data_url is None:
+        return None
+    value = str(favicon_data_url).strip()
+    if not value:
+        return None
+    match = re.match(
+        r"^data:(image/(?:png|svg\+xml|x-icon|vnd\.microsoft\.icon|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)$",
+        value,
+        re.I,
+    )
+    if not match:
+        raise ValueError("Favicon must be a PNG, SVG, ICO, JPEG, GIF, or WEBP image.")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid favicon image data.") from exc
+    if len(raw) > 256 * 1024:
+        raise ValueError("Favicon too large (max 256 KB).")
+    return f"data:{match.group(1).lower()};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _validate_logo_data_url(logo_data_url: Optional[str]) -> Optional[str]:
+    if logo_data_url is None:
+        return None
+    value = str(logo_data_url).strip()
+    if not value:
+        return None
+    match = re.match(
+        r"^data:(image/(?:png|svg\+xml|x-icon|vnd\.microsoft\.icon|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)$",
+        value,
+        re.I,
+    )
+    if not match:
+        raise ValueError("Logo must be a PNG, SVG, ICO, JPEG, GIF, or WEBP image.")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid logo image data.") from exc
+    if len(raw) > 1024 * 1024:
+        raise ValueError("Logo too large (max 1 MB).")
+    return f"data:{match.group(1).lower()};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def update_branding(
+    site_title: str,
+    site_subtitle: Optional[str],
+    favicon_data_url: Optional[str],
+    logo_data_url: Optional[str],
+) -> Dict[str, Any]:
+    store = _load_store()
+    branding = store.setdefault("branding", {})
+    branding["site_title"] = _validate_site_title(site_title)
+    branding["site_subtitle"] = _validate_site_subtitle(site_subtitle)
+    branding["favicon_data_url"] = _validate_favicon_data_url(favicon_data_url)
+    branding["logo_data_url"] = _validate_logo_data_url(logo_data_url)
+    _save_store(store)
+    return get_public_branding()
 
 
 def _admin_user() -> Optional[Dict[str, Any]]:

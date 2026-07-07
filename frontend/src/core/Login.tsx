@@ -6,15 +6,23 @@ import * as Icons from 'lucide-react';
 
 interface LoginProps {
   onLoginSuccess: (token: string, user: any) => void;
+  branding?: {
+    site_title?: string;
+    site_subtitle?: string;
+    logo_data_url?: string | null;
+  };
 }
 
-export default function Login({ onLoginSuccess }: LoginProps) {
+export default function Login({ onLoginSuccess, branding }: LoginProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [need2fa, setNeed2fa] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const siteTitle = branding?.site_title?.trim() || 'CoPanel';
+  const siteSubtitle = branding?.site_subtitle?.trim() || 'Lightweight VPS Management';
+  const logoDataUrl = branding?.logo_data_url || null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,14 +82,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
       <div className="w-full max-w-md bg-slate-900/40 border border-slate-800/80 p-8 md:p-10 rounded-3xl backdrop-blur-xl shadow-2xl space-y-8 relative z-10 transition-all">
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="w-14 h-14 bg-blue-600/10 border border-blue-500/20 rounded-2xl flex items-center justify-center text-blue-400 shadow-lg shadow-blue-500/5">
-            <Icons.Server className="w-7 h-7 animate-bounce" />
+          <div className="w-14 h-14 bg-blue-600/10 border border-blue-500/20 rounded-2xl flex items-center justify-center text-blue-400 shadow-lg shadow-blue-500/5 overflow-hidden">
+            {logoDataUrl ? (
+              <img src={logoDataUrl} alt={`${siteTitle} logo`} className="w-full h-full object-cover" />
+            ) : (
+              <Icons.Server className="w-7 h-7 animate-bounce" />
+            )}
           </div>
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent">
-              CoPanel Access
+              {siteTitle} Access
             </h1>
-            <p className="text-slate-400 text-xs mt-1">Lightweight VPS Management</p>
+            <p className="text-slate-400 text-xs mt-1">{siteSubtitle}</p>
           </div>
         </div>
 

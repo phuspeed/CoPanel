@@ -8,6 +8,35 @@ import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
 
+interface BrandingSettings {
+  site_title: string;
+  site_subtitle: string;
+  favicon_data_url: string | null;
+  logo_data_url: string | null;
+}
+
+const DEFAULT_BRANDING: BrandingSettings = {
+  site_title: 'CoPanel',
+  site_subtitle: 'Lightweight VPS Management',
+  favicon_data_url: null,
+  logo_data_url: null,
+};
+const DEFAULT_FAVICON =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d4ed8'/%3E%3Cpath d='M41 20a16 16 0 1 0 0 24' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
+
+function applyBranding(branding: BrandingSettings) {
+  const siteTitle = branding.site_title?.trim() || DEFAULT_BRANDING.site_title;
+  document.title = siteTitle;
+  const faviconHref = branding.favicon_data_url || DEFAULT_FAVICON;
+  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = faviconHref;
+}
+
 /** Fallback shown while a lazy module chunk is loading */
 function ModuleLoader() {
   return (
@@ -35,6 +64,26 @@ export function createRoutes() {
       return null;
     }
   });
+  const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    fetch('/api/panel_settings/branding/public')
+      .then((r) => r.json())
+      .then((body) => {
+        const next = body?.status === 'success' && body.data ? body.data : body;
+        setBranding({
+          site_title: next?.site_title || DEFAULT_BRANDING.site_title,
+          site_subtitle: next?.site_subtitle || DEFAULT_BRANDING.site_subtitle,
+          favicon_data_url: next?.favicon_data_url || null,
+          logo_data_url: next?.logo_data_url || null,
+        });
+      })
+      .catch(() => setBranding(DEFAULT_BRANDING));
+  }, []);
+
+  useEffect(() => {
+    applyBranding(branding);
+  }, [branding]);
 
   const handleLoginSuccess = (newToken: string, loggedUser: any) => {
     localStorage.setItem('copanel_token', newToken);
@@ -67,7 +116,7 @@ export function createRoutes() {
 
   // If not logged in, render the login view
   if (!token || !user) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return <Login onLoginSuccess={handleLoginSuccess} branding={branding} />;
   }
 
   const modules = moduleRegistry.getAll();
@@ -98,7 +147,7 @@ export function createRoutes() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route element={<Layout user={user} onLogout={handleLogout} />}>
+        <Route element={<Layout user={user} onLogout={handleLogout} branding={branding} />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
 
