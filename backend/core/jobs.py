@@ -58,6 +58,10 @@ logger = logging.getLogger(__name__)
 JobHandler = Callable[..., Awaitable[Any]]
 
 
+class JobCancelled(Exception):
+    """Raised by a handler after cooperative cancellation (``request_cancel()``)."""
+
+
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCESS = "success"
@@ -299,6 +303,10 @@ class JobManager:
             job.result = result if isinstance(result, dict) else {"value": result}
             job.status = JOB_STATUS_SUCCESS
             job.progress = 100
+        except JobCancelled:
+            job.status = JOB_STATUS_CANCELLED
+            if not job.message:
+                job.message = "Cancelled"
         except asyncio.CancelledError:
             job.status = JOB_STATUS_CANCELLED
             raise
