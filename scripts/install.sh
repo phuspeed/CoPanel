@@ -96,12 +96,15 @@ copanel_git_version_describe() {
 }
 
 copanel_fetch_github_version() {
-    local url="${COPANEL_VERSION_URL:-https://raw.githubusercontent.com/phuspeed/CoPanel/main/VERSION}"
+    local api_url="https://api.github.com/repos/phuspeed/CoPanel/contents/VERSION?ref=main"
+    local raw_url="${COPANEL_VERSION_URL:-https://raw.githubusercontent.com/phuspeed/CoPanel/main/VERSION}"
     local raw=""
     if command -v curl &>/dev/null; then
-        raw="$(curl -fsSL --max-time 12 "$url" 2>/dev/null || true)"
+        raw="$(curl -fsSL --max-time 12 -H "Accept: application/vnd.github.v3.raw" "$api_url" 2>/dev/null || true)"
+        [[ -n "$raw" ]] || raw="$(curl -fsSL --max-time 12 "$raw_url" 2>/dev/null || true)"
     elif command -v wget &>/dev/null; then
-        raw="$(wget -qO- --timeout=12 "$url" 2>/dev/null || true)"
+        raw="$(wget -qO- --timeout=12 --header="Accept: application/vnd.github.v3.raw" "$api_url" 2>/dev/null || true)"
+        [[ -n "$raw" ]] || raw="$(wget -qO- --timeout=12 "$raw_url" 2>/dev/null || true)"
     fi
     [[ -n "$raw" ]] || return 1
     local line

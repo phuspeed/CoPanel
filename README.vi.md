@@ -72,11 +72,30 @@ Một bảng điều khiển quản lý VPS Linux gọn nhẹ, hiệu suất cao
 - **Python** 3.10+
 - **Node.js** 18+
 
-### Cài Đặt (Chỉ Với Một Lệnh)
+### Cài đặt
+
+**Nâng cấp** (server đã có `/opt/copanel`):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
+cd /opt/copanel && sudo git pull origin main && sudo bash scripts/install.sh
 ```
+
+**Cài mới** (khuyến nghị):
+
+```bash
+sudo apt install -y git
+sudo git clone --depth 1 https://github.com/phuspeed/CoPanel.git /opt/copanel
+sudo bash /opt/copanel/scripts/install.sh
+```
+
+**One-liner** (qua GitHub API):
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
+```
+
+> Lỗi `429` hoặc `syntax error` với lệnh `raw.githubusercontent.com` = GitHub chặn raw CDN. Dùng `git clone` hoặc one-liner API ở trên.
 
 Trình cài đặt sẽ:
 - ✅ Cài đặt các thư viện hệ thống cần thiết

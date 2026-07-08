@@ -393,7 +393,7 @@
 
         <!-- Install command -->
         <div class="install-box">
-            <code id="install-cmd">curl -sSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash</code>
+            <code id="install-cmd">curl -fsSL -H "Accept: application/vnd.github.v3.raw" "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash</code>
             <button class="copy-btn" id="copy-btn" onclick="copyInstall()" title="Sao chép lệnh">
                 <i class="fa-regular fa-copy"></i> Copy
             </button>
