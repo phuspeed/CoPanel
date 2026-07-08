@@ -457,7 +457,7 @@ def _build_failure_hint(return_code: int, log_lines: Optional[List[str]]) -> str
         return (
             "💡 Rollup native crash (exit 139). This is not low RAM. "
             "Retry with: cd /opt/copanel/frontend && VITE_BUILD_LOW_MEMORY=1 npm run build:appstore "
-            "or add to package.json overrides: \"rollup\": \"npm:@rollup/wasm-node@^4.60.2\" then npm install."
+            "or add to package.json overrides: \"rollup\": \"npm:@rollup/wasm-node@4.60.2\" then npm install."
         )
     if _is_oom_build_failure(return_code, log_lines):
         return (

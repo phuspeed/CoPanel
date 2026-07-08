@@ -525,11 +525,65 @@ setup_backend() {
 # Step 4: Frontend Setup
 ###############################################################################
 
+copanel_npm_major_version() {
+    if ! command -v npm &>/dev/null; then
+        echo 0
+        return
+    fi
+    npm -v 2>/dev/null | cut -d. -f1 | tr -cd '0-9'
+}
+
+copanel_ensure_modern_npm() {
+    if ! command -v npm &>/dev/null; then
+        return 0
+    fi
+    local major
+    major="$(copanel_npm_major_version)"
+    if [[ -z "$major" || "$major" -lt 9 ]]; then
+        log_info "Upgrading npm (current: $(npm -v 2>/dev/null || echo unknown))..."
+        npm install -g npm@10 2>/dev/null || npm install -g npm@9 2>/dev/null || true
+    fi
+}
+
+copanel_cpu_has_avx() {
+    [[ -r /proc/cpuinfo ]] || return 0
+    grep -q avx /proc/cpuinfo 2>/dev/null
+}
+
+copanel_maybe_apply_rollup_wasm_override() {
+    local pkg="$1"
+    [[ -f "$pkg" ]] || return 0
+    if copanel_cpu_has_avx; then
+        return 0
+    fi
+    local major
+    major="$(copanel_npm_major_version)"
+    if [[ -z "$major" || "$major" -lt 9 ]]; then
+        log_warning "CPU without AVX and npm < 9 — Rollup WASM override skipped (upgrade npm first)."
+        return 0
+    fi
+    if grep -q 'wasm-node' "$pkg" 2>/dev/null; then
+        return 0
+    fi
+    log_info "CPU without AVX detected — using Rollup WASM for frontend build..."
+    node -e '
+const fs = require("fs");
+const pkg = process.argv[1];
+const data = JSON.parse(fs.readFileSync(pkg, "utf8"));
+data.overrides = data.overrides || {};
+data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
+fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+' "$pkg"
+}
+
 setup_frontend() {
     log_info "Setting up React frontend..."
     
     if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
         cd "$CoPanel_HOME/frontend"
+
+        copanel_ensure_modern_npm
+        copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
         
         # Install dependencies
         log_info "Installing npm packages..."
@@ -538,7 +592,11 @@ setup_frontend() {
         # Build frontend
         log_info "Building frontend..."
         rm -rf dist
-        npm run build
+        if ! copanel_cpu_has_avx; then
+            VITE_BUILD_LOW_MEMORY=1 npm run build || npm run build
+        else
+            npm run build
+        fi
         
         log_success "Frontend built and ready"
         cd - >/dev/null
