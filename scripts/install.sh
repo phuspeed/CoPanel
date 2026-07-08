@@ -530,7 +530,7 @@ setup_frontend() {
         
         # Install dependencies
         log_info "Installing npm packages..."
-        npm install --force --legacy-peer-deps || npm install
+        npm install || npm install --legacy-peer-deps
         
         # Build frontend
         log_info "Building frontend..."

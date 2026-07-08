@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const lowMemory = process.env.VITE_BUILD_LOW_MEMORY === '1'
+const lowMemory = process.env.VITE_BUILD_LOW_MEMORY === '1' // serial Rollup ops (no-AVX / low-RAM hosts)
 
 export default defineConfig({
   plugins: [react()],
