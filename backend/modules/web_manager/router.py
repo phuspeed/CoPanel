@@ -30,6 +30,14 @@ is_apache_vhost_enabled = logic.is_apache_vhost_enabled
 nginx_reload_test = logic.nginx_reload_test
 apache_reload_test = logic.apache_reload_test
 pkg_manager = logic.pkg_manager
+is_nginx_proxy_config = logic.is_nginx_proxy_config
+detect_site_auth = logic.detect_site_auth
+strip_site_auth = logic.strip_site_auth
+inject_site_auth = logic.inject_site_auth
+write_site_htpasswd = logic.write_site_htpasswd
+save_site_auth_meta = logic.save_site_auth_meta
+read_site_auth_meta = logic.read_site_auth_meta
+delete_site_auth_files = logic.delete_site_auth_files
 
 
 def _nginx_paths():
@@ -73,10 +81,16 @@ class DeleteSiteRequest(BaseModel):
     filename: str
     engine: Literal["nginx", "apache"] = "nginx"
 
+class SiteAuthRequest(BaseModel):
+    enabled: bool = False
+    username: Optional[str] = None
+    password: Optional[str] = None
+
 class UpdateSiteRequest(BaseModel):
     filename: str
     content: str
     engine: Literal["nginx", "apache"] = "nginx"
+    auth: Optional[SiteAuthRequest] = None
 
 
 class StackBootstrapRequest(BaseModel):
@@ -100,6 +114,8 @@ async def list_sites() -> Dict[str, Any]:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             parsed = parse_nginx_config(content)
+            auth = detect_site_auth(content)
+            meta = read_site_auth_meta(filename)
             enabled_path = os.path.join(np.sites_enabled, filename)
             is_active = os.path.exists(enabled_path)
             sites.append(
@@ -110,6 +126,9 @@ async def list_sites() -> Dict[str, Any]:
                     "active": is_active,
                     "content": content,
                     "engine": "nginx",
+                    "is_proxy": is_nginx_proxy_config(content),
+                    "auth_enabled": bool(auth.get("enabled")),
+                    "auth_username": meta.get("username"),
                 }
             )
 
@@ -539,6 +558,8 @@ async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
         if os.path.exists(available_path):
             os.remove(available_path)
 
+        delete_site_auth_files(safe_filename)
+
         if not IS_WINDOWS:
             subprocess.run(["nginx", "-t"], check=False)
             subprocess.run(["systemctl", "reload", "nginx"], check=False)
@@ -589,8 +610,40 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
         with open(available_path, "r", encoding="utf-8", errors="ignore") as f:
             backup_content = f.read()
 
+        final_content = req.content
+        auth_meta_backup = read_site_auth_meta(safe_filename)
+        auth_file_backup: Optional[str] = None
+        auth_htpasswd_path = logic.site_htpasswd_path(safe_filename)
+        if auth_htpasswd_path.is_file():
+            auth_file_backup = auth_htpasswd_path.read_text(encoding="utf-8")
+
+        if req.auth is not None:
+            if not is_nginx_proxy_config(req.content):
+                raise HTTPException(status_code=400, detail="HTTP Basic Auth only supports Nginx reverse proxy sites.")
+
+            final_content = strip_site_auth(req.content)
+            if req.auth.enabled:
+                username = (req.auth.username or auth_meta_backup.get("username") or "").strip()
+                if not username:
+                    raise HTTPException(status_code=400, detail="Auth username is required.")
+
+                password = (req.auth.password or "").strip()
+                if password:
+                    htpasswd_path = write_site_htpasswd(safe_filename, username, password)
+                elif auth_htpasswd_path.is_file():
+                    htpasswd_path = str(auth_htpasswd_path).replace("\\", "/")
+                else:
+                    raise HTTPException(status_code=400, detail="Auth password is required when enabling for the first time.")
+
+                save_site_auth_meta(safe_filename, username, enabled=True)
+                final_content = inject_site_auth(final_content, htpasswd_path)
+            else:
+                delete_site_auth_files(safe_filename)
+        else:
+            final_content = req.content
+
         with open(available_path, "w", encoding="utf-8") as f:
-            f.write(req.content)
+            f.write(final_content)
 
         if not IS_WINDOWS:
             try:
@@ -598,6 +651,17 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
             except subprocess.CalledProcessError as e:
                 with open(available_path, "w", encoding="utf-8") as f:
                     f.write(backup_content)
+                if auth_file_backup is not None:
+                    auth_htpasswd_path.parent.mkdir(parents=True, exist_ok=True)
+                    auth_htpasswd_path.write_text(auth_file_backup, encoding="utf-8")
+                else:
+                    delete_site_auth_files(safe_filename)
+                if auth_meta_backup.get("enabled") and auth_meta_backup.get("username"):
+                    save_site_auth_meta(
+                        safe_filename,
+                        str(auth_meta_backup.get("username")),
+                        enabled=True,
+                    )
                 raise HTTPException(
                     status_code=400,
                     detail=f"Nginx configuration syntax error:\n{e.stderr or e.stdout}",

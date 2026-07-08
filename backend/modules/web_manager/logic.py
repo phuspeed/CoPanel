@@ -4,18 +4,48 @@ Web Manager helpers: Nginx/Apache paths, PHP-FPM sockets, systemd probes.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from passlib.hash import apr_md5_crypt
+
 IS_WINDOWS = os.name == "nt"
+SITE_AUTH_START = "# BEGIN COPANEL SITE AUTH"
+SITE_AUTH_END = "# END COPANEL SITE AUTH"
+SITE_AUTH_BLOCK_RE = re.compile(
+    rf"\s*{re.escape(SITE_AUTH_START)}.*?{re.escape(SITE_AUTH_END)}\n?",
+    re.DOTALL,
+)
 
 
 def sanitize_filename(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]", "", value)
+
+
+def get_site_auth_dir() -> Path:
+    if IS_WINDOWS:
+        return Path(os.path.abspath("./test_copanel/config/web_auth"))
+    return Path("/opt/copanel/config/web_auth")
+
+
+def ensure_site_auth_dir() -> Path:
+    base = get_site_auth_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def site_htpasswd_path(filename: str) -> Path:
+    return ensure_site_auth_dir() / f"{sanitize_filename(filename)}.htpasswd"
+
+
+def site_auth_meta_path(filename: str) -> Path:
+    return ensure_site_auth_dir() / f"{sanitize_filename(filename)}.json"
 
 
 def parse_nginx_config(content: str) -> Dict[str, str]:
@@ -24,6 +54,79 @@ def parse_nginx_config(content: str) -> Dict[str, str]:
     server_name = server_names[0].strip() if server_names else "unknown"
     root_path = roots[0].strip() if roots else "unknown"
     return {"domain": server_name, "root": root_path}
+
+
+def is_nginx_proxy_config(content: str) -> bool:
+    return bool(re.search(r"^\s*proxy_pass\s+https?://", content, re.MULTILINE))
+
+
+def detect_site_auth(content: str) -> Dict[str, Optional[str]]:
+    enabled = SITE_AUTH_START in content and SITE_AUTH_END in content
+    htpasswd_match = re.search(r"^\s*auth_basic_user_file\s+([^;]+);", content, re.MULTILINE)
+    return {
+        "enabled": enabled,
+        "htpasswd_path": htpasswd_match.group(1).strip() if htpasswd_match else None,
+    }
+
+
+def strip_site_auth(content: str) -> str:
+    return SITE_AUTH_BLOCK_RE.sub("", content)
+
+
+def inject_site_auth(content: str, htpasswd_path: str, realm: str = "Restricted") -> str:
+    clean_content = strip_site_auth(content)
+    inner = (
+        f"        {SITE_AUTH_START}\n"
+        f'        auth_basic "{realm}";\n'
+        f"        auth_basic_user_file {htpasswd_path};\n"
+        f"        {SITE_AUTH_END}\n"
+    )
+
+    for marker in ("    location / {", "location / {"):
+        idx = clean_content.find(marker)
+        if idx == -1:
+            continue
+        brace = clean_content.find("{", idx)
+        nl = clean_content.find("\n", brace)
+        if nl != -1:
+            return clean_content[: nl + 1] + "\n" + inner + clean_content[nl + 1 :]
+
+    raise RuntimeError("Could not find 'location /' block in nginx site config.")
+
+
+def write_site_htpasswd(filename: str, username: str, password: str) -> str:
+    path = site_htpasswd_path(filename)
+    path.write_text(f"{username}:{apr_md5_crypt.hash(password)}\n", encoding="utf-8")
+    return str(path).replace("\\", "/")
+
+
+def save_site_auth_meta(filename: str, username: str, enabled: bool = True) -> None:
+    path = site_auth_meta_path(filename)
+    data = {"enabled": enabled, "username": username}
+    path.write_text(json.dumps(data, ensure_ascii=True), encoding="utf-8")
+
+
+def read_site_auth_meta(filename: str) -> Dict[str, Any]:
+    path = site_auth_meta_path(filename)
+    if not path.is_file():
+        return {"enabled": False, "username": None}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"enabled": False, "username": None}
+    return {
+        "enabled": bool(data.get("enabled")),
+        "username": data.get("username"),
+    }
+
+
+def delete_site_auth_files(filename: str) -> None:
+    for path in (site_htpasswd_path(filename), site_auth_meta_path(filename)):
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
 
 
 def parse_apache_vhost(content: str) -> Dict[str, str]:

@@ -12,6 +12,9 @@ interface SiteItem {
   active: boolean;
   content: string;
   engine?: 'nginx' | 'apache';
+  auth_enabled?: boolean;
+  auth_username?: string | null;
+  is_proxy?: boolean;
 }
 
 export default function WebManagerDashboard() {
@@ -45,6 +48,9 @@ export default function WebManagerDashboard() {
   const [editedContent, setEditedContent] = useState<string>('');
   const [saveStatus, setSaveStatus] = useState<{ msg: string; isError: boolean } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [authEnabled, setAuthEnabled] = useState<boolean>(false);
+  const [authUsername, setAuthUsername] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>('');
 
   // Tab 2: Services States
   const [webServices, setWebServices] = useState<any[]>([]);
@@ -109,6 +115,13 @@ export default function WebManagerDashboard() {
       saving: 'Saving...',
       saveMsg: '✓ Configuration successfully updated and reloaded.',
       saveTip: 'When saving, the config will be auto-tested and reloaded.',
+      authTitle: 'Reverse Proxy Access Auth',
+      authEnable: 'Enable HTTP Basic Auth',
+      authUser: 'Username',
+      authPass: 'Password',
+      authPassKeep: 'Leave password empty to keep the current password.',
+      authHint: 'Protect access before traffic reaches the upstream app port behind this reverse proxy.',
+      authBadge: 'Auth',
       deleteConfirm: (fn: string) => `Are you sure you want to completely delete "${fn}"?`,
       serviceType: 'Service Type',
       staticService: 'Static Web Service',
@@ -192,6 +205,13 @@ export default function WebManagerDashboard() {
       saving: 'Đang lưu...',
       saveMsg: '✓ Tệp cấu hình đã được cập nhật và tải lại thành công.',
       saveTip: 'Khi lưu, cấu hình sẽ được kiểm tra cú pháp tự động trước khi tải lại.',
+      authTitle: 'Xác thực truy cập Reverse Proxy',
+      authEnable: 'Bật HTTP Basic Auth',
+      authUser: 'Tên đăng nhập',
+      authPass: 'Mật khẩu',
+      authPassKeep: 'Để trống mật khẩu nếu muốn giữ mật khẩu hiện tại.',
+      authHint: 'Chặn truy cập trước khi request đi vào ứng dụng đang chạy phía sau reverse proxy.',
+      authBadge: 'Auth',
       deleteConfirm: (fn: string) => `Bạn có chắc chắn muốn xóa hoàn toàn "${fn}" không?`,
       serviceType: 'Loại dịch vụ',
       staticService: 'Dịch vụ Web Tĩnh',
@@ -529,6 +549,15 @@ export default function WebManagerDashboard() {
     setIsSaving(true);
     setSaveStatus(null);
     try {
+      const authPayload =
+        viewingSite.engine === 'nginx' && viewingSite.is_proxy
+          ? {
+              enabled: authEnabled,
+              username: authEnabled ? authUsername : undefined,
+              password: authEnabled ? authPassword : undefined,
+            }
+          : undefined;
+
       const response = await fetch('/api/web_manager/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -536,6 +565,7 @@ export default function WebManagerDashboard() {
           filename: viewingSite.filename,
           content: editedContent,
           engine: viewingSite.engine || 'nginx',
+          auth: authPayload,
         }),
       });
       const data = await response.json();
@@ -543,7 +573,13 @@ export default function WebManagerDashboard() {
         throw new Error(data.detail || 'Failed to update configuration');
       }
       setSaveStatus({ msg: tr.saveMsg, isError: false });
-      setViewingSite({ ...viewingSite, content: editedContent });
+      setViewingSite({
+        ...viewingSite,
+        content: editedContent,
+        auth_enabled: authPayload?.enabled ?? viewingSite.auth_enabled,
+        auth_username: authPayload?.enabled ? authUsername : null,
+      });
+      setAuthPassword('');
       fetchSites();
     } catch (err) {
       setSaveStatus({ msg: err instanceof Error ? err.message : 'Error saving config', isError: true });
@@ -774,6 +810,9 @@ export default function WebManagerDashboard() {
   const openViewModal = (item: SiteItem) => {
     setViewingSite(item);
     setEditedContent(item.content || '');
+    setAuthEnabled(!!item.auth_enabled);
+    setAuthUsername(item.auth_username || '');
+    setAuthPassword('');
     setSaveStatus(null);
   };
 
@@ -790,7 +829,7 @@ export default function WebManagerDashboard() {
             <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
             {tr.title}
             <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.1.0
+              v1.1.2
             </span>
           </h2>
           <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -903,6 +942,13 @@ export default function WebManagerDashboard() {
                         </td>
                         <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[200px]" title={item.domain}>
                           {item.domain}
+                          {item.engine === 'nginx' && item.is_proxy && item.auth_enabled && (
+                            <span className={`ml-2 inline-flex items-center rounded-lg border px-1.5 py-0.5 text-[10px] font-bold ${
+                              isDark ? 'border-violet-700/50 bg-violet-950/30 text-violet-300' : 'border-violet-200 bg-violet-50 text-violet-700'
+                            }`}>
+                              {tr.authBadge}
+                            </span>
+                          )}
                         </td>
                         <td className="p-4 truncate max-w-[220px]" title={item.root}>{item.root || '—'}</td>
                         <td className="p-4">
@@ -978,6 +1024,11 @@ export default function WebManagerDashboard() {
                         <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                           <strong>{tr.colFilename}:</strong> {item.filename}
                         </span>
+                        {item.engine === 'nginx' && item.is_proxy && item.auth_enabled && (
+                          <span className={`font-mono text-[11px] truncate ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
+                            <strong>{tr.authBadge}:</strong> {item.auth_username || 'on'}
+                          </span>
+                        )}
                         <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                           <strong>{tr.colRoot}:</strong> {item.root || '—'}
                         </span>
@@ -1579,6 +1630,71 @@ export default function WebManagerDashboard() {
               }`}>
                 {saveStatus.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle2 className="w-4 h-4 shrink-0" />}
                 <span>{saveStatus.msg}</span>
+              </div>
+            )}
+
+            {viewingSite.engine === 'nginx' && viewingSite.is_proxy && (
+              <div className={`mb-4 rounded-xl border p-4 space-y-3 flex-shrink-0 ${
+                isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50/80'
+              }`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <h4 className={`text-xs font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.authTitle}</h4>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.authHint}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAuthEnabled((prev) => !prev)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                      authEnabled ? 'bg-blue-600' : isDark ? 'bg-slate-700' : 'bg-slate-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                        authEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <label className={`flex items-center gap-2 text-[11px] font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                  <input
+                    type="checkbox"
+                    checked={authEnabled}
+                    onChange={(e) => setAuthEnabled(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  {tr.authEnable}
+                </label>
+                {authEnabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {tr.authUser}
+                      </label>
+                      <input
+                        value={authUsername}
+                        onChange={(e) => setAuthUsername(e.target.value)}
+                        className={`w-full rounded-xl border px-3 py-2 text-xs outline-none focus:border-blue-500 ${
+                          isDark ? 'border-slate-800 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800'
+                        }`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {tr.authPass}
+                      </label>
+                      <input
+                        type="password"
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        className={`w-full rounded-xl border px-3 py-2 text-xs outline-none focus:border-blue-500 ${
+                          isDark ? 'border-slate-800 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800'
+                        }`}
+                      />
+                      <p className={`mt-1 text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.authPassKeep}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
