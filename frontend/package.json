@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:appstore": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {

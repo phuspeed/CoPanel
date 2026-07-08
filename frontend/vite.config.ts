@@ -14,6 +14,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: process.env.VITE_BUILD_LOW_MEMORY !== '1',
+    rollupOptions: {
+      maxParallelFileOps: process.env.VITE_BUILD_LOW_MEMORY === '1' ? 1 : undefined,
+    },
   },
 })

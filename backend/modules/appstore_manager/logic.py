@@ -380,31 +380,86 @@ def remove_local_package_record(pkg_id: str) -> None:
             pass
 
 
+def _frontend_build_env(*, low_memory: bool = False) -> dict:
+    """Env for npm/vite on low-RAM hosts (AppStore install often runs on small NUCs)."""
+    import os
+
+    env = os.environ.copy()
+    heap = "512" if low_memory else "1536"
+    extra = f"--max-old-space-size={heap}"
+    existing = env.get("NODE_OPTIONS", "").strip()
+    env["NODE_OPTIONS"] = f"{existing} {extra}".strip() if existing else extra
+    if low_memory:
+        env["VITE_BUILD_LOW_MEMORY"] = "1"
+    return env
+
+
+def _frontend_build_cmd(frontend_dir: Path) -> list:
+    """Skip tsc during AppStore install when script exists; else run vite directly."""
+    pkg = frontend_dir / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8"))
+            scripts = data.get("scripts") or {}
+            if "build:appstore" in scripts:
+                return ["npm", "run", "build:appstore"]
+        except Exception:
+            pass
+    return ["npx", "vite", "build"]
+
+
+def _is_low_memory_build_failure(return_code: int, log_lines: Optional[List[str]] = None) -> bool:
+    if return_code in (137, 139):
+        return True
+    blob = " ".join(log_lines or []).lower()
+    return "segmentation fault" in blob or "killed" in blob
+
+
+def _run_frontend_build_once(frontend_dir: Path, *, low_memory: bool = False) -> tuple:
+    """Run one frontend build attempt. Returns (return_code, output_lines)."""
+    is_win = platform.system() == "Windows"
+    lines: List[str] = []
+    try:
+        process = subprocess.Popen(
+            _frontend_build_cmd(frontend_dir),
+            cwd=str(frontend_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            shell=is_win,
+            bufsize=1,
+            env=_frontend_build_env(low_memory=low_memory),
+        )
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                stripped = line.strip()
+                if stripped:
+                    lines.append(stripped)
+        return process.wait(), lines
+    except Exception as e:
+        return -1, [str(e)]
+
+
 def _run_frontend_build_sync() -> tuple:
-    """Run npm run build in CoPanel frontend. Returns (success: bool, error_snippet: str)."""
+    """Run npm build in CoPanel frontend. Returns (success: bool, error_snippet: str)."""
     frontend_dir = get_copanel_home() / "frontend"
     if not (frontend_dir / "package.json").exists():
         return True, ""
-    is_win = platform.system() == "Windows"
-    try:
-        r = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=str(frontend_dir),
-            shell=is_win,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-    except subprocess.TimeoutExpired:
-        return False, "npm run build timed out (600s)."
-    except Exception as e:
-        return False, str(e)
-    if r.returncode != 0:
-        tail = (r.stderr or r.stdout or "").strip()
+    for low_memory in (False, True):
+        return_code, lines = _run_frontend_build_once(frontend_dir, low_memory=low_memory)
+        if return_code == 0:
+            return True, ""
+        if not low_memory and _is_low_memory_build_failure(return_code, lines):
+            logger.warning("Frontend build failed (code %s); retrying low-memory", return_code)
+            continue
+        tail = "\n".join(lines).strip()
         if len(tail) > 1500:
             tail = tail[-1500:]
-        return False, tail or f"exit code {r.returncode}"
-    return True, ""
+        return False, tail or f"exit code {return_code}"
+    return False, "exit code 139"
 
 def get_local_version(pkg_id: str, modules_dir: Path) -> str:
     # 1. Check version.txt inside backend module directory first
@@ -1023,31 +1078,21 @@ class AppStoreManager:
                     shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
 
                 if frontend_updated:
-                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")
                     BUILD_TASKS[pkg_id]["progress"] = 60
 
-                    cmd = ["npm", "run", "build"]
+                    return_code, build_lines = _run_frontend_build_once(frontend_cwd, low_memory=False)
+                    for line in build_lines:
+                        BUILD_TASKS[pkg_id]["logs"].append(line)
 
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=frontend_cwd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        shell=is_windows,
-                        bufsize=1,
-                    )
-
-                    while True:
-                        line = process.stdout.readline()
-                        if not line and process.poll() is not None:
-                            break
-                        if line:
-                            stripped_line = line.strip()
-                            if stripped_line:
-                                BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
-
-                    return_code = process.wait()
+                    if _is_low_memory_build_failure(return_code, build_lines):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "⚠️ Build crashed (low RAM / exit 139). Retrying with low-memory settings..."
+                        )
+                        retry_code, retry_lines = _run_frontend_build_once(frontend_cwd, low_memory=True)
+                        for line in retry_lines:
+                            BUILD_TASKS[pkg_id]["logs"].append(line)
+                        return_code = retry_code
                 else:
                     BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
                     return_code = 0
@@ -1071,7 +1116,13 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
-                    if any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
+                    if _is_low_memory_build_failure(return_code, BUILD_TASKS[pkg_id]["logs"]):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "💡 Add swap (e.g. 2G) on the server, or SSH: "
+                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=512' "
+                            "VITE_BUILD_LOW_MEMORY=1 npm run build:appstore"
+                        )
+                    elif any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
                         BUILD_TASKS[pkg_id]["logs"].append(
                             "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
                         )
@@ -1261,30 +1312,21 @@ class AppStoreManager:
                     shutil.copytree(found_frontend, dst_frontend, dirs_exist_ok=True)
 
                 if frontend_updated:
-                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build)...")
+                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")
                     BUILD_TASKS[pkg_id]["progress"] = 65
 
-                    cmd = ["npm", "run", "build"]
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=frontend_cwd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        shell=is_windows,
-                        bufsize=1,
-                    )
+                    return_code, build_lines = _run_frontend_build_once(frontend_cwd, low_memory=False)
+                    for line in build_lines:
+                        BUILD_TASKS[pkg_id]["logs"].append(line)
 
-                    while True:
-                        line = process.stdout.readline()
-                        if not line and process.poll() is not None:
-                            break
-                        if line:
-                            stripped_line = line.strip()
-                            if stripped_line:
-                                BUILD_TASKS[pkg_id]["logs"].append(stripped_line)
-
-                    return_code = process.wait()
+                    if _is_low_memory_build_failure(return_code, build_lines):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "⚠️ Build crashed (low RAM / exit 139). Retrying with low-memory settings..."
+                        )
+                        retry_code, retry_lines = _run_frontend_build_once(frontend_cwd, low_memory=True)
+                        for line in retry_lines:
+                            BUILD_TASKS[pkg_id]["logs"].append(line)
+                        return_code = retry_code
                 else:
                     BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
                     return_code = 0
@@ -1313,7 +1355,13 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
                     BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
                     BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
-                    if any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
+                    if _is_low_memory_build_failure(return_code, BUILD_TASKS[pkg_id]["logs"]):
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "💡 Add swap (e.g. 2G) on the server, or SSH: "
+                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=512' "
+                            "VITE_BUILD_LOW_MEMORY=1 npm run build:appstore"
+                        )
+                    elif any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
                         BUILD_TASKS[pkg_id]["logs"].append(
                             "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
                         )
