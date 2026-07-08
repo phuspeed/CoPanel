@@ -148,6 +148,7 @@ export default function Layout({
         'ssl_manager': 'SSL',
         'system_monitor': 'Monitor',
         'terminal': 'Terminal',
+        'web_browser': 'Web Browser',
         'web_manager': 'Web',
         'users': 'Users'
       }
@@ -197,6 +198,7 @@ export default function Layout({
         'ssl_manager': 'Quản lý SSL',
         'system_monitor': 'Theo dõi hệ thống',
         'terminal': 'Dòng lệnh',
+        'web_browser': 'Trình duyệt Web',
         'web_manager': 'Quản lý Web',
         'users': 'Người dùng'
       }
