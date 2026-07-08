@@ -385,7 +385,7 @@ def _frontend_build_env(*, low_memory: bool = False) -> dict:
     import os
 
     env = os.environ.copy()
-    heap = "512" if low_memory else "1536"
+    heap = "2048" if low_memory else "1536"
     extra = f"--max-old-space-size={heap}"
     existing = env.get("NODE_OPTIONS", "").strip()
     env["NODE_OPTIONS"] = f"{existing} {extra}".strip() if existing else extra
@@ -1119,7 +1119,7 @@ class AppStoreManager:
                     if _is_low_memory_build_failure(return_code, BUILD_TASKS[pkg_id]["logs"]):
                         BUILD_TASKS[pkg_id]["logs"].append(
                             "💡 Add swap (e.g. 2G) on the server, or SSH: "
-                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=512' "
+                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=2048' "
                             "VITE_BUILD_LOW_MEMORY=1 npm run build:appstore"
                         )
                     elif any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
@@ -1358,7 +1358,7 @@ class AppStoreManager:
                     if _is_low_memory_build_failure(return_code, BUILD_TASKS[pkg_id]["logs"]):
                         BUILD_TASKS[pkg_id]["logs"].append(
                             "💡 Add swap (e.g. 2G) on the server, or SSH: "
-                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=512' "
+                            "cd /opt/copanel/frontend && NODE_OPTIONS='--max-old-space-size=2048' "
                             "VITE_BUILD_LOW_MEMORY=1 npm run build:appstore"
                         )
                     elif any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):

@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const lowMemory = process.env.VITE_BUILD_LOW_MEMORY === '1'
+
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -14,9 +16,22 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: process.env.VITE_BUILD_LOW_MEMORY !== '1',
+    sourcemap: !lowMemory,
+    reportCompressedSize: !lowMemory,
+    cssCodeSplit: !lowMemory,
     rollupOptions: {
-      maxParallelFileOps: process.env.VITE_BUILD_LOW_MEMORY === '1' ? 1 : undefined,
+      maxParallelFileOps: lowMemory ? 1 : undefined,
+      output: lowMemory
+        ? {
+            manualChunks(id) {
+              if (!id.includes('node_modules')) return
+              if (id.includes('recharts')) return 'recharts'
+              if (id.includes('lucide-react')) return 'lucide'
+              if (id.includes('xterm')) return 'xterm'
+              return 'vendor'
+            },
+          }
+        : undefined,
     },
   },
 })
