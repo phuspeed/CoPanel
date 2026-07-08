@@ -89,6 +89,7 @@ export default function Layout({
     changelog: string | null;
     release_url: string;
     fetch_error: string | null;
+    fetch_error_kind?: 'rate_limit' | 'network' | 'unknown' | null;
   } | null>(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [upgradeRunning, setUpgradeRunning] = useState(false);
@@ -132,6 +133,7 @@ export default function Layout({
       upgradeFailed: 'Upgrade reported an error. Review the log below.',
       streamEnded: 'Connection closed — the service may be restarting. Waiting until the panel is healthy again…',
       checkUpdateFailed: 'Could not reach GitHub to check for updates.',
+      checkUpdateRateLimited: 'GitHub rate limit — update check will retry later.',
       upToDate: 'You are on the latest version.',
       viewReleases: 'View on GitHub',
       lanIp: 'LAN IP',
@@ -182,6 +184,7 @@ export default function Layout({
       upgradeFailed: 'Nâng cấp báo lỗi. Xem nhật ký bên dưới.',
       streamEnded: 'Kết nối đã đóng — dịch vụ có thể đang khởi động lại. Đang chờ panel hoạt động trở lại…',
       checkUpdateFailed: 'Không kiểm tra được bản cập nhật từ GitHub.',
+      checkUpdateRateLimited: 'GitHub giới hạn tần suất — sẽ thử lại sau.',
       upToDate: 'Bạn đang dùng phiên bản mới nhất.',
       viewReleases: 'Xem trên GitHub',
       lanIp: 'IP LAN',
@@ -653,7 +656,9 @@ export default function Layout({
               )}
             </p>
             {user?.role === 'superadmin' && panelUpdate?.fetch_error && (
-              <p className={`mt-1 text-[10px] ${isDark ? 'text-amber-500/90' : 'text-amber-700'}`}>{tr.checkUpdateFailed}</p>
+              <p className={`mt-1 text-[10px] ${isDark ? 'text-amber-500/90' : 'text-amber-700'}`}>
+                {panelUpdate.fetch_error_kind === 'rate_limit' ? tr.checkUpdateRateLimited : tr.checkUpdateFailed}
+              </p>
             )}
           </div>
         </div>
