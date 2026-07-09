@@ -80,7 +80,26 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 - **Python** 3.10+
 - **Node.js** 18+
 
-### Installation
+### Desktop UI (beta branch `DesktopUI`)
+
+**One-liner** (cài mới hoặc upgrade sang desktop UI):
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=DesktopUI" | sudo bash
+```
+
+**Git clone** (nếu curl bị chặn):
+
+```bash
+sudo apt install -y git
+sudo git clone -b DesktopUI --depth 1 https://github.com/phuspeed/CoPanel.git /opt/copanel
+sudo bash /opt/copanel/scripts/install-desktop-ui.sh
+```
+
+Chi tiết: [`DESKTOP_UI_BRANCH.md`](DESKTOP_UI_BRANCH.md) · [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md)
+
+### Classic UI (`main`)
 
 **Rebuild / upgrade** (server đã có `/opt/copanel`):
 

@@ -15,6 +15,17 @@ CoPanel ships two frontend experiences on **separate Git branches**:
 
 Stay on **`main`** if you need the current production UI unchanged.
 
+## One-liner install (curl)
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=DesktopUI" | sudo bash
+```
+
+> Tránh `raw.githubusercontent.com` (dễ 429) — dùng GitHub API như trên, giống installer `main`.
+
+Script: [`scripts/install-desktop-ui.sh`](scripts/install-desktop-ui.sh) → clone/checkout nhánh **`DesktopUI`**, chạy `install.sh`, build frontend desktop UI.
+
 ## Install / switch
 
 ### Existing install at `/opt/copanel`

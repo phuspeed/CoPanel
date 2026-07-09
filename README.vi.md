@@ -74,6 +74,27 @@ Một bảng điều khiển quản lý VPS Linux gọn nhẹ, hiệu suất cao
 
 ### Cài đặt
 
+#### Desktop UI (nhánh beta `DesktopUI`)
+
+**One-liner:**
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=DesktopUI" | sudo bash
+```
+
+**Git clone:**
+
+```bash
+sudo apt install -y git
+sudo git clone -b DesktopUI --depth 1 https://github.com/phuspeed/CoPanel.git /opt/copanel
+sudo bash /opt/copanel/scripts/install-desktop-ui.sh
+```
+
+Xem thêm: [`DESKTOP_UI_BRANCH.md`](DESKTOP_UI_BRANCH.md)
+
+#### Giao diện classic (`main`)
+
 **Nâng cấp** (server đã có `/opt/copanel`):
 
 ```bash

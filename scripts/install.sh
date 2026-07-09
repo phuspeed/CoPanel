@@ -28,6 +28,8 @@ NC=$(echo -e '\033[0m')
 # Configuration
 CoPanel_USER="copanel"
 CoPanel_HOME="/opt/copanel"
+COPANEL_GIT_BRANCH="${COPANEL_GIT_BRANCH:-main}"
+COPANEL_GIT_REMOTE="${COPANEL_GIT_REMOTE:-https://github.com/phuspeed/CoPanel.git}"
 VENV_PATH="$CoPanel_HOME/venv"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
@@ -370,15 +372,16 @@ setup_user_and_dirs() {
     # Check if running via one-liner (curl/wget), clone from GitHub directly
     if [[ ! -d "$REPO_DIR/backend" ]] || [[ ! -f "$REPO_DIR/backend/main.py" ]]; then
         if [[ -d "$CoPanel_HOME/.git" ]]; then
-            log_info "CoPanel already exists with Git repository. Updating codebase..."
+            log_info "CoPanel already exists with Git repository. Updating codebase (branch: ${COPANEL_GIT_BRANCH})..."
             cd "$CoPanel_HOME"
             git config --global --add safe.directory '*' || true
             git config --system --add safe.directory '*' || true
             git fetch --all || true
-            git reset --hard origin/main || true
+            git checkout "${COPANEL_GIT_BRANCH}" 2>/dev/null || git checkout -b "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
+            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             git clean -fd || true
-            git pull origin main --force || true
-            git reset --hard origin/main || true
+            git pull origin "${COPANEL_GIT_BRANCH}" --force || true
+            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             REPO_DIR="$CoPanel_HOME"
         else
             log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
@@ -401,7 +404,7 @@ setup_user_and_dirs() {
             done
             
             rm -rf "$CoPanel_HOME"
-            git clone https://github.com/phuspeed/CoPanel.git "$CoPanel_HOME"
+            git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
             
             # Restore the backed up data if any
@@ -870,6 +873,9 @@ EOF
     echo -e "${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "   ${CYAN}${BOLD}CoPanel - Advanced Linux VPS Management System${NC}"
+    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH}" == "DesktopUI" ]]; then
+        echo -e "   ${YELLOW}${BOLD}Desktop UI track · branch ${COPANEL_GIT_BRANCH}${NC}"
+    fi
     echo -e "   ${BOLD}v${COPANEL_VER} - Premium Pluggable Architecture${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
