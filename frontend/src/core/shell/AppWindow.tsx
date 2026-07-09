@@ -61,6 +61,7 @@ function AppWindowFrame({ win, isFocused, isDark, containerRef, children }: Prop
 
   const onPointerDownTitle = (e: React.PointerEvent) => {
     if (win.maximized) return;
+    if ((e.target as HTMLElement).closest('[data-window-chrome-control]')) return;
     e.preventDefault();
     focusWindow(win.id);
     dragOrigin.current = {
@@ -161,34 +162,29 @@ function AppWindowFrame({ win, isFocused, isDark, containerRef, children }: Prop
         onPointerDown={onPointerDownTitle}
         onDoubleClick={onTitleDoubleClick}
       >
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              closeWindow(win.id);
-            }}
-            className="h-3 w-3 rounded-full bg-red-500 hover:bg-red-400"
-            aria-label="Close"
+        <div
+          data-window-chrome-control
+          className="flex shrink-0 items-center gap-1"
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <WindowChromeButton
+            label="Close"
+            dotClassName="bg-red-500 hover:bg-red-400"
+            onPress={() => closeWindow(win.id)}
           />
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              minimizeWindow(win.id);
-            }}
-            className="h-3 w-3 rounded-full bg-amber-400 hover:bg-amber-300"
-            aria-label="Minimize"
+          <WindowChromeButton
+            label="Minimize"
+            dotClassName="bg-amber-400 hover:bg-amber-300"
+            onPress={() => minimizeWindow(win.id)}
           />
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
+          <WindowChromeButton
+            label="Maximize"
+            dotClassName="bg-emerald-500 hover:bg-emerald-400"
+            onPress={() => {
               const { w, h } = containerSize();
               toggleMaximizeWindow(win.id, w, h);
             }}
-            className="h-3 w-3 rounded-full bg-emerald-500 hover:bg-emerald-400"
-            aria-label="Maximize"
           />
         </div>
         <Icon className={cn('h-4 w-4 shrink-0', isDark ? 'text-blue-400' : 'text-blue-600')} />
@@ -215,5 +211,34 @@ export default function AppWindow(props: Props) {
     <WindowViewportProvider windowId={props.win.id}>
       <AppWindowFrame {...props} />
     </WindowViewportProvider>
+  );
+}
+
+function WindowChromeButton({
+  label,
+  dotClassName,
+  onPress,
+}: {
+  label: string;
+  dotClassName: string;
+  onPress: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onPress();
+      }}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-black/10 dark:hover:bg-white/10"
+    >
+      <span className={cn('h-3 w-3 rounded-full', dotClassName)} />
+    </button>
   );
 }

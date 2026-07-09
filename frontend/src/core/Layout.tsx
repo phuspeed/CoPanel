@@ -167,7 +167,8 @@ export default function Layout({
         'terminal': 'Terminal',
         'web_browser': 'Web Browser',
         'web_manager': 'Web',
-        'users': 'Users'
+        'users': 'Users',
+        'settings': 'System Settings',
       }
     },
     vi: {
@@ -218,7 +219,8 @@ export default function Layout({
         'terminal': 'Dòng lệnh',
         'web_browser': 'Trình duyệt Web',
         'web_manager': 'Quản lý Web',
-        'users': 'Người dùng'
+        'users': 'Người dùng',
+        'settings': 'Cài đặt hệ thống',
       }
     }
   };
@@ -531,11 +533,21 @@ export default function Layout({
   };
   const permittedModules = normalizePermitted();
   const hasAllAccess = permittedModules.includes('all');
+  const isSuperAdmin = user?.role === 'superadmin';
+
+  const moduleAllowedForUser = (mod: { path: string; name: string }) => {
+    if (hasAllAccess) return true;
+    return permittedModules.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
+  };
 
   const allowedModules = modules.filter((mod) => {
     if (mod.path === '/settings') return false;
-    if (hasAllAccess) return true;
-    return permittedModules.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
+    return moduleAllowedForUser(mod);
+  });
+
+  const desktopModules = modules.filter((mod) => {
+    if (mod.path === '/settings') return isSuperAdmin;
+    return moduleAllowedForUser(mod);
   });
   const allowedInstalledPackages = installedPackages.filter((pkg) => {
     if (hasAllAccess) return true;
@@ -984,7 +996,8 @@ export default function Layout({
         >
           {useDesktopShell && (isDashboardHome || isWindowRoute) ? (
             <DesktopShell
-              modules={allowedModules}
+              modules={desktopModules}
+              getModuleName={getModuleName}
               isDark={isDark}
               language={language}
               onOpenLauncher={() => setLauncherOpen(true)}
@@ -1068,6 +1081,8 @@ export default function Layout({
         <Dock
           isDark={isDark}
           language={language}
+          isSuperAdmin={isSuperAdmin}
+          settingsLabel={tr.settings}
           onToggleTheme={() => setTheme(isDark ? 'light' : 'dark')}
           onToggleLanguage={() => setLanguage(language === 'en' ? 'vi' : 'en')}
           onOpenLauncher={() => setLauncherOpen(true)}

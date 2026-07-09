@@ -26,6 +26,8 @@ type Lang = 'en' | 'vi';
 interface Props {
   isDark: boolean;
   language: Lang;
+  isSuperAdmin?: boolean;
+  settingsLabel?: string;
   onToggleTheme: () => void;
   onToggleLanguage: () => void;
   onOpenLauncher: () => void;
@@ -41,6 +43,8 @@ interface Props {
 export default function Dock({
   isDark,
   language,
+  isSuperAdmin = false,
+  settingsLabel = 'Settings',
   onToggleTheme,
   onToggleLanguage,
   onOpenLauncher,
@@ -112,6 +116,11 @@ export default function Dock({
         <DockButton isDark={isDark} title="Dashboard" onClick={() => navigate('/dashboard')}>
           <Icons.Home className="h-5 w-5" />
         </DockButton>
+        {isSuperAdmin && (
+          <DockButton isDark={isDark} title={settingsLabel} onClick={() => navigate('/settings')}>
+            <Icons.Settings className="h-5 w-5" />
+          </DockButton>
+        )}
       </div>
 
       <div className={cn('mx-1 h-8 w-px', isDark ? 'bg-slate-700' : 'bg-slate-200')} />

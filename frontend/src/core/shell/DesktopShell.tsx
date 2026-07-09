@@ -31,13 +31,21 @@ const I18N = {
 
 interface Props {
   modules: ModuleConfig[];
+  getModuleName?: (mod: ModuleConfig) => string;
   isDark: boolean;
   language: Lang;
   onOpenLauncher: () => void;
   siteTitle: string;
 }
 
-export default function DesktopShell({ modules, isDark, language, onOpenLauncher, siteTitle }: Props) {
+export default function DesktopShell({
+  modules,
+  getModuleName,
+  isDark,
+  language,
+  onOpenLauncher,
+  siteTitle,
+}: Props) {
   const [query, setQuery] = useState('');
   const navigate = useNavigate();
   const tr = I18N[language === 'vi' ? 'vi' : 'en'];
@@ -105,7 +113,13 @@ export default function DesktopShell({ modules, isDark, language, onOpenLauncher
       <div className="relative z-10 flex-1 overflow-y-auto px-4 pb-24 md:px-8">
         <div className="mx-auto grid max-w-5xl grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 md:gap-6 lg:grid-cols-6">
           {filtered.map((mod) => (
-            <DesktopIcon key={mod.path} module={mod} isDark={isDark} onOpen={() => openApp(mod)} />
+            <DesktopIcon
+              key={mod.path}
+              module={mod}
+              label={getModuleName ? getModuleName(mod) : mod.name}
+              isDark={isDark}
+              onOpen={() => openApp(mod)}
+            />
           ))}
           {filtered.length === 0 && (
             <p className={cn('col-span-full text-center text-sm', isDark ? 'text-slate-400' : 'text-slate-500')}>
@@ -120,10 +134,12 @@ export default function DesktopShell({ modules, isDark, language, onOpenLauncher
 
 function DesktopIcon({
   module,
+  label,
   isDark,
   onOpen,
 }: {
   module: ModuleConfig;
+  label: string;
   isDark: boolean;
   onOpen: () => void;
 }) {
@@ -153,7 +169,7 @@ function DesktopIcon({
           isDark ? 'text-slate-200' : 'text-slate-700',
         )}
       >
-        {module.name}
+        {label}
       </span>
     </button>
   );
