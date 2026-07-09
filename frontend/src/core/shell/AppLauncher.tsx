@@ -4,16 +4,18 @@
  * palette behavior) so power users can jump anywhere.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 import { accentForPackageId, packageIdFromModulePath } from '../appStoreAccent';
 import { ModuleConfig, moduleRegistry } from '../registry';
+import { moduleSupportsWindows, openModuleWindow } from './openModuleWindow';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   /** Matches AppStore card accents per theme */
   theme?: 'dark' | 'light';
+  desktopMode?: boolean;
 }
 
 const ICONS: Record<string, any> = Icons as unknown as Record<string, any>;
@@ -39,7 +41,8 @@ function getIcon(name: string) {
   return Comp;
 }
 
-export default function AppLauncher({ open, onClose, theme = 'dark' }: Props) {
+export default function AppLauncher({ open, onClose, theme = 'dark', desktopMode = false }: Props) {
+  const navigate = useNavigate();
   const isDark = theme === 'dark';
   const [query, setQuery] = useState('');
   const [language, setLanguage] = useState<Lang>(() => (localStorage.getItem('copanel_lang') as Lang) || 'en');
@@ -80,7 +83,11 @@ export default function AppLauncher({ open, onClose, theme = 'dark' }: Props) {
               onKeyDown={(e) => {
                 if (e.key === 'Escape') onClose();
                 if (e.key === 'Enter' && filtered[0]) {
-                  window.location.href = filtered[0].path;
+                  if (desktopMode && moduleSupportsWindows(filtered[0].path)) {
+                    openModuleWindow(filtered[0].path);
+                  } else {
+                    navigate(filtered[0].path);
+                  }
                   onClose();
                 }
               }}
@@ -98,7 +105,13 @@ export default function AppLauncher({ open, onClose, theme = 'dark' }: Props) {
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1">
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 pb-2">
               {filtered.map((m) => (
-                <AppTile key={m.path} module={m} onSelect={onClose} isDark={isDark} />
+                <AppTile
+                  key={m.path}
+                  module={m}
+                  onSelect={onClose}
+                  isDark={isDark}
+                  desktopMode={desktopMode}
+                />
               ))}
               {filtered.length === 0 && (
                 <p className="col-span-full text-center text-sm text-slate-300">{tr.noMatch}</p>
@@ -115,28 +128,59 @@ function AppTile({
   module,
   onSelect,
   isDark,
+  desktopMode,
 }: {
   module: ModuleConfig;
   onSelect: () => void;
   isDark: boolean;
+  desktopMode?: boolean;
 }) {
+  const navigate = useNavigate();
   const Icon = getIcon(module.icon);
   const pkgId = packageIdFromModulePath(module.path);
   const accent = accentForPackageId(pkgId);
   const accentClasses = isDark ? accent.dark : accent.light;
 
-  return (
-    <Link
-      to={module.path}
-      onClick={onSelect}
-      className="group flex flex-col items-center text-center gap-2 p-4 rounded-2xl hover:bg-white/10 transition-colors"
-    >
+  const handleClick = (e: React.MouseEvent) => {
+    if (desktopMode && moduleSupportsWindows(module.path)) {
+      e.preventDefault();
+      openModuleWindow(module.path);
+      onSelect();
+      return;
+    }
+    onSelect();
+  };
+
+  const inner = (
+    <>
       <div
         className={`relative w-16 h-16 rounded-2xl bg-gradient-to-br flex items-center justify-center shadow-inner ring-2 transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 ${accentClasses}`}
       >
         <Icon className="relative z-10 w-8 h-8 text-white drop-shadow-md" aria-hidden />
       </div>
       <span className="text-xs font-semibold text-white max-w-full truncate">{module.name}</span>
+    </>
+  );
+
+  if (desktopMode && moduleSupportsWindows(module.path)) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        className="group flex flex-col items-center text-center gap-2 p-4 rounded-2xl hover:bg-white/10 transition-colors"
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <Link
+      to={module.path}
+      onClick={handleClick}
+      className="group flex flex-col items-center text-center gap-2 p-4 rounded-2xl hover:bg-white/10 transition-colors"
+    >
+      {inner}
     </Link>
   );
 }

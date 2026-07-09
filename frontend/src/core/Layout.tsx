@@ -6,7 +6,7 @@
  * by the platform event hub.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { moduleRegistry } from './registry';
 import * as Icons from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -14,6 +14,12 @@ import AppLauncher from './shell/AppLauncher';
 import NotificationCenter from './shell/NotificationCenter';
 import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
+import DesktopShell from './shell/DesktopShell';
+import Dock from './shell/Dock';
+import WindowLayer from './shell/WindowLayer';
+import { moduleSupportsWindows, openModuleWindow } from './shell/openModuleWindow';
+import { DOCK_HEIGHT } from './shell/windowTypes';
+import { useDesktopKeyboard } from './shell/useDesktopKeyboard';
 import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs, api } from './platform';
 
 interface IconProps {
@@ -57,6 +63,7 @@ export default function Layout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const location = useLocation();
+  const navigate = useNavigate();
   const modules = moduleRegistry.getAll();
   const [installedPackages, setInstalledPackages] = useState<any[]>([]);
 
@@ -67,6 +74,14 @@ export default function Layout({
   const [language, setLanguage] = useState<'en' | 'vi'>(() => {
     return (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en';
   });
+
+  const [desktopMode, setDesktopMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('copanel_desktop_ui');
+    if (saved === '0') return false;
+    if (saved === '1') return true;
+    return window.innerWidth >= 1024;
+  });
+  const [viewportWide, setViewportWide] = useState(() => window.innerWidth >= 1024);
 
   // Modal states
   const [changePwdOpen, setChangePwdOpen] = useState(false);
@@ -349,6 +364,33 @@ export default function Layout({
   }, [theme, language]);
 
   useEffect(() => {
+    localStorage.setItem('copanel_desktop_ui', desktopMode ? '1' : '0');
+  }, [desktopMode]);
+
+  useEffect(() => {
+    const onResize = () => setViewportWide(window.innerWidth >= 1024);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const useDesktopShell = desktopMode && viewportWide;
+  const isDashboardHome = location.pathname === '/' || location.pathname === '/dashboard';
+  const isWindowRoute = moduleSupportsWindows(location.pathname);
+
+  useEffect(() => {
+    if (!useDesktopShell) return;
+    if (!moduleSupportsWindows(location.pathname)) return;
+    openModuleWindow(location.pathname);
+    navigate('/dashboard', { replace: true });
+  }, [location.pathname, useDesktopShell, navigate]);
+
+  const toggleDesktopMode = () => setDesktopMode((v) => !v);
+
+  const shellContext = { theme, setTheme, language, setLanguage };
+
+  useDesktopKeyboard(useDesktopShell);
+
+  useEffect(() => {
     if (window.innerWidth < 1024) {
       setSidebarOpen(false);
     }
@@ -504,14 +546,15 @@ export default function Layout({
     <div className={`flex h-screen transition-colors duration-200 ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
       }`}>
       {/* Mobile Overlay */}
-      {sidebarOpen && (
+      {sidebarOpen && !useDesktopShell && (
         <div
           onClick={() => setSidebarOpen(false)}
           className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm animate-fade-in"
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — classic mode only */}
+      {!useDesktopShell && (
       <aside
         className={cn(
           'fixed inset-y-0 left-0 z-50 border-r transition-transform duration-300 lg:static lg:translate-x-0',
@@ -663,10 +706,12 @@ export default function Layout({
           </div>
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
+        {/* Top Bar — classic mode only */}
+        {!useDesktopShell && (
         <header className={`px-6 py-4 flex items-center justify-between border-b transition-colors duration-200 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
           }`}>
           <div className="flex items-center gap-2">
@@ -705,6 +750,17 @@ export default function Layout({
               title="App Launcher (Ctrl+K)"
               onClick={() => setLauncherOpen(true)}
             />
+            {viewportWide && (
+              <ShellIconButton
+                isDark={isDark}
+                icon={<Icons.Monitor className="w-4 h-4" />}
+                title="Desktop UI"
+                onClick={() => {
+                  setDesktopMode(true);
+                  navigate('/dashboard');
+                }}
+              />
+            )}
             <ShellIconButton
               isDark={isDark}
               icon={<Icons.Activity className="w-4 h-4" />}
@@ -743,6 +799,7 @@ export default function Layout({
             )}
           </div>
         </header>
+        )}
 
         {/* Panel upgrade (superadmin, GitHub main vs local VERSION) */}
         {upgradeOpen && user?.role === 'superadmin' && (
@@ -916,12 +973,31 @@ export default function Layout({
         )}
 
         {/* Content */}
-        <main className={`flex-1 overflow-auto pb-20 lg:pb-0 transition-colors duration-200 ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
-          }`}>
-          <Outlet context={{ theme, setTheme, language, setLanguage }} />
+        <main
+          className={cn(
+            'relative flex-1 overflow-auto transition-colors duration-200',
+            isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900',
+            !useDesktopShell && 'pb-20 lg:pb-0',
+            useDesktopShell && 'overflow-hidden',
+          )}
+          style={useDesktopShell ? { paddingBottom: DOCK_HEIGHT } : undefined}
+        >
+          {useDesktopShell && (isDashboardHome || isWindowRoute) ? (
+            <DesktopShell
+              modules={allowedModules}
+              isDark={isDark}
+              language={language}
+              onOpenLauncher={() => setLauncherOpen(true)}
+              siteTitle={siteTitle}
+            />
+          ) : (
+            <Outlet context={shellContext} />
+          )}
+          {useDesktopShell && <WindowLayer shellContext={shellContext} isDark={isDark} />}
         </main>
 
-        {/* Mobile Bottom Footer Menu */}
+        {/* Mobile Bottom Footer Menu — classic mode only */}
+        {!useDesktopShell && (
         <div className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden flex justify-around items-center h-16 border-t backdrop-blur-md px-2 ${isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200 shadow-lg'
           }`}>
           <Link
@@ -985,9 +1061,32 @@ export default function Layout({
             <span className="text-[10px] truncate">{(tr as any).modulesNames?.['system_monitor']}</span>
           </Link>
         </div>
+        )}
       </div>
 
-      <AppLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} theme={theme} />
+      {useDesktopShell && (
+        <Dock
+          isDark={isDark}
+          language={language}
+          onToggleTheme={() => setTheme(isDark ? 'light' : 'dark')}
+          onToggleLanguage={() => setLanguage(language === 'en' ? 'vi' : 'en')}
+          onOpenLauncher={() => setLauncherOpen(true)}
+          onOpenTasks={() => setTasksOpen(true)}
+          onOpenNotifications={() => setNotificationsOpen(true)}
+          onToggleDesktopMode={toggleDesktopMode}
+          desktopMode={desktopMode}
+          runningTasks={running}
+          unreadNotifications={unread}
+          username={user?.username}
+        />
+      )}
+
+      <AppLauncher
+        open={launcherOpen}
+        onClose={() => setLauncherOpen(false)}
+        theme={theme}
+        desktopMode={useDesktopShell}
+      />
       <TaskCenter open={tasksOpen} onClose={() => setTasksOpen(false)} />
       <NotificationCenter open={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
       <ToastLayer />

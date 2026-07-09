@@ -4,7 +4,8 @@
  * Synchronized with the global Light/Dark theme and En/Vi languages.
  */
 import { useState, useEffect, useMemo } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 interface FileItem {
@@ -184,23 +185,7 @@ export default function FileManagerDashboard() {
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortAsc, setSortAsc] = useState<boolean>(true);
 
-  // Global Context synchronization fallback
-  const context = useOutletContext<{
-    theme: 'dark' | 'light';
-    language: 'en' | 'vi';
-    setTheme: (t: 'dark' | 'light') => void;
-    setLanguage: (l: 'en' | 'vi') => void;
-  }>();
-
-  const [localTheme] = useState<'dark' | 'light'>(
-    (localStorage.getItem('copanel_theme') as 'dark' | 'light') || 'light'
-  );
-  const [localLanguage] = useState<'en' | 'vi'>(
-    (localStorage.getItem('copanel_lang') as 'en' | 'vi') || 'en'
-  );
-
-  const theme = context?.theme || localTheme;
-  const language = context?.language || localLanguage;
+  const { theme, language } = useAppShellContext();
 
   // Modals / Dialogs state
   const [editingFile, setEditingFile] = useState<string | null>(null);
@@ -942,12 +927,11 @@ export default function FileManagerDashboard() {
     return new Date(timestamp * 1000).toLocaleString();
   };
 
-  const containerStyle = isDark
-    ? 'bg-slate-950 text-slate-100 min-h-screen'
-    : 'bg-slate-50 text-slate-900 min-h-screen';
+  const containerStyle = isDark ? 'text-slate-100' : 'text-slate-900';
 
   return (
-    <div className={`${containerStyle} p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-4 sm:space-y-8 select-none transition-colors duration-200 pb-24 md:pb-8`}>
+    <ModuleViewport constrained className={`p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-8 select-none transition-colors duration-200 pb-8`}>
+    <div className={containerStyle}>
       {/* Top Header */}
       <div className={`relative overflow-hidden p-4 sm:p-8 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6 border transition-colors duration-200 ${
         isDark
@@ -1954,5 +1938,6 @@ export default function FileManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

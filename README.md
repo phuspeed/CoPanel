@@ -6,6 +6,8 @@
 
 A lightweight, high-performance Linux VPS management panel with a **pluggable architecture**. Add new features just by dropping a module folder—no core code modifications needed!
 
+> **Experimental Desktop UI** lives on branch [`DesktopUI`](https://github.com/phuspeed/CoPanel/tree/DesktopUI) (floating windows, dock). Default stable UI is **`main`**. See [`DESKTOP_UI_BRANCH.md`](DESKTOP_UI_BRANCH.md).
+
 ## AI Agent Quick Navigation
 
 - Start here first: `AGENT_START_HERE.md`
