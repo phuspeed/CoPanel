@@ -27,7 +27,7 @@ export default defineConfig({
               if (!id.includes('node_modules')) return
               if (id.includes('recharts')) return 'recharts'
               if (id.includes('lucide-react')) return 'lucide'
-              if (id.includes('xterm')) return 'xterm'
+              if (id.includes('@xterm')) return 'xterm'
               return 'vendor'
             },
           }

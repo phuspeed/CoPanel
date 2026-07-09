@@ -1,7 +1,9 @@
 /**
  * Terminal Module - Configuration
  */
-import TerminalDashboard from './index';
+import { lazy } from 'react';
+
+const TerminalDashboard = lazy(() => import('./index'));
 
 export default {
   name: 'Terminal',
