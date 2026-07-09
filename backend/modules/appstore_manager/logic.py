@@ -391,6 +391,81 @@ def _cpu_lacks_avx() -> bool:
         return False
 
 
+def _npm_major_version() -> int:
+    try:
+        proc = subprocess.run(["npm", "-v"], capture_output=True, text=True, timeout=30)
+        major = (proc.stdout or "").strip().split(".")[0]
+        return int(major) if major.isdigit() else 0
+    except Exception:
+        return 0
+
+
+def _ensure_modern_npm(log_lines: Optional[List[str]] = None) -> None:
+    if _npm_major_version() >= 9:
+        return
+    if log_lines is not None:
+        log_lines.append("Upgrading npm to >= 9 (required for Rollup WASM overrides)...")
+    for target in ("npm@10", "npm@9"):
+        proc = subprocess.run(
+            ["npm", "install", "-g", target],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if proc.returncode == 0 and _npm_major_version() >= 9:
+            return
+
+
+def _rollup_wasm_configured(frontend_dir: Path) -> bool:
+    pkg = frontend_dir / "package.json"
+    if not pkg.is_file():
+        return False
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+        rollup = str((data.get("overrides") or {}).get("rollup") or "")
+        return "wasm" in rollup.lower()
+    except Exception:
+        return False
+
+
+def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
+    """Use @rollup/wasm-node on no-AVX hosts (same as scripts/install.sh). Returns True if applied."""
+    if not _cpu_lacks_avx():
+        return False
+    if _rollup_wasm_configured(frontend_dir):
+        return False
+    pkg_path = frontend_dir / "package.json"
+    if not pkg_path.is_file():
+        return False
+    _ensure_modern_npm(log_lines)
+    if _npm_major_version() < 9:
+        if log_lines is not None:
+            log_lines.append("⚠️ npm < 9 — cannot apply Rollup WASM override.")
+        return False
+    try:
+        data = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    data.setdefault("overrides", {})["rollup"] = "npm:@rollup/wasm-node@4.60.2"
+    pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if log_lines is not None:
+        log_lines.append("ℹ️ CPU without AVX — applying Rollup WASM override (npm install)...")
+    for cmd in (["npm", "install"], ["npm", "install", "--legacy-peer-deps"]):
+        proc = subprocess.run(
+            cmd,
+            cwd=str(frontend_dir),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if proc.returncode == 0:
+            return True
+        err = (proc.stderr or proc.stdout or "").strip()
+        if log_lines is not None and err:
+            log_lines.append(f"⚠️ {' '.join(cmd)} failed: {err[-400:]}")
+    return False
+
+
 def _prefer_serial_vite_build() -> bool:
     """Use serial chunk rendering (maxParallelFileOps=1) to avoid Rollup native crashes."""
     import os
@@ -497,38 +572,41 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
 
 
 def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
-    """Build frontend with serial-first on no-AVX CPUs; retry once on segfault/OOM."""
+    """Build frontend; on no-AVX use Rollup WASM + serial Vite, retry on segfault/OOM."""
     lines: List[str] = []
     serial_first = _prefer_serial_vite_build()
-    attempts = [True] if serial_first else [False, True]
 
     if serial_first:
+        _maybe_apply_rollup_wasm_override(frontend_dir, lines)
         lines.append(
-            "ℹ️ CPU without AVX — using serial Vite build (avoids Rollup native segfault)."
+            "ℹ️ CPU without AVX — using Rollup WASM (when available) + serial Vite build."
         )
 
     return_code = -1
-    for idx, use_serial in enumerate(attempts):
-        if idx > 0:
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        if attempt == 1:
             if _is_segfault_build_failure(return_code, lines):
-                lines.append(
-                    "⚠️ Build crashed (Rollup segfault / exit 139). Retrying with serial chunk rendering..."
-                )
+                if _maybe_apply_rollup_wasm_override(frontend_dir, lines):
+                    lines.append("⚠️ Rollup segfault (exit 139) — retrying with WASM Rollup...")
+                else:
+                    lines.append("⚠️ Rollup segfault (exit 139) — retrying with serial chunk rendering...")
             elif _is_oom_build_failure(return_code, lines):
-                lines.append(
-                    "⚠️ Build killed (out of memory / exit 137). Retrying with reduced memory settings..."
-                )
+                lines.append("⚠️ Build OOM (exit 137) — retrying with reduced memory settings...")
             else:
                 break
+        elif attempt == 2:
+            if not _is_retriable_build_failure(return_code, lines):
+                break
+            _maybe_apply_rollup_wasm_override(frontend_dir, lines)
+            lines.append("⚠️ Final build retry (serial + Rollup WASM)...")
 
+        use_serial = serial_first or attempt > 0
         attempt_code, attempt_lines = _run_frontend_build_once(frontend_dir, serial=use_serial)
         lines.extend(attempt_lines)
         return_code = attempt_code
         if return_code == 0:
             return 0, lines
-        if idx == 0 and len(attempts) > 1 and _is_retriable_build_failure(return_code, attempt_lines):
-            continue
-        break
 
     return return_code, lines
 
