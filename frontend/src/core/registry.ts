@@ -17,6 +17,7 @@ export interface ModuleConfig {
   singleton?: boolean;
   pinned?: boolean;
   minWindowSize?: { width: number; height: number };
+  adminOnly?: boolean;
   /** AppStore extension module id */
   extensionId?: string;
 }
@@ -85,6 +86,7 @@ class ModuleRegistry {
       singleton: config.singleton,
       pinned: config.pinned === true,
       minWindowSize: config.minWindowSize,
+      adminOnly: config.adminOnly === true,
       extensionId: config.extensionId,
     });
   }

@@ -1093,7 +1093,6 @@ export default function Layout({
           isDark={isDark}
           language={language}
           isSuperAdmin={isSuperAdmin}
-          settingsLabel={tr.settings}
           onToggleTheme={() => setTheme(isDark ? 'light' : 'dark')}
           onToggleLanguage={() => setLanguage(language === 'en' ? 'vi' : 'en')}
           onOpenLauncher={() => setLauncherOpen(true)}
