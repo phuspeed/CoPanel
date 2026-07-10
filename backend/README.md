@@ -44,6 +44,23 @@ backend/
 └── requirements.txt
 ```
 
+## Module sources (CoPanel vs AppStore)
+
+This tree (`backend/modules/`) is the **canonical backend** for every module shipped by **`curl install.sh`**.
+
+| Module kind | Backend path | Also in AppStore ZIP? |
+|-------------|--------------|------------------------|
+| **Core / built-in** | `copanel/backend/modules/<id>/` (here) | Yes — ZIP built from this repo (`is_core: true`) |
+| **AppStore-only** | `copanel-appstore/packages_src/<id>/backend/` | Yes — not in install.sh (`is_core: false`) |
+
+Rules:
+
+- Core module changes → edit **here** + matching `frontend/src/modules/<id>/` in this repo.
+- Do **not** add `packages_src/<id>/` for core modules (ZIP builder would shadow CoPanel).
+- Bump `version.txt` in this folder when releasing an App Store update for a core module.
+
+Full map: [CoPanel-AppStore MODULE_SOURCES.md](https://github.com/phuspeed/CoPanel-AppStore/blob/main/MODULE_SOURCES.md)
+
 ## Module Development
 
 ### Creating a New Module

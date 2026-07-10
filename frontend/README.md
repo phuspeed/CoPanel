@@ -56,6 +56,23 @@ frontend/
 └── index.html
 ```
 
+## Module sources (CoPanel vs AppStore)
+
+This tree (`src/modules/`) is the **canonical frontend** for every module shipped by **`curl install.sh`**.
+
+| Module kind | Frontend path | Also in AppStore ZIP? |
+|-------------|---------------|------------------------|
+| **Core / built-in** | `copanel/frontend/src/modules/<id>/` (here) | Yes — ZIP built from this repo (`is_core: true`) |
+| **AppStore-only** | `copanel-appstore/packages_src/<id>/frontend/` | Yes — not in install.sh (`is_core: false`) |
+
+Rules:
+
+- Core module UI → edit **here** + matching `backend/modules/<id>/` in this repo.
+- AppStore-only modules (e.g. `download_manager`, `module_redis`) → edit **`packages_src/`** in CoPanel-AppStore; do not commit orphan copies here.
+- Dual UI: `ModuleViewport`, `useAppShellContext`, `WindowModal` — see **[DESKTOP_UI.md](./DESKTOP_UI.md)**.
+
+Full map: [CoPanel-AppStore MODULE_SOURCES.md](https://github.com/phuspeed/CoPanel-AppStore/blob/main/MODULE_SOURCES.md)
+
 ## Module Development
 
 ### Creating a New Module

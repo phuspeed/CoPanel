@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import SettingsSidebar, { type SettingsTab } from './components/SettingsSidebar';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 
-type Tab = 'ssh' | 'root' | 'gate' | 'totp' | 'network' | 'branding';
+type Tab = SettingsTab;
 
 interface BrandingSettings {
   site_title: string;
@@ -366,14 +367,6 @@ export default function PanelSettings() {
     isDark ? 'bg-slate-800 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-300'
   }`;
   const label = `block text-xs font-medium mb-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`;
-  const tabBtn = (id: Tab) =>
-    `px-3 py-2 rounded-lg text-sm font-medium ${
-      tab === id
-        ? 'bg-blue-600 text-white'
-        : isDark
-          ? 'text-slate-300 hover:bg-slate-800'
-          : 'text-slate-600 hover:bg-slate-100'
-    }`;
 
   const applySsh = async () => {
     setBusy(true);
@@ -534,38 +527,39 @@ export default function PanelSettings() {
   }
 
   return (
-    <ModuleViewport constrained>
-    <div className={`p-4 md:p-6 space-y-6 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Icons.Settings className="w-7 h-7 text-blue-500" />
-          {t.title}
-        </h1>
-        <p className={`mt-1 text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.desc}</p>
-      </div>
+    <ModuleViewport className="flex min-h-0 flex-col">
+      <div className={`flex h-full min-h-0 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+        <SettingsSidebar
+          tab={tab}
+          onTab={setTab}
+          isDark={isDark}
+          labels={{
+            ssh: t.ssh,
+            root: t.root,
+            gate: t.gate,
+            totp: t.totp,
+            network: t.network,
+            branding: t.branding,
+          }}
+          title={t.title}
+          subtitle={t.desc}
+        />
 
-      {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-      {msg && (
-        <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
-          {msg}
-        </div>
-      )}
+        <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
+          {error && (
+            <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">
+              {error}
+            </div>
+          )}
+          {msg && (
+            <div className="mb-4 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-300">
+              {msg}
+            </div>
+          )}
 
-      <div className="flex flex-wrap gap-2">
-        {(['ssh', 'root', 'gate', 'totp', 'network', 'branding'] as Tab[]).map((id) => (
-          <button key={id} type="button" className={tabBtn(id)} onClick={() => setTab(id)}>
-            {t[id]}
-          </button>
-        ))}
-      </div>
-
-      {!settings.is_linux && (
-        <p className={`text-sm ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>{t.linuxOnly}</p>
-      )}
+          {!settings.is_linux && (
+            <p className={`mb-4 text-sm ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>{t.linuxOnly}</p>
+          )}
 
       {tab === 'ssh' && (
         <div className={card}>
@@ -1023,7 +1017,8 @@ export default function PanelSettings() {
           </button>
         </div>
       )}
-    </div>
+        </main>
+      </div>
     </ModuleViewport>
   );
 }

@@ -204,12 +204,75 @@ App Store nút **Open** dùng pattern này cho package đã cài.
 
 ---
 
-## Pilot modules (tham chiếu)
+## Desktop UI status (2026-07-10)
+
+Legend:
+
+| Grade | Meaning |
+|-------|---------|
+| **A — Full window** | `windowMode` + `ModuleViewport` + `useAppShellContext` + `WindowModal` (modals) |
+| **B — Desktop-ready** | `ModuleViewport` + `useAppShellContext`; classic full-page in desktop until `windowMode` added |
+| **C — Viewport only** | `ModuleViewport` but `dark:` Tailwind (theme may break inside desktop window) — **Wave A backlog** |
+
+### Core modules (`copanel/frontend/src/modules/`)
+
+| Module | Grade | `windowMode` | Notes |
+|--------|-------|--------------|-------|
+| `panel_settings` | **A** | ✓ | Windows Settings sidebar shell |
+| `file_manager` | **A** | ✓ | `WindowModal` file ops |
+| `appstore_manager` | **A** | ✓ | Deepin layout + build modals |
+| `firewall` | **B** | — | `useAppShellContext` ✓; chưa popup window |
+| `web_manager` | **B** | — | idem |
+| `cron_manager` | **C** | — | `ModuleViewport` ✓; còn `dark:` — Wave A |
+| `dns_manager` | **C** | — | idem |
+| `database_manager` | **C** | — | idem |
+| `site_wizard` | **C** | — | idem |
+| `terminal` | **B** | — | |
+| `system_monitor` | **B** | — | |
+| `system_cleaner` | **B** | — | |
+| `ssl_manager` | **B** | — | |
+| `php_manager` | **B** | — | |
+| `package_manager` | **B** | — | |
+| `docker_manager` | **B** | — | |
+| `backup_manager` | **B** | — | |
+| `users` | **B** | — | admin users (core, no App Store entry) |
+
+**`curl install.sh`** ships all core modules at grades above. Grade **B/C** = usable on Desktop (sidebar / full workspace); chưa có floating window riêng.
+
+### AppStore-only (`packages_src/` — Wave C, 2026-07-10)
+
+| Module | Grade | `windowMode` | Notes |
+|--------|-------|--------------|-------|
+| `download_manager` | **A** | ✓ | `WindowModal` |
+| `audio_station` | **A** | ✓ | `WindowModal` |
+| `storage_manager` | **A** | ✓ | `PartitionWizard` + `WindowModal` |
+| `cloudflare_ddns` | **A** | ✓ | `dark` wrapper + scroll |
+| `web_browser` | **A** | ✓ | flex viewport (AppStore-only, **not** core) |
+| `webdav` | **A** | ✓ | config + viewport |
+| `clamav` | **A** | ✓ | config + viewport |
+| `module_redis` | **A** | ✓ | extension fast-path ZIP |
+
+> **`web_browser`** nằm trong App Store (`packages_src/`), **không** có trong `install.sh`. User ví dụ firewall / cron / web_manager = **core**; web_browser = extension.
+
+### Roadmap
+
+| Wave | Scope | Status |
+|------|-------|--------|
+| Pilot | `file_manager`, `appstore_manager`, `panel_settings` | Done |
+| **C** | All `packages_src` catalog modules | Done (local) |
+| **A** | Core `cron_manager`, `dns_manager`, `database_manager`, `site_wizard` → grade B | Backlog |
+| **B** | Remaining core → add `windowMode` + `WindowModal` | Backlog |
+
+---
+
+## Pilot modules (tham chiếu nhanh)
 
 | Module | windowMode | pinned | Ghi chú |
 |--------|------------|--------|---------|
-| File Manager | ✓ | ✓ | `ModuleViewport` |
-| App Store | ✓ | ✓ | Deepin sidebar layout + `WindowModal` |
+| Settings (`panel_settings`) | ✓ | ✓ | Windows Settings sidebar |
+| File Manager | ✓ | ✓ | reference implementation |
+| App Store | ✓ | ✓ | Deepin sidebar |
+| Wave C AppStore modules | ✓ | | see table above |
 
 ---
 

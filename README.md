@@ -228,6 +228,15 @@ Module appears in sidebar (classic) and desktop grid (desktop mode).
 
 Package `frontend/` + `backend/` per [CoPanel-AppStore](https://github.com/phuspeed/CoPanel-AppStore). ZIP modules **must** use `useAppShellContext` + `ModuleViewport` — one ZIP for both UIs.
 
+**Where source lives:**
+
+| Kind | Edit | `install.sh` ships it? |
+|------|------|------------------------|
+| **Core** (file_manager, panel_settings, …) | This repo — `backend/modules/` + `frontend/src/modules/` | Yes |
+| **AppStore-only** (download_manager, module_redis, …) | [CoPanel-AppStore `packages_src/`](https://github.com/phuspeed/CoPanel-AppStore/blob/main/MODULE_SOURCES.md) | No — install from App Store |
+
+`curl install.sh` clones **CoPanel only**; extension modules come from App Store ZIPs. Full policy: [MODULE_SOURCES.md](https://github.com/phuspeed/CoPanel-AppStore/blob/main/MODULE_SOURCES.md).
+
 ## 📊 System Monitor Module (Reference)
 
 The included System Monitor module demonstrates the pluggable architecture:
