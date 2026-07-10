@@ -16,6 +16,8 @@ import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
 import DesktopShell from './shell/DesktopShell';
 import Dock from './shell/Dock';
+import StartMenu from './shell/StartMenu';
+import UserMenu from './shell/UserMenu';
 import WindowLayer from './shell/WindowLayer';
 import { moduleSupportsWindows, openModuleWindow } from './shell/openModuleWindow';
 import { DOCK_HEIGHT } from './shell/windowTypes';
@@ -91,6 +93,8 @@ export default function Layout({
 
   // Shell overlays (App Launcher, Task Center, Notification Center)
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [startMenuOpen, setStartMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { running } = useJobs();
@@ -396,8 +400,6 @@ export default function Layout({
     openModuleWindow(location.pathname);
     navigate('/dashboard', { replace: true });
   }, [location.pathname, useDesktopShell, navigate]);
-
-  const toggleDesktopMode = () => setDesktopMode((v) => !v);
 
   const shellContext = { theme, setTheme, language, setLanguage };
 
@@ -936,7 +938,7 @@ export default function Layout({
 
         {/* Change Password Modal */}
         {changePwdOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-fade-in select-none">
+          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-fade-in select-none">
             <div className={`p-6 rounded-2xl w-full max-w-sm space-y-4 shadow-2xl relative border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
               }`}>
               <div className="flex items-center justify-between">
@@ -1007,12 +1009,11 @@ export default function Layout({
         >
           {useDesktopShell && (isDashboardHome || isWindowRoute) ? (
             <DesktopShell
-              modules={desktopModules}
-              getModuleName={getModuleName}
               isDark={isDark}
               language={language}
-              onOpenLauncher={() => setLauncherOpen(true)}
               siteTitle={siteTitle}
+              siteSubtitle={branding?.site_subtitle}
+              logoDataUrl={logoDataUrl}
             />
           ) : (
             <Outlet context={shellContext} />
@@ -1095,14 +1096,57 @@ export default function Layout({
           isSuperAdmin={isSuperAdmin}
           onToggleTheme={() => setTheme(isDark ? 'light' : 'dark')}
           onToggleLanguage={() => setLanguage(language === 'en' ? 'vi' : 'en')}
-          onOpenLauncher={() => setLauncherOpen(true)}
+          onOpenStartMenu={() => {
+            setUserMenuOpen(false);
+            setStartMenuOpen((v) => !v);
+          }}
+          startMenuOpen={startMenuOpen}
           onOpenTasks={() => setTasksOpen(true)}
           onOpenNotifications={() => setNotificationsOpen(true)}
-          onToggleDesktopMode={toggleDesktopMode}
-          desktopMode={desktopMode}
+          onOpenUserMenu={() => {
+            setStartMenuOpen(false);
+            setUserMenuOpen((v) => !v);
+          }}
+          userMenuOpen={userMenuOpen}
           runningTasks={running}
           unreadNotifications={unread}
           username={user?.username}
+          siteTitle={siteTitle}
+          logoDataUrl={logoDataUrl}
+        />
+      )}
+
+      {useDesktopShell && (
+        <StartMenu
+          open={startMenuOpen}
+          onClose={() => setStartMenuOpen(false)}
+          modules={desktopModules}
+          getModuleName={getModuleName}
+          isDark={isDark}
+          language={language}
+          siteTitle={siteTitle}
+          logoDataUrl={logoDataUrl}
+        />
+      )}
+
+      {useDesktopShell && (
+        <UserMenu
+          open={userMenuOpen}
+          onClose={() => setUserMenuOpen(false)}
+          user={user}
+          isDark={isDark}
+          language={language}
+          serverHostname={serverHostname}
+          lanIp={lanIp}
+          onChangePassword={() => {
+            setPwdMsg('');
+            setChangePwdOpen(true);
+          }}
+          onLogout={onLogout}
+          onSwitchClassic={() => {
+            setDesktopMode(false);
+            navigate('/dashboard');
+          }}
         />
       )}
 
