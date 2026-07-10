@@ -76,17 +76,39 @@ export default {
   // Optional
   icon: 'BarChart3',                // Lucide icon name
   description: 'Module description',
+
+  // Desktop UI (floating window on desktop shell) — see DESKTOP_UI.md
+  windowMode: true,
+  defaultWindowSize: { width: 960, height: 640 },
+  pinned: true,
 };
 ```
 
-3. Create `index.tsx`:
+3. Create `index.tsx` (desktop-aware):
+
+```typescript
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
+
+export default function YourModule() {
+  const { theme, language } = useAppShellContext();
+  return (
+    <ModuleViewport className="p-4">
+      <h1 className="text-xl font-bold">Your Module</h1>
+    </ModuleViewport>
+  );
+}
+```
+
+**Desktop UI modules:** read **[DESKTOP_UI.md](./DESKTOP_UI.md)** for window layout, `WindowModal`, keyboard shortcuts, and checklist.
+
+Legacy minimal module (classic only):
 
 ```typescript
 export default function YourModule() {
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold">Your Module</h1>
-      <p>Module content here</p>
     </div>
   );
 }

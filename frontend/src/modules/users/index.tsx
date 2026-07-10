@@ -2,7 +2,8 @@
  * Premium Users and Permissions Management Dashboard
  */
 import { useEffect, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 interface UserProfile {
@@ -31,7 +32,7 @@ export default function UsersDashboard() {
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [folderInput, setFolderInput] = useState<string>('/home/');
 
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
 
   const token = localStorage.getItem('copanel_token');
@@ -281,6 +282,7 @@ export default function UsersDashboard() {
   };
 
   return (
+    <ModuleViewport constrained>
     <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
         isDark ? 'bg-gradient-to-br from-indigo-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-indigo-50/40 via-white to-slate-50 border-slate-200 shadow-slate-100'
@@ -549,5 +551,6 @@ export default function UsersDashboard() {
         </div>
       </div>
     </div>
+    </ModuleViewport>
   );
 }

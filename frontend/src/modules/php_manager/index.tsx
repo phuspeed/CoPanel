@@ -3,7 +3,8 @@
  * Features: multi-version selector, enable/disable modules, php.ini editor, tabs
  */
 import { useState, useEffect, useMemo } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 const INSTALLABLE_VERSIONS = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'];
@@ -28,7 +29,7 @@ interface InstalledVersion {
 }
 
 export default function PHPManagerDashboard() {
-  const { theme, language } = useOutletContext<{ theme: 'dark'|'light'; language: 'en'|'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
 
@@ -249,6 +250,7 @@ export default function PHPManagerDashboard() {
   };
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-5 select-none">
       {/* Header */}
       <div className={`${card} flex flex-col md:flex-row md:items-center justify-between gap-4`}>
@@ -527,5 +529,6 @@ export default function PHPManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

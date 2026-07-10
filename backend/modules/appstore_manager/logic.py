@@ -3,6 +3,7 @@ AppStore Manager Logic Layer
 Pulls package details from dynamic GitHub index file, handles on-demand installation.
 """
 import logging
+import os
 import urllib.request
 import json
 import re
@@ -21,6 +22,13 @@ CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/
 CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/contents/packages.json"
 BUILD_TASKS = {}
 logger = logging.getLogger(__name__)
+
+# Desktop UI track: keep windowMode / lazy-xterm files when AppStore ZIP overwrites modules.
+DESKTOP_UI_PRESERVE_FILES: Dict[str, tuple] = {
+    "appstore_manager": ("config.ts",),
+    "file_manager": ("config.ts",),
+    "terminal": ("config.ts", "index.tsx"),
+}
 
 
 def get_copanel_home() -> Path:
@@ -391,6 +399,112 @@ def _cpu_lacks_avx() -> bool:
         return False
 
 
+def _is_desktop_ui_track() -> bool:
+    """True when panel was installed from DesktopUI / install-desktop-ui.sh."""
+    if os.environ.get("COPANEL_UI_TRACK", "").strip().lower() == "desktop":
+        return True
+    marker = get_copanel_home() / "config" / "ui_track"
+    if marker.is_file():
+        try:
+            return marker.read_text(encoding="utf-8").strip().lower() == "desktop"
+        except OSError:
+            pass
+    return False
+
+
+def _is_desktop_appstore_frontend(dst: Path) -> bool:
+    return (dst / "components" / "AppStoreSidebar.tsx").is_file()
+
+
+def _install_frontend_module_tree(
+    src_frontend: Path,
+    dst_frontend: Path,
+    pkg_id: str,
+    log_lines: Optional[List[str]] = None,
+) -> None:
+    """Copy frontend module; on Desktop UI track preserve pilot windowMode / xterm files."""
+    preserve_names = set(DESKTOP_UI_PRESERVE_FILES.get(pkg_id, ()))
+    if _is_desktop_ui_track() and pkg_id == "appstore_manager" and _is_desktop_appstore_frontend(dst_frontend):
+        preserve_names |= {"index.tsx", "i18n.ts", "types.ts", "utils.ts"}
+    backups: Dict[str, str] = {}
+    components_backup: Optional[Path] = None
+    if _is_desktop_ui_track() and preserve_names and dst_frontend.is_dir():
+        for name in preserve_names:
+            path = dst_frontend / name
+            if path.is_file():
+                try:
+                    backups[name] = path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        if pkg_id == "appstore_manager" and _is_desktop_appstore_frontend(dst_frontend):
+            comp = dst_frontend / "components"
+            if comp.is_dir():
+                components_backup = get_copanel_home() / "tmp" / f"_preserve_{pkg_id}_components"
+                if components_backup.exists():
+                    shutil.rmtree(components_backup, ignore_errors=True)
+                components_backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(comp, components_backup)
+        if backups or components_backup:
+            if log_lines is not None:
+                kept = ", ".join(sorted(backups.keys()))
+                if components_backup:
+                    kept = f"{kept}, components/" if kept else "components/"
+                log_lines.append(f"ℹ️ Desktop UI track — preserving {pkg_id}: {kept}")
+
+    shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
+
+    for name, content in backups.items():
+        (dst_frontend / name).write_text(content, encoding="utf-8")
+    if components_backup and components_backup.is_dir():
+        comp = dst_frontend / "components"
+        if comp.exists():
+            shutil.rmtree(comp, ignore_errors=True)
+        shutil.copytree(components_backup, comp)
+        shutil.rmtree(components_backup, ignore_errors=True)
+
+
+def _ensure_frontend_npm_deps(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
+    if log_lines is not None:
+        log_lines.append("Running npm install in frontend...")
+    is_win = platform.system() == "Windows"
+    for cmd in (["npm", "install"], ["npm", "install", "--legacy-peer-deps"]):
+        proc = subprocess.run(
+            cmd,
+            cwd=str(frontend_dir),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            shell=is_win,
+        )
+        if proc.returncode == 0:
+            return True
+        err = (proc.stderr or proc.stdout or "").strip()
+        if log_lines is not None and err:
+            log_lines.append(f"⚠️ {' '.join(cmd)} failed: {err[-400:]}")
+    return False
+
+
+def _clean_frontend_dist(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
+    dist = frontend_dir / "dist"
+    if dist.is_dir():
+        if log_lines is not None:
+            log_lines.append("Cleaning frontend dist/ before rebuild...")
+        shutil.rmtree(dist, ignore_errors=True)
+
+
+def _prepare_frontend_for_build(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
+    """Match install.sh: WASM overrides + npm install on no-AVX; always wipe stale dist/."""
+    if _cpu_lacks_avx():
+        _ensure_modern_npm(log_lines)
+        _maybe_apply_rollup_wasm_override(frontend_dir, log_lines)
+    _clean_frontend_dist(frontend_dir, log_lines)
+    vite_cache = frontend_dir / "node_modules" / ".vite"
+    if vite_cache.is_dir():
+        if log_lines is not None:
+            log_lines.append("Cleaning Vite cache...")
+        shutil.rmtree(vite_cache, ignore_errors=True)
+
+
 def _npm_major_version() -> int:
     try:
         proc = subprocess.run(["npm", "-v"], capture_output=True, text=True, timeout=30)
@@ -422,17 +536,17 @@ def _rollup_wasm_configured(frontend_dir: Path) -> bool:
         return False
     try:
         data = json.loads(pkg.read_text(encoding="utf-8"))
-        rollup = str((data.get("overrides") or {}).get("rollup") or "")
-        return "wasm" in rollup.lower()
+        overrides = data.get("overrides") or {}
+        rollup = str(overrides.get("rollup") or "")
+        esbuild = str(overrides.get("esbuild") or "")
+        return "wasm" in rollup.lower() and "wasm" in esbuild.lower()
     except Exception:
         return False
 
 
 def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
-    """Use @rollup/wasm-node on no-AVX hosts (same as scripts/install.sh). Returns True if applied."""
+    """Apply Rollup + esbuild WASM on no-AVX (same as scripts/install.sh). Returns True if npm install ran."""
     if not _cpu_lacks_avx():
-        return False
-    if _rollup_wasm_configured(frontend_dir):
         return False
     pkg_path = frontend_dir / "package.json"
     if not pkg_path.is_file():
@@ -440,30 +554,27 @@ def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[Li
     _ensure_modern_npm(log_lines)
     if _npm_major_version() < 9:
         if log_lines is not None:
-            log_lines.append("⚠️ npm < 9 — cannot apply Rollup WASM override.")
+            log_lines.append("⚠️ npm < 9 — cannot apply WASM overrides.")
         return False
     try:
         data = json.loads(pkg_path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    data.setdefault("overrides", {})["rollup"] = "npm:@rollup/wasm-node@4.60.2"
-    pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    if log_lines is not None:
-        log_lines.append("ℹ️ CPU without AVX — applying Rollup WASM override (npm install)...")
-    for cmd in (["npm", "install"], ["npm", "install", "--legacy-peer-deps"]):
-        proc = subprocess.run(
-            cmd,
-            cwd=str(frontend_dir),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        if proc.returncode == 0:
-            return True
-        err = (proc.stderr or proc.stdout or "").strip()
-        if log_lines is not None and err:
-            log_lines.append(f"⚠️ {' '.join(cmd)} failed: {err[-400:]}")
-    return False
+    overrides = data.setdefault("overrides", {})
+    changed = False
+    if "wasm" not in str(overrides.get("rollup") or "").lower():
+        overrides["rollup"] = "npm:@rollup/wasm-node@4.60.2"
+        changed = True
+    if "wasm" not in str(overrides.get("esbuild") or "").lower():
+        overrides["esbuild"] = "npm:esbuild-wasm@0.21.5"
+        changed = True
+    if changed:
+        pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        if log_lines is not None:
+            log_lines.append("ℹ️ CPU without AVX — applying Rollup + esbuild WASM overrides (npm install)...")
+    elif log_lines is not None:
+        log_lines.append("ℹ️ CPU without AVX — refreshing node_modules (WASM toolchain)...")
+    return _ensure_frontend_npm_deps(frontend_dir, log_lines)
 
 
 def _prefer_serial_vite_build() -> bool:
@@ -574,6 +685,7 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
 def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
     """Build frontend; on no-AVX use Rollup WASM + serial Vite, retry on segfault/OOM."""
     lines: List[str] = []
+    _prepare_frontend_for_build(frontend_dir, lines)
     serial_first = _prefer_serial_vite_build()
 
     if serial_first:
@@ -1239,7 +1351,12 @@ class AppStoreManager:
                     
                 if src_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
-                    shutil.copytree(src_frontend, dst_frontend, dirs_exist_ok=True)
+                    _install_frontend_module_tree(
+                        src_frontend,
+                        dst_frontend,
+                        pkg_id,
+                        BUILD_TASKS[pkg_id]["logs"],
+                    )
 
                 if frontend_updated:
                     BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")
@@ -1461,7 +1578,12 @@ class AppStoreManager:
                 if found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
                     dst_frontend.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(found_frontend, dst_frontend, dirs_exist_ok=True)
+                    _install_frontend_module_tree(
+                        found_frontend,
+                        dst_frontend,
+                        pkg_id,
+                        BUILD_TASKS[pkg_id]["logs"],
+                    )
 
                 if frontend_updated:
                     BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")

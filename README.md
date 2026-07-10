@@ -1,14 +1,26 @@
 # CoPanel - Lightweight Linux VPS Management Panel
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A lightweight, high-performance Linux VPS management panel with a **pluggable architecture**. Add new features just by dropping a module folder—no core code modifications needed!
+A lightweight, high-performance Linux VPS management panel with a **pluggable architecture**. Add new features by dropping a module folder—no core code changes required.
+
+## Two UIs, one codebase
+
+| Mode | How to enable | Experience |
+|------|----------------|------------|
+| **Classic** | Default after `install.sh`, or toggle OFF | Sidebar + full-page modules |
+| **Desktop** | `install-desktop-ui.sh`, or toggle ON (≥1024px) | Deepin-style desktop, dock, floating windows |
+
+Both modes share the **same modules** and **same AppStore ZIPs**. Modules use `ModuleViewport` + optional `windowMode` in `config.ts` — classic ignores window fields.
+
+**Module design guide:** [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md) · **AppStore ZIPs:** [CoPanel-AppStore](https://github.com/phuspeed/CoPanel-AppStore)
 
 ## AI Agent Quick Navigation
 
 - Start here first: `AGENT_START_HERE.md`
+- Dual UI modules: `frontend/DESKTOP_UI.md`
 - Backend logic map: `backend/ARCHITECTURE_AI.md`
 - Frontend logic map: `frontend/ARCHITECTURE_AI.md`
 
@@ -49,8 +61,9 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 │   ├── src/
 │   │   ├── core/
 │   │   │   ├── registry.ts         # Dynamic module registry
-│   │   │   ├── Layout.tsx          # Main layout with sidebar
-│   │   │   └── routes.tsx          # Dynamic routing
+│   │   │   ├── Layout.tsx          # Classic sidebar + desktop shell toggle
+│   │   │   ├── shell/              # Desktop UI (windows, dock, desktop)
+│   │   │   └── hooks/useAppShellContext.ts  # theme/lang for both UIs
 │   │   ├── modules/                # 🔌 UI PLUGIN FOLDER
 │   │   │   ├── system_monitor/
 │   │   │   │   ├── index.tsx
@@ -78,15 +91,29 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 - **Python** 3.10+
 - **Node.js** 18+
 
-### Installation
+### Install options
 
-**Rebuild / upgrade** (server đã có `/opt/copanel`):
+**Classic UI (default)** — sidebar, stable default:
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
+```
+
+**Desktop UI** — same `main` branch, desktop track + toggle:
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=main" | sudo bash
+```
+
+**Upgrade existing `/opt/copanel`:**
 
 ```bash
 cd /opt/copanel && sudo git pull origin main && sudo bash scripts/install.sh
 ```
 
-**Cài mới** (khuyến nghị — tránh rate limit `raw.githubusercontent.com`):
+**Fresh clone:**
 
 ```bash
 sudo apt install -y git
@@ -94,14 +121,9 @@ sudo git clone --depth 1 https://github.com/phuspeed/CoPanel.git /opt/copanel
 sudo bash /opt/copanel/scripts/install.sh
 ```
 
-**One-liner** (qua GitHub API):
+Docs: [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md) · [`DESKTOP_UI_BRANCH.md`](DESKTOP_UI_BRANCH.md)
 
-```bash
-curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
-```
-
-> Nếu gặp `429` hoặc `syntax error` khi dùng lệnh `curl ... raw.githubusercontent.com/.../install.sh`, GitHub đang chặn raw CDN — dùng `git clone` hoặc one-liner API ở trên.
+> Avoid `raw.githubusercontent.com` one-liners (rate limits). Use GitHub API URLs above or `git clone`.
 
 The installer will:
 - ✅ Install system dependencies
@@ -142,6 +164,8 @@ The module loads automatically at `/api/{your_module}`!
 
 ### Frontend Module (React/TypeScript)
 
+**Use the dual-UI pattern** so one module works in Classic and Desktop. Full guide: [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md).
+
 1. Create folder: `frontend/src/modules/{your_module}/`
 2. Create `config.ts`:
 
@@ -150,17 +174,40 @@ import YourComponent from './index';
 
 export default {
   name: 'Your Module',
-  icon: 'Grid',  // Lucide icon name
+  icon: 'Grid',
   path: '/your-module',
   component: YourComponent,
   description: 'Your module description',
+  // Optional — desktop shell only (classic ignores these)
+  windowMode: true,
+  defaultWindowSize: { width: 960, height: 640 },
+  pinned: true,
 };
 ```
 
-3. Create `index.tsx` with your React component
-4. Rebuild: `npm run build` (in frontend folder)
+3. Create `index.tsx`:
 
-The module appears automatically in the sidebar!
+```typescript
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
+
+export default function YourModule() {
+  const { theme, language } = useAppShellContext();
+  return (
+    <ModuleViewport constrained className="p-4 md:p-8">
+      {/* content — no min-h-screen / 100vh */}
+    </ModuleViewport>
+  );
+}
+```
+
+4. Rebuild: `npm run build` (in `frontend/`)
+
+Module appears in sidebar (classic) and desktop grid (desktop mode).
+
+### AppStore ZIP (same module layout)
+
+Package `frontend/` + `backend/` per [CoPanel-AppStore](https://github.com/phuspeed/CoPanel-AppStore). ZIP modules **must** use `useAppShellContext` + `ModuleViewport` — one ZIP for both UIs.
 
 ## 📊 System Monitor Module (Reference)
 

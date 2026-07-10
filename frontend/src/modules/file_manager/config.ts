@@ -10,4 +10,8 @@ export default {
   path: '/file-manager',
   description: 'Manage VPS files starting from /var/www or /root',
   component: FileManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1000, height: 680 },
+  singleton: true,
+  pinned: true,
 };

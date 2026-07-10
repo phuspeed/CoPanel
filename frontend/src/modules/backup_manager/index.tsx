@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 // --- Types ---
@@ -141,7 +142,7 @@ function humanizeCron(cron: string, lang: 'en' | 'vi'): string {
 
 // --- Main component ---
 export default function BackupManagerDashboard() {
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
 
@@ -1395,6 +1396,7 @@ export default function BackupManagerDashboard() {
 
   // ---- Main render ----
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
       {/* Header */}
       <div
@@ -1750,6 +1752,7 @@ export default function BackupManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }
 

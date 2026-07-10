@@ -9,6 +9,13 @@ export interface ModuleConfig {
   path: string;
   component: React.ComponentType<any>;
   description?: string;
+  /** Phase 1+ desktop UI: open in floating window instead of full page */
+  windowMode?: boolean;
+  defaultWindowSize?: { width: number; height: number };
+  singleton?: boolean;
+  /** Pin to desktop dock quick-launch */
+  pinned?: boolean;
+  minWindowSize?: { width: number; height: number };
 }
 
 class ModuleRegistry {
@@ -49,6 +56,11 @@ class ModuleRegistry {
           path: config.path,
           component: config.component,
           description: config.description || '',
+          windowMode: config.windowMode === true,
+          defaultWindowSize: config.defaultWindowSize,
+          singleton: config.singleton,
+          pinned: config.pinned === true,
+          minWindowSize: config.minWindowSize,
         });
 
         console.log(`✓ Registered module: ${config.name}`);

@@ -2,7 +2,8 @@
  * System Monitor Dashboard — mobile-first, light/dark, superadmin PID signals.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import {
   LineChart,
   Line,
@@ -345,9 +346,9 @@ function diskAggregateFromPartitions(
 }
 
 export default function SystemMonitorDashboard() {
-  const outlet = useOutletContext<{ language?: Language; theme?: ThemeMode } | null>();
-  const language: Language = outlet?.language === 'vi' ? 'vi' : 'en';
-  const theme: ThemeMode = outlet?.theme === 'dark' ? 'dark' : 'light';
+  const { theme: outletTheme, language: outletLanguage } = useAppShellContext();
+  const language: Language = outletLanguage === 'vi' ? 'vi' : 'en';
+  const theme: ThemeMode = outletTheme === 'dark' ? 'dark' : 'light';
   const isDark = theme === 'dark';
   const tr = TEXT[language];
   const trf = (key: string, vars: Record<string, string | number> = {}) =>
@@ -613,6 +614,7 @@ export default function SystemMonitorDashboard() {
   const procCount = stats.top_processes?.length ?? 0;
 
   return (
+    <ModuleViewport constrained>
     <div className={cn('pb-24 sm:pb-8 px-3 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-5 sm:space-y-8', shell)}>
       {toast && (
         <div
@@ -1409,5 +1411,6 @@ export default function SystemMonitorDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

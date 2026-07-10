@@ -1,0 +1,229 @@
+/**
+ * Bottom dock — open windows, quick launch, system tray.
+ */
+import { useEffect, useState } from 'react';
+import * as Icons from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { moduleRegistry } from '../registry';
+import { cn } from '../../lib/utils';
+import { useStore } from '../platform/store';
+import { moduleSupportsWindows, openModuleWindow } from './openModuleWindow';
+import {
+  focusWindow,
+  minimizeWindow,
+  restoreWindow,
+  windowStore,
+} from './windowStore';
+import { DOCK_HEIGHT } from './windowTypes';
+
+const ICONS: Record<string, React.ComponentType<{ className?: string }>> = Icons as unknown as Record<
+  string,
+  React.ComponentType<{ className?: string }>
+>;
+
+type Lang = 'en' | 'vi';
+
+interface Props {
+  isDark: boolean;
+  language: Lang;
+  isSuperAdmin?: boolean;
+  settingsLabel?: string;
+  onToggleTheme: () => void;
+  onToggleLanguage: () => void;
+  onOpenLauncher: () => void;
+  onOpenTasks: () => void;
+  onOpenNotifications: () => void;
+  onToggleDesktopMode: () => void;
+  desktopMode: boolean;
+  runningTasks: number;
+  unreadNotifications: number;
+  username?: string;
+}
+
+export default function Dock({
+  isDark,
+  language,
+  isSuperAdmin = false,
+  settingsLabel = 'Settings',
+  onToggleTheme,
+  onToggleLanguage,
+  onOpenLauncher,
+  onOpenTasks,
+  onOpenNotifications,
+  onToggleDesktopMode,
+  desktopMode,
+  runningTasks,
+  unreadNotifications,
+  username,
+}: Props) {
+  const navigate = useNavigate();
+  const { windows, focusedId } = useStore(windowStore, (s) => ({
+    windows: s.windows,
+    focusedId: s.focusedId,
+  }));
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const locale = language === 'vi' ? 'vi-VN' : 'en-US';
+  const timeStr = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(now);
+  const dateStr = new Intl.DateTimeFormat(locale, { weekday: 'short', month: 'short', day: 'numeric' }).format(now);
+
+  const pinnedModules = moduleRegistry.getAll().filter((m) => m.pinned && moduleSupportsWindows(m.path));
+
+  const handleDockClick = (modulePath: string) => {
+    if (moduleSupportsWindows(modulePath)) {
+      const existing = windows.find((w) => w.modulePath === modulePath);
+      if (existing) {
+        if (existing.minimized) restoreWindow(existing.id);
+        else if (focusedId === existing.id) minimizeWindow(existing.id);
+        else focusWindow(existing.id);
+      } else {
+        openModuleWindow(modulePath);
+      }
+      return;
+    }
+    navigate(modulePath);
+  };
+
+  return (
+    <div
+      className={cn(
+        'fixed bottom-0 left-0 right-0 z-[120] flex items-center gap-2 border-t px-3 backdrop-blur-xl',
+        isDark ? 'border-slate-800/80 bg-slate-900/85' : 'border-slate-200/80 bg-white/85',
+      )}
+      style={{ height: DOCK_HEIGHT }}
+    >
+      {/* Quick launch — pinned window modules */}
+      <div className="flex items-center gap-1">
+        {pinnedModules.map((mod) => {
+          const Icon = ICONS[mod.icon] || Icons.Grid;
+          return (
+            <DockButton
+              key={mod.path}
+              isDark={isDark}
+              active={windows.some((w) => w.modulePath === mod.path && !w.minimized)}
+              title={mod.name}
+              onClick={() => handleDockClick(mod.path)}
+            >
+              <Icon className="h-5 w-5" />
+            </DockButton>
+          );
+        })}
+        <DockButton isDark={isDark} title="Dashboard" onClick={() => navigate('/dashboard')}>
+          <Icons.Home className="h-5 w-5" />
+        </DockButton>
+        {isSuperAdmin && (
+          <DockButton isDark={isDark} title={settingsLabel} onClick={() => navigate('/settings')}>
+            <Icons.Settings className="h-5 w-5" />
+          </DockButton>
+        )}
+      </div>
+
+      <div className={cn('mx-1 h-8 w-px', isDark ? 'bg-slate-700' : 'bg-slate-200')} />
+
+      {/* Open windows */}
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        {windows.map((win) => {
+          const Icon = ICONS[win.icon] || ICONS.Grid;
+          const active = focusedId === win.id && !win.minimized;
+          return (
+            <DockButton
+              key={win.id}
+              isDark={isDark}
+              active={active}
+              title={win.title}
+              minimized={win.minimized}
+              onClick={() => {
+                if (win.minimized) restoreWindow(win.id);
+                else if (focusedId === win.id) minimizeWindow(win.id);
+                else focusWindow(win.id);
+              }}
+            >
+              <Icon className="h-4 w-4" />
+              <span className="hidden max-w-[100px] truncate text-[10px] font-semibold sm:inline">{win.title}</span>
+            </DockButton>
+          );
+        })}
+      </div>
+
+      {/* System tray */}
+      <div className="flex shrink-0 items-center gap-1">
+        <DockButton isDark={isDark} title="App Launcher (Ctrl+K)" onClick={onOpenLauncher}>
+          <Icons.LayoutGrid className="h-4 w-4" />
+        </DockButton>
+        <DockButton isDark={isDark} title="Task Center" onClick={onOpenTasks} badge={runningTasks}>
+          <Icons.Activity className="h-4 w-4" />
+        </DockButton>
+        <DockButton isDark={isDark} title="Notifications" onClick={onOpenNotifications} badge={unreadNotifications}>
+          <Icons.Bell className="h-4 w-4" />
+        </DockButton>
+        <DockButton isDark={isDark} title={desktopMode ? 'Classic UI' : 'Desktop UI'} onClick={onToggleDesktopMode}>
+          {desktopMode ? <Icons.PanelLeft className="h-4 w-4" /> : <Icons.Monitor className="h-4 w-4" />}
+        </DockButton>
+        <DockButton isDark={isDark} title="Theme" onClick={onToggleTheme}>
+          {isDark ? <Icons.Sun className="h-4 w-4" /> : <Icons.Moon className="h-4 w-4" />}
+        </DockButton>
+        <DockButton isDark={isDark} title="Language" onClick={onToggleLanguage}>
+          <span className="text-[10px] font-bold">{language === 'en' ? 'EN' : 'VI'}</span>
+        </DockButton>
+        <div className={cn('hidden text-right leading-tight md:block', isDark ? 'text-slate-300' : 'text-slate-700')}>
+          <p className="text-[11px] font-bold">{timeStr}</p>
+          <p className={cn('text-[9px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{dateStr}</p>
+        </div>
+        {username && (
+          <span className={cn('hidden text-[10px] font-bold lg:inline', isDark ? 'text-slate-400' : 'text-slate-500')}>
+            {username}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DockButton({
+  children,
+  onClick,
+  isDark,
+  active,
+  minimized,
+  title,
+  badge,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  isDark: boolean;
+  active?: boolean;
+  minimized?: boolean;
+  title?: string;
+  badge?: number;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={cn(
+        'relative flex items-center gap-1.5 rounded-xl px-2.5 py-2 transition-colors',
+        active
+          ? isDark
+            ? 'bg-blue-600/30 text-blue-300 ring-1 ring-blue-500/40'
+            : 'bg-blue-100 text-blue-700 ring-1 ring-blue-300'
+          : isDark
+            ? 'text-slate-300 hover:bg-slate-800'
+            : 'text-slate-600 hover:bg-slate-100',
+        minimized && 'opacity-50',
+      )}
+    >
+      {children}
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
+  );
+}

@@ -28,6 +28,8 @@ NC=$(echo -e '\033[0m')
 # Configuration
 CoPanel_USER="copanel"
 CoPanel_HOME="/opt/copanel"
+COPANEL_GIT_BRANCH="${COPANEL_GIT_BRANCH:-main}"
+COPANEL_GIT_REMOTE="${COPANEL_GIT_REMOTE:-https://github.com/phuspeed/CoPanel.git}"
 VENV_PATH="$CoPanel_HOME/venv"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
@@ -370,15 +372,16 @@ setup_user_and_dirs() {
     # Check if running via one-liner (curl/wget), clone from GitHub directly
     if [[ ! -d "$REPO_DIR/backend" ]] || [[ ! -f "$REPO_DIR/backend/main.py" ]]; then
         if [[ -d "$CoPanel_HOME/.git" ]]; then
-            log_info "CoPanel already exists with Git repository. Updating codebase..."
+            log_info "CoPanel already exists with Git repository. Updating codebase (branch: ${COPANEL_GIT_BRANCH})..."
             cd "$CoPanel_HOME"
             git config --global --add safe.directory '*' || true
             git config --system --add safe.directory '*' || true
             git fetch --all || true
-            git reset --hard origin/main || true
+            git checkout "${COPANEL_GIT_BRANCH}" 2>/dev/null || git checkout -b "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
+            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             git clean -fd || true
-            git pull origin main --force || true
-            git reset --hard origin/main || true
+            git pull origin "${COPANEL_GIT_BRANCH}" --force || true
+            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             REPO_DIR="$CoPanel_HOME"
         else
             log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
@@ -401,7 +404,7 @@ setup_user_and_dirs() {
             done
             
             rm -rf "$CoPanel_HOME"
-            git clone https://github.com/phuspeed/CoPanel.git "$CoPanel_HOME"
+            git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
             
             # Restore the backed up data if any
@@ -559,21 +562,47 @@ copanel_maybe_apply_rollup_wasm_override() {
     local major
     major="$(copanel_npm_major_version)"
     if [[ -z "$major" || "$major" -lt 9 ]]; then
-        log_warning "CPU without AVX and npm < 9 — Rollup WASM override skipped (upgrade npm first)."
+        log_warning "CPU without AVX and npm < 9 — WASM overrides skipped (upgrade npm first)."
         return 0
     fi
-    if grep -q 'wasm-node' "$pkg" 2>/dev/null; then
-        return 0
-    fi
-    log_info "CPU without AVX detected — using Rollup WASM for frontend build..."
+    log_info "CPU without AVX — configuring Rollup + esbuild WASM overrides..."
     node -e '
 const fs = require("fs");
 const pkg = process.argv[1];
 const data = JSON.parse(fs.readFileSync(pkg, "utf8"));
 data.overrides = data.overrides || {};
-data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
-fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+let changed = false;
+if (!String(data.overrides.rollup || "").includes("wasm")) {
+  data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
+  changed = true;
+}
+if (!String(data.overrides.esbuild || "").includes("wasm")) {
+  data.overrides.esbuild = "npm:esbuild-wasm@0.21.5";
+  changed = true;
+}
+if (changed) {
+  fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+  process.stdout.write("changed");
+}
 ' "$pkg"
+}
+
+copanel_frontend_build_noavx() {
+    local attempt
+    for attempt in 1 2 3; do
+        rm -rf dist node_modules/.vite
+        if VITE_BUILD_LOW_MEMORY=1 npm run build:appstore; then
+            return 0
+        fi
+        local code=$?
+        log_warning "Frontend build attempt ${attempt}/3 failed (exit ${code})."
+        if [[ "$attempt" -lt 3 ]]; then
+            log_info "Retrying with fresh npm install (WASM toolchain)..."
+            npm install || npm install --legacy-peer-deps
+            sleep 2
+        fi
+    done
+    return 1
 }
 
 setup_frontend() {
@@ -591,15 +620,29 @@ setup_frontend() {
         
         # Build frontend
         log_info "Building frontend..."
-        rm -rf dist
         if ! copanel_cpu_has_avx; then
-            VITE_BUILD_LOW_MEMORY=1 npm run build || npm run build
+            if ! copanel_frontend_build_noavx; then
+                log_warning "build:appstore failed — last resort: tsc + vite (low-memory)..."
+                rm -rf dist node_modules/.vite
+                VITE_BUILD_LOW_MEMORY=1 npm run build || return 1
+            fi
         else
+            rm -rf dist
             npm run build
         fi
         
         log_success "Frontend built and ready"
         cd - >/dev/null
+    fi
+}
+
+copanel_write_ui_track() {
+    mkdir -p "$CoPanel_HOME/config"
+    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH:-}" == "DesktopUI" ]]; then
+        echo "desktop" > "$CoPanel_HOME/config/ui_track"
+        log_info "UI track: desktop (AppStore will preserve windowMode modules)"
+    elif [[ -f "$CoPanel_HOME/config/ui_track" ]]; then
+        echo "classic" > "$CoPanel_HOME/config/ui_track"
     fi
 }
 
@@ -870,6 +913,9 @@ EOF
     echo -e "${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "   ${CYAN}${BOLD}CoPanel - Advanced Linux VPS Management System${NC}"
+    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH}" == "DesktopUI" ]]; then
+        echo -e "   ${YELLOW}${BOLD}Desktop UI track · branch ${COPANEL_GIT_BRANCH}${NC}"
+    fi
     echo -e "   ${BOLD}v${COPANEL_VER} - Premium Pluggable Architecture${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -888,6 +934,7 @@ EOF
 
     log_step "Step 4: Build & Provision Frontend"
     setup_frontend
+    copanel_write_ui_track
 
     log_step "Step 5: Configure Nginx & Firewall"
     setup_nginx

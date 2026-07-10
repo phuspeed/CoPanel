@@ -10,4 +10,8 @@ export default {
   path: '/appstore-manager',
   description: 'Manage and download public extensions from GitHub.',
   component: AppStoreDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1100, height: 720 },
+  singleton: true,
+  pinned: true,
 };

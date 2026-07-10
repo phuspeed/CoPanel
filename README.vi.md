@@ -1,10 +1,21 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-Một bảng điều khiển quản lý VPS Linux gọn nhẹ, hiệu suất cao với **kiến trúc pluggable**. Thêm các tính năng mới chỉ bằng cách thả một thư mục module vào—không cần chỉnh sửa mã nguồn cốt lõi!
+Bảng điều khiển VPS Linux gọn nhẹ với **kiến trúc pluggable** — thêm module bằng cách thả thư mục, không sửa core.
+
+## Hai giao diện, một codebase
+
+| Chế độ | Cách bật | Trải nghiệm |
+|--------|----------|-------------|
+| **Classic** | Mặc định sau `install.sh`, hoặc tắt toggle | Sidebar + module full-page |
+| **Desktop** | `install-desktop-ui.sh`, hoặc bật toggle (≥1024px) | Desktop Deepin, dock, cửa sổ nổi |
+
+Cùng module, cùng ZIP AppStore. Module dùng `ModuleViewport` + `windowMode` tùy chọn — classic bỏ qua field window.
+
+**Hướng dẫn module:** [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md)
 
 ## 🎯 Triết Lý Cốt Lõi
 
@@ -74,28 +85,32 @@ Một bảng điều khiển quản lý VPS Linux gọn nhẹ, hiệu suất cao
 
 ### Cài đặt
 
-**Nâng cấp** (server đã có `/opt/copanel`):
+#### Cài đặt
 
-```bash
-cd /opt/copanel && sudo git pull origin main && sudo bash scripts/install.sh
-```
-
-**Cài mới** (khuyến nghị):
-
-```bash
-sudo apt install -y git
-sudo git clone --depth 1 https://github.com/phuspeed/CoPanel.git /opt/copanel
-sudo bash /opt/copanel/scripts/install.sh
-```
-
-**One-liner** (qua GitHub API):
+**Classic (mặc định):**
 
 ```bash
 curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
   "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
 ```
 
-> Lỗi `429` hoặc `syntax error` với lệnh `raw.githubusercontent.com` = GitHub chặn raw CDN. Dùng `git clone` hoặc one-liner API ở trên.
+**Desktop UI** (cùng nhánh `main`, bật desktop track):
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=main" | sudo bash
+```
+
+**Nâng cấp** server đã có `/opt/copanel`:
+
+```bash
+cd /opt/copanel && sudo git pull origin main && sudo bash scripts/install.sh
+```
+
+Chuyển Classic ↔ Desktop bất cứ lúc nào trong panel (nút dock / sidebar).  
+Chi tiết: [`frontend/DESKTOP_UI.md`](frontend/DESKTOP_UI.md) · [`DESKTOP_UI_BRANCH.md`](DESKTOP_UI_BRANCH.md)
+
+> Tránh `raw.githubusercontent.com` (dễ 429). Dùng lệnh API GitHub hoặc `git clone`.
 
 Trình cài đặt sẽ:
 - ✅ Cài đặt các thư viện hệ thống cần thiết

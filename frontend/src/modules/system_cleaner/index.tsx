@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 interface JunkInfo {
@@ -17,7 +18,7 @@ interface DiskItem {
 }
 
 export default function SystemCleanerDashboard() {
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
 
@@ -226,6 +227,7 @@ export default function SystemCleanerDashboard() {
   const input = `px-4 py-2 rounded-xl border text-sm focus:border-indigo-500 outline-none transition ${isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-300 text-slate-800'}`;
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 select-none">
       {/* Header */}
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all ${isDark ? 'bg-gradient-to-br from-teal-900/30 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-teal-50/50 via-white to-slate-50 border-slate-200'}`}>
@@ -481,5 +483,6 @@ export default function SystemCleanerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

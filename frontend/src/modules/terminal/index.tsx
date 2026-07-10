@@ -3,11 +3,12 @@
  * Web terminal (xterm.js + WebSocket) and saved command snippets (REST + JSON).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
+import type { Terminal } from '@xterm/xterm';
+import type { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
 type BuiltinSnippet = {
@@ -33,10 +34,7 @@ export default function TerminalDashboard() {
   const termInstanceRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const context = useOutletContext<{
-    theme: 'dark' | 'light';
-    language: 'en' | 'vi';
-  }>();
+  const context = useAppShellContext();
 
   const isDark = context?.theme === 'dark';
   const language = context?.language || 'en';
@@ -218,68 +216,84 @@ export default function TerminalDashboard() {
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", Courier, monospace',
-      theme: {
-        background: isDark ? '#0f172a' : '#1e293b',
-        foreground: '#f8fafc',
-        cursor: '#3b82f6',
-        selectionBackground: 'rgba(59, 130, 246, 0.3)',
-      },
-      convertEol: true,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-
-    term.open(terminalRef.current);
-    fitAddon.fit();
-
-    termInstanceRef.current = term;
-
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname;
-    const port = window.location.port ? `:${window.location.port}` : '';
-    const wsUrl = `${proto}//${host}${port}/api/terminal/ws`;
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setWsConnected(true);
-      term.writeln(`\x1b[1;32m${tr.connected}\x1b[0m\r\n`);
-    };
-
-    ws.onmessage = (event: MessageEvent<string>) => {
-      term.write(event.data);
-    };
-
-    ws.onerror = () => {
-      term.writeln(`\x1b[1;31m${tr.error}\x1b[0m`);
-    };
-
-    ws.onclose = () => {
-      setWsConnected(false);
-      term.writeln(`\x1b[1;31m\r\n${tr.closed}\x1b[0m`);
-    };
-
-    term.onData((data: string) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
+    let disposed = false;
+    let term: Terminal | null = null;
+    let fitAddon: FitAddon | null = null;
+    let ws: WebSocket | null = null;
 
     const handleResize = () => {
-      fitAddon.fit();
+      fitAddon?.fit();
     };
-    window.addEventListener('resize', handleResize);
+
+    void (async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-fit'),
+      ]);
+
+      if (disposed || !terminalRef.current) return;
+
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'Menlo, Monaco, "Courier New", Courier, monospace',
+        theme: {
+          background: isDark ? '#0f172a' : '#1e293b',
+          foreground: '#f8fafc',
+          cursor: '#3b82f6',
+          selectionBackground: 'rgba(59, 130, 246, 0.3)',
+        },
+        convertEol: true,
+      });
+
+      fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+
+      term.open(terminalRef.current);
+      fitAddon.fit();
+
+      termInstanceRef.current = term;
+
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      const port = window.location.port ? `:${window.location.port}` : '';
+      const wsUrl = `${proto}//${host}${port}/api/terminal/ws`;
+
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setWsConnected(true);
+        term?.writeln(`\x1b[1;32m${tr.connected}\x1b[0m\r\n`);
+      };
+
+      ws.onmessage = (event: MessageEvent<string>) => {
+        term?.write(event.data);
+      };
+
+      ws.onerror = () => {
+        term?.writeln(`\x1b[1;31m${tr.error}\x1b[0m`);
+      };
+
+      ws.onclose = () => {
+        setWsConnected(false);
+        term?.writeln(`\x1b[1;31m\r\n${tr.closed}\x1b[0m`);
+      };
+
+      term.onData((data: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
+
+      window.addEventListener('resize', handleResize);
+    })();
 
     return () => {
+      disposed = true;
       window.removeEventListener('resize', handleResize);
-      ws.close();
-      term.dispose();
+      ws?.close();
+      term?.dispose();
       wsRef.current = null;
       termInstanceRef.current = null;
     };
@@ -301,6 +315,7 @@ export default function TerminalDashboard() {
     : 'bg-white border-slate-200 text-slate-900';
 
   return (
+    <ModuleViewport constrained>
     <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div
         className={`relative overflow-hidden p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 border transition-all duration-300 ${
@@ -566,5 +581,6 @@ export default function TerminalDashboard() {
         </button>
       )}
     </div>
+    </ModuleViewport>
   );
 }
