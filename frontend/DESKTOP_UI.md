@@ -226,7 +226,9 @@ Legend:
 | `database_manager` | **A** | ✓ | Wave A |
 | `site_wizard` | **A** | ✓ | Wave A |
 | `firewall` | **A** | ✓ | Wave B config |
-| `web_manager` | **A** | ✓ | modals backlog (`fixed inset`) |
+| `web_manager` | **A** | ✓ | `WindowModal` site create + config |
+| `backup_manager` | **A** | ✓ | `WindowModal` wizard/stream/explorer/oauth |
+| `system_monitor` | **A** | ✓ | `WindowModal` signal + process detail |
 | `terminal` | **A** | ✓ | |
 | `system_monitor` | **A** | ✓ | modals backlog |
 | `system_cleaner` | **A** | ✓ | |
@@ -234,7 +236,7 @@ Legend:
 | `php_manager` | **A** | ✓ | |
 | `package_manager` | **A** | ✓ | |
 | `docker_manager` | **A** | ✓ | `WindowModal` logs |
-| `backup_manager` | **A** | ✓ | modals backlog |
+| `backup_manager` | **A** | ✓ | |
 | `users` | **A** | ✓ | admin only |
 
 **`curl install.sh`** ships all core modules at grades above. Grade **B/C** = usable on Desktop (sidebar / full workspace); chưa có floating window riêng.
@@ -262,7 +264,7 @@ Legend:
 | **C** | All `packages_src` catalog modules | Done |
 | **A** | Core `cron_manager`, `dns_manager`, `database_manager`, `site_wizard` | Done |
 | **B** | All core `windowMode` in `config.ts` | Done |
-| **B2** | `WindowModal` for remaining `fixed inset` (web_manager, backup_manager, system_monitor) | Backlog |
+| **B2** | `WindowModal` for remaining `fixed inset` (web_manager, backup_manager, system_monitor) | Done |
 
 ---
 

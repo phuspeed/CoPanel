@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 
 interface SiteItem {
@@ -1606,24 +1607,14 @@ export default function WebManagerDashboard() {
         </div>
       )}
 
-      {/* Viewing / Modifying Config Modal */}
-      {viewingSite && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className={`p-6 rounded-2xl w-full max-w-4xl shadow-2xl border flex flex-col h-[85vh] transition-all duration-300 ${
-            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          }`}>
-            <div className="flex items-center justify-between mb-4 flex-shrink-0">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.FileText className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.editConfig}: <span className="font-mono text-xs">{viewingSite.filename}</span>
-              </h3>
-              <button
-                onClick={() => setViewingSite(null)}
-                className="text-slate-500 hover:text-red-400 transition"
-              >
-                &times;
-              </button>
-            </div>
-
+      <WindowModal
+        open={!!viewingSite}
+        onClose={() => setViewingSite(null)}
+        title={viewingSite ? `${tr.editConfig}: ${viewingSite.filename}` : tr.editConfig}
+        maxWidth="2xl"
+        className="flex max-h-[85vh] max-w-4xl flex-col"
+      >
+          <div className="flex min-h-0 flex-1 flex-col p-4 select-none">
             {saveStatus && (
               <div className={`p-3.5 border rounded-xl text-xs flex items-center gap-2 mb-4 animate-fade-in flex-shrink-0 ${
                 saveStatus.isError
@@ -1635,7 +1626,7 @@ export default function WebManagerDashboard() {
               </div>
             )}
 
-            {viewingSite.engine === 'nginx' && viewingSite.is_proxy && (
+            {viewingSite?.engine === 'nginx' && viewingSite?.is_proxy && (
               <div className={`mb-4 rounded-xl border p-4 space-y-3 flex-shrink-0 ${
                 isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50/80'
               }`}>
@@ -1734,18 +1725,16 @@ export default function WebManagerDashboard() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </WindowModal>
 
-      {/* Creating New Website Modal Popup */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <div className={`p-6 rounded-2xl w-full max-w-lg shadow-2xl border flex flex-col h-[85vh] transition-all duration-300 ${
-            isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          }`}>
-            <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 flex-shrink-0 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-              <Icons.Plus className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.createBtn}
-            </h3>
+      <WindowModal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={tr.createBtn}
+        maxWidth="lg"
+        className="flex max-h-[85vh] max-w-lg flex-col"
+      >
+          <div className="flex min-h-0 flex-1 flex-col p-4 select-none">
             <div className="space-y-4 flex-1 overflow-auto pr-1">
               <div>
                 <label className={`text-[10px] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -1952,8 +1941,7 @@ export default function WebManagerDashboard() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </WindowModal>
     </div>
     </ModuleViewport>
   );

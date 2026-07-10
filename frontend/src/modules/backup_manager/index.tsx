@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 
 // --- Types ---
@@ -832,15 +833,7 @@ export default function BackupManagerDashboard() {
 
   // ---- Wizard ----
   const renderWizard = () => (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto backdrop-blur-sm bg-black/40">
-      <div className={`${modalBox} max-w-2xl max-h-[90vh] my-4`}>
-        <div className={modalHeader}>
-          <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.newProfile}</h3>
-          <button onClick={() => setShowWizard(false)} className="text-slate-400 hover:text-red-500">
-            <Icons.X className="w-5 h-5" />
-          </button>
-        </div>
-
+    <WindowModal open={showWizard} onClose={() => setShowWizard(false)} title={tr.newProfile} maxWidth="2xl" className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden">
         {/* Steps tab bar */}
         <div className="flex border-b select-none">
           {[1, 2, 3].map((step) => (
@@ -1234,8 +1227,7 @@ export default function BackupManagerDashboard() {
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </WindowModal>
   );
 
   // ---- Stream modal ----
@@ -1244,21 +1236,14 @@ export default function BackupManagerDashboard() {
     const progressPct = streamProgress >= 0 ? streamProgress : 0;
     const isIndeterminate = streamProgress < 0;
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-sm bg-black/60">
-        <div className={`${modalBox} max-w-3xl max-h-[90vh] my-4`}>
-          <div className={modalHeader}>
-            <h3 className={`font-bold text-sm flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-              <Icons.Activity className={`w-5 h-5 text-indigo-500 ${!streamDone ? 'animate-pulse' : ''}`} />
-              {tr.streamingTitle} — {streamingProfile.profile_name}
-            </h3>
-            {streamDone && (
-              <button onClick={() => setStreamingProfile(null)} className="text-slate-400 hover:text-red-500">
-                <Icons.X className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-
-          <div className="p-6 space-y-4">
+      <WindowModal
+        open={!!streamingProfile}
+        onClose={() => setStreamingProfile(null)}
+        title={`${tr.streamingTitle} — ${streamingProfile.profile_name}`}
+        maxWidth="2xl"
+        className="max-h-[90vh] max-w-3xl flex flex-col overflow-hidden"
+      >
+          <div className="space-y-4 p-4">
             {/* Progress bar */}
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs font-bold font-mono">
@@ -1308,14 +1293,12 @@ export default function BackupManagerDashboard() {
               {!streamDone && <div className="animate-pulse text-green-600">▌</div>}
             </div>
           </div>
-        </div>
-      </div>
+      </WindowModal>
     );
   };
 
   // ---- File Explorer ----
   const renderExplorer = () => {
-    if (!showExplorer) return null;
     const parentPath = (() => {
       const parts = explorerPath.replace(/\\/g, '/').split('/').filter(Boolean);
       parts.pop();
@@ -1323,15 +1306,7 @@ export default function BackupManagerDashboard() {
     })();
 
     return (
-      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
-        <div className={`${modalBox} max-w-2xl h-[75vh] max-h-[90vh] my-4`}>
-          <div className={modalHeader}>
-            <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.browseBtn}</h3>
-            <button onClick={() => setShowExplorer(false)} className="text-slate-400 hover:text-red-500">
-              <Icons.X className="w-5 h-5" />
-            </button>
-          </div>
-
+      <WindowModal open={showExplorer} onClose={() => setShowExplorer(false)} title={tr.browseBtn} maxWidth="2xl" className="flex h-[75vh] max-w-2xl flex-col overflow-hidden">
           {/* Shortcut buttons */}
           <div className={`p-3 border-b flex flex-wrap gap-1.5 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
             {systemFolders.map((f) => (
@@ -1389,8 +1364,7 @@ export default function BackupManagerDashboard() {
               </div>
             ))}
           </div>
-        </div>
-      </div>
+      </WindowModal>
     );
   };
 
@@ -1564,25 +1538,19 @@ export default function BackupManagerDashboard() {
       </div>
 
       {/* Modals */}
-      {showWizard && renderWizard()}
-      {showExplorer && renderExplorer()}
+      {renderWizard()}
+      {renderExplorer()}
       {renderStreamModal()}
 
-      {/* Cloud Remote Setup Modal */}
-      {showRcloneConfig && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto backdrop-blur-sm bg-black/40">
-          <div className={`${modalBox} max-w-2xl max-h-[90vh] my-4`}>
-            <div className={modalHeader}>
-              <div className="space-y-0.5">
-                <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.cloudSetup}</h3>
-                <p className={`text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
-              </div>
-              <button onClick={() => setShowRcloneConfig(false)} className="text-slate-400 hover:text-red-500">
-                <Icons.X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+      <WindowModal
+        open={showRcloneConfig}
+        onClose={() => setShowRcloneConfig(false)}
+        title={tr.cloudSetup}
+        maxWidth="2xl"
+        className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden"
+      >
+            <p className={`px-4 pt-3 text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
+            <div className="flex-1 space-y-4 overflow-y-auto p-4">
               <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 Zero-CLI mode: enter Google OAuth app information and complete consent.
                 The backend will exchange token and update `rclone.conf` automatically.
@@ -1748,9 +1716,7 @@ export default function BackupManagerDashboard() {
                 {oauthLoading ? 'Starting...' : tr.startGoogleOAuth}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </WindowModal>
     </div>
     </ModuleViewport>
   );
