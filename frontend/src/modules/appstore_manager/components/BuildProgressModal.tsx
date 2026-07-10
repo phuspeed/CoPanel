@@ -107,6 +107,16 @@ export default function BuildProgressModal({
           </div>
         )}
 
+        {buildStatus === 'success' && !restartRequired && restartUi === 'waiting' && (
+          <div className={cn('space-y-2 rounded-xl border p-4', isDark ? 'border-blue-500/30 bg-blue-950/30' : 'border-blue-200 bg-blue-50')}>
+            <p className={cn('text-xs font-bold', isDark ? 'text-blue-200' : 'text-blue-900')}>{tr.restartWaitingForService}</p>
+            <p className={cn('text-[11px]', isDark ? 'text-blue-100/80' : 'text-blue-800')}>{tr.restartAutoBody}</p>
+            <div className="flex justify-center py-1">
+              <Icons.Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+            </div>
+          </div>
+        )}
+
         {(buildStatus === 'success' || buildStatus === 'failed') && (
           <button
             type="button"

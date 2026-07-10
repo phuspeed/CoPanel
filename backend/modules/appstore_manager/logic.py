@@ -167,6 +167,7 @@ def _new_build_task(logs: Optional[List[str]] = None) -> Dict[str, Any]:
         "error": "",
         "progress": 3,
         "restart_required": False,
+        "restart_scheduled": False,
         "restart_reason": None,
         "backend_status": "pending",
         "frontend_status": "pending",
@@ -182,6 +183,24 @@ def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] 
     task["restart_required"] = True
     task["restart_reason"] = reason
     task["logs"].append(log_line or _RESTART_LOG_HINT)
+
+
+def _schedule_auto_restart(pkg_id: str, reason: str, *, log_line: Optional[str] = None) -> None:
+    """Schedule systemd restart; UI polls health — no manual restart button."""
+    global BUILD_TASKS
+    task = BUILD_TASKS.get(pkg_id)
+    if not task:
+        return
+    task["restart_scheduled"] = True
+    task["restart_reason"] = reason
+    task["logs"].append(
+        log_line or "⏳ Scheduling copanel service restart to register backend API routes…"
+    )
+    if platform.system() != "Windows":
+        restart_backend_service(delay=5.0)
+    else:
+        task["restart_required"] = True
+        task["logs"].append(_RESTART_LOG_HINT)
 
 
 # Key routes that must exist after install — prefix /api/{module_id} is implied.
@@ -233,39 +252,52 @@ def _finalize_module_install(
     *,
     backend_updated: bool,
     frontend_updated: bool,
+    frontend_install_mode: str = "rebuild",
     requires_copanel_restart: bool = False,
     is_new_backend: bool = False,
 ) -> None:
-    """Apply post-install steps; restart copanel when hot-reload cannot expose API routes."""
+    """Post-install: extension/rebuild UI hints; hot-reload backend or restart when needed."""
     global BUILD_TASKS
 
+    extension_mode = frontend_install_mode == "extension"
+
     if frontend_updated:
-        BUILD_TASKS[pkg_id]["logs"].append("✅ Frontend rebuilt — refresh the browser to see UI changes.")
+        if extension_mode:
+            BUILD_TASKS[pkg_id]["logs"].append(
+                "✅ Extension installed — refresh the browser to load the module."
+            )
+        else:
+            BUILD_TASKS[pkg_id]["logs"].append(
+                "✅ Frontend rebuilt — refresh the browser to see UI changes."
+            )
     elif backend_updated:
-        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipped npm build.")
+        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipped frontend install.")
 
     if not backend_updated:
         if frontend_updated:
-            BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend unchanged.")
+            if extension_mode:
+                BUILD_TASKS[pkg_id]["logs"].append(
+                    "ℹ️ Extension-only update — no CoPanel service restart needed."
+                )
+            else:
+                BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend unchanged.")
         return
 
-    if requires_copanel_restart or pkg_id in COPANEL_RESTART_RECOMMENDED:
+    # Self-update: installer cannot hot-reload itself safely.
+    if pkg_id in COPANEL_RESTART_RECOMMENDED:
         _mark_restart_required(
             pkg_id,
-            "module_flag" if requires_copanel_restart else "core_module",
-            log_line=f"⚠️ «{pkg_id}» needs a copanel service restart to take effect.",
+            "core_module",
+            log_line=f"⚠️ «{pkg_id}» updated — restart copanel to load the new installer.",
         )
         return
 
     if is_new_backend:
-        _mark_restart_required(
+        _schedule_auto_restart(
             pkg_id,
             "new_backend",
-            log_line=f"⚠️ New backend module «{pkg_id}» — restart copanel to register API routes.",
+            log_line=f"⚠️ New backend module «{pkg_id}» — scheduling copanel restart to register API routes.",
         )
-        if platform.system() != "Windows":
-            BUILD_TASKS[pkg_id]["logs"].append("⏳ Scheduling copanel service restart…")
-            restart_backend_service(delay=5.0)
         return
 
     if not _core_hot_reload_available():
@@ -273,10 +305,11 @@ def _finalize_module_install(
             "⚠️ CoPanel core is outdated (missing core/module_reload.py). "
             "Run on the server: cd /opt/copanel && git pull origin main"
         )
-        _mark_restart_required(pkg_id, "core_outdated")
-        if platform.system() != "Windows":
-            BUILD_TASKS[pkg_id]["logs"].append("⏳ Scheduling copanel service restart (loads module from disk)…")
-            restart_backend_service(delay=5.0)
+        _schedule_auto_restart(
+            pkg_id,
+            "core_outdated",
+            log_line="⏳ Scheduling copanel service restart (loads module from disk)…",
+        )
         return
 
     try:
@@ -287,7 +320,13 @@ def _finalize_module_install(
         ok, msg = False, str(exc)
 
     if ok and _module_api_routes_active(pkg_id):
-        BUILD_TASKS[pkg_id]["logs"].append(f"✅ Backend API reloaded for «{pkg_id}» (no copanel restart).")
+        BUILD_TASKS[pkg_id]["logs"].append(
+            f"✅ Backend API reloaded for «{pkg_id}» — no CoPanel restart needed."
+        )
+        if extension_mode and frontend_updated:
+            BUILD_TASKS[pkg_id]["logs"].append(
+                "ℹ️ Refresh the browser to load the new extension UI."
+            )
         return
 
     if ok:
@@ -296,12 +335,20 @@ def _finalize_module_install(
         )
     else:
         BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
-    _mark_restart_required(pkg_id, "hot_reload_failed")
-    if platform.system() != "Windows":
-        BUILD_TASKS[pkg_id]["logs"].append(
-            "⏳ Scheduling copanel service restart — required to register backend API routes."
+
+    if requires_copanel_restart:
+        _mark_restart_required(
+            pkg_id,
+            "module_flag",
+            log_line=f"⚠️ «{pkg_id}» needs a copanel service restart to take effect.",
         )
-        restart_backend_service(delay=5.0)
+        return
+
+    _schedule_auto_restart(
+        pkg_id,
+        "hot_reload_failed",
+        log_line="⏳ Scheduling copanel service restart — required to register backend API routes.",
+    )
 
 
 def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
@@ -1672,6 +1719,7 @@ class AppStoreManager:
                         pkg_id,
                         backend_updated=backend_updated,
                         frontend_updated=frontend_updated,
+                        frontend_install_mode=install_mode,
                         requires_copanel_restart=requires_copanel_restart,
                         is_new_backend=is_new_backend,
                     )
@@ -1719,6 +1767,7 @@ class AppStoreManager:
             "error": "",
             "progress": 0,
             "restart_required": False,
+            "restart_scheduled": False,
             "restart_reason": None,
             "backend_status": "unknown",
             "frontend_status": "unknown",
@@ -1966,6 +2015,7 @@ class AppStoreManager:
                         pkg_id,
                         backend_updated=backend_updated,
                         frontend_updated=frontend_updated,
+                        frontend_install_mode=install_mode,
                         is_new_backend=is_new_backend,
                     )
                 else:

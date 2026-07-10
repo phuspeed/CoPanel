@@ -72,9 +72,11 @@ export default function AppStoreDashboard() {
       progress?: number;
       error?: string;
       restart_required?: boolean;
+      restart_scheduled?: boolean;
       restart_reason?: string | null;
     },
     successLabel: string,
+    extensionInstall?: boolean,
   ) => {
     if (b.logs) setBuildLogs(b.logs);
     if (typeof b.progress === 'number') setBuildProgress(b.progress);
@@ -83,12 +85,31 @@ export default function AppStoreDashboard() {
     setBuildStatus(b.status);
     if (b.status === 'success') {
       fetchCatalog();
-      if (b.restart_required) {
+      if (b.restart_scheduled) {
+        setRestartUi('waiting');
+        setMsg(tr.restartAutoInProgress(successLabel));
+        void (async () => {
+          const back = await waitForCopanelHealth();
+          if (back) {
+            setMsg(tr.restartScheduled);
+            window.setTimeout(() => window.location.reload(), 800);
+          } else {
+            setRestartUi('idle');
+            setRestartRequired(true);
+            setRestartReason(b.restart_reason ?? 'hot_reload_failed');
+            setMsg(tr.restartTimedOut);
+          }
+        })();
+      } else if (b.restart_required) {
         setRestartRequired(true);
         setRestartReason(b.restart_reason ?? null);
         setMsg(tr.installSuccessNeedsRestart(successLabel));
       } else {
-        setMsg(`✓ ${successLabel} installed and built successfully!`);
+        setMsg(
+          extensionInstall
+            ? tr.installSuccessExtension(successLabel)
+            : tr.installSuccessBuilt(successLabel),
+        );
         setTimeout(() => window.location.reload(), 1200);
       }
     } else {
@@ -245,7 +266,7 @@ export default function AppStoreDashboard() {
             });
             if (r.ok) {
               const b = await r.json();
-              if (handleBuildPollResult(b, pkg.name)) clearInterval(interval);
+              if (handleBuildPollResult(b, pkg.name, pkg.frontend_install === 'extension')) clearInterval(interval);
             }
           } catch (err) {
             console.error(err);
