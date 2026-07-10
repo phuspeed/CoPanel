@@ -78,27 +78,27 @@ export default defineConfig({
     modulePreload: !lowMemory,
     rollupOptions: {
       maxParallelFileOps: lowMemory ? 1 : undefined,
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/lucide-react')) return 'lucide-vendor'
-          if (id.includes('node_modules/react-router')) return 'router-vendor'
-          if (id.includes('node_modules/react-dom')) return 'react-dom-vendor'
-          if (id.includes('node_modules/react/') || id.endsWith('node_modules/react')) {
-            return 'react-vendor'
+      // Rollup rejects manualChunks when inlineDynamicImports is set (no-AVX / low-memory path).
+      output: lowMemory
+        ? {
+            inlineDynamicImports: true,
+            chunkFileNames: 'assets/[name]-[hash].js',
           }
-          if (lowMemory) return undefined
-          return undefined
-        },
-        chunkFileNames(chunk) {
-          if (VENDOR_CHUNK_NAMES.has(chunk.name)) return `assets/${chunk.name}.js`
-          return 'assets/[name]-[hash].js'
-        },
-        ...(lowMemory
-          ? {
-              inlineDynamicImports: true,
-            }
-          : {}),
-      },
+        : {
+            manualChunks(id) {
+              if (id.includes('node_modules/lucide-react')) return 'lucide-vendor'
+              if (id.includes('node_modules/react-router')) return 'router-vendor'
+              if (id.includes('node_modules/react-dom')) return 'react-dom-vendor'
+              if (id.includes('node_modules/react/') || id.endsWith('node_modules/react')) {
+                return 'react-vendor'
+              }
+              return undefined
+            },
+            chunkFileNames(chunk) {
+              if (VENDOR_CHUNK_NAMES.has(chunk.name)) return `assets/${chunk.name}.js`
+              return 'assets/[name]-[hash].js'
+            },
+          },
     },
   },
   esbuild: lowMemory
