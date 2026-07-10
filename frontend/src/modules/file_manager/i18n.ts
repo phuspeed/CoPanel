@@ -72,6 +72,8 @@ const dict = {
     statusSelected: (n: number, size: string) => `${n} selected · ${size}`,
     go: 'Open',
     goUp: 'Parent folder',
+    dropToUpload: 'Drop files here to upload',
+    uploadMultiple: (n: number) => `Uploading ${n} file${n === 1 ? '' : 's'}…`,
   },
   vi: {
     title: 'Tệp tin',
@@ -143,6 +145,8 @@ const dict = {
     statusSelected: (n: number, size: string) => `${n} đã chọn · ${size}`,
     go: 'Mở',
     goUp: 'Thư mục cha',
+    dropToUpload: 'Thả file vào đây để tải lên',
+    uploadMultiple: (n: number) => `Đang tải ${n} file…`,
   },
 } as const;
 

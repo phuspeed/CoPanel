@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { formatDate, formatSize } from '../utils';
@@ -25,6 +26,8 @@ interface Props {
   onCut: (item: FileItem) => void;
   onCopy: (item: FileItem) => void;
   onDelete: (item: FileItem) => void;
+  onItemContextMenu: (e: MouseEvent, item: FileItem) => void;
+  onBlankContextMenu: (e: MouseEvent) => void;
 }
 
 function SortBtn({ label, active, asc, isDark, onClick }: { label: string; active: boolean; asc: boolean; isDark: boolean; onClick: () => void }) {
@@ -56,10 +59,15 @@ export default function FileListView({
   onCut,
   onCopy,
   onDelete,
+  onItemContextMenu,
+  onBlankContextMenu,
 }: Props) {
   if (files.length === 0) {
     return (
-      <div className={cn('flex h-full items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}>
+      <div
+        className={cn('flex h-full min-h-[200px] items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}
+        onContextMenu={onBlankContextMenu}
+      >
         {tr.noFiles}
       </div>
     );
@@ -77,7 +85,12 @@ export default function FileListView({
   };
 
   return (
-    <div className="overflow-auto h-full">
+    <div
+      className="overflow-auto h-full min-h-full"
+      onContextMenu={(e) => {
+        if (!(e.target as HTMLElement).closest('[data-fm-item]')) onBlankContextMenu(e);
+      }}
+    >
       <table className="w-full text-left text-xs border-collapse">
         <thead className={cn('sticky top-0 z-10', isDark ? 'bg-slate-950/95 text-slate-400' : 'bg-slate-50 text-slate-500')}>
           <tr className="border-b border-inherit">
@@ -102,8 +115,10 @@ export default function FileListView({
             return (
               <tr
                 key={item.path}
+                data-fm-item
                 onDoubleClick={() => onOpen(item)}
                 onClick={(e) => onToggleSelect(item.path, e.ctrlKey || e.metaKey)}
+                onContextMenu={(e) => onItemContextMenu(e, item)}
                 className={cn(
                   'cursor-pointer transition',
                   selected

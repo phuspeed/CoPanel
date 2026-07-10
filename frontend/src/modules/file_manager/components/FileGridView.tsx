@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { fileIconKind, formatDate, formatSize } from '../utils';
@@ -11,6 +12,8 @@ interface Props {
   selectedPaths: string[];
   onOpen: (item: FileItem) => void;
   onToggleSelect: (path: string, multi?: boolean) => void;
+  onItemContextMenu: (e: MouseEvent, item: FileItem) => void;
+  onBlankContextMenu: (e: MouseEvent) => void;
 }
 
 function GridIcon({ kind, isDark }: { kind: ReturnType<typeof fileIconKind>; isDark: boolean }) {
@@ -21,25 +24,45 @@ function GridIcon({ kind, isDark }: { kind: ReturnType<typeof fileIconKind>; isD
   return <Icons.File className={cn('h-10 w-10', isDark ? 'text-slate-400' : 'text-slate-500')} />;
 }
 
-export default function FileGridView({ isDark, tr, files, selectedPaths, onOpen, onToggleSelect }: Props) {
+export default function FileGridView({
+  isDark,
+  tr,
+  files,
+  selectedPaths,
+  onOpen,
+  onToggleSelect,
+  onItemContextMenu,
+  onBlankContextMenu,
+}: Props) {
   if (files.length === 0) {
     return (
-      <div className={cn('flex h-full items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}>
+      <div
+        className={cn('flex h-full min-h-[200px] items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}
+        onContextMenu={onBlankContextMenu}
+      >
         {tr.noFiles}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2 p-3">
-      {files.map((item) => {
-        const selected = selectedPaths.includes(item.path);
-        return (
-          <button
-            key={item.path}
-            type="button"
-            onClick={(e) => onToggleSelect(item.path, e.ctrlKey || e.metaKey)}
-            onDoubleClick={() => onOpen(item)}
+    <div
+      className="min-h-full"
+      onContextMenu={(e) => {
+        if (!(e.target as HTMLElement).closest('[data-fm-item]')) onBlankContextMenu(e);
+      }}
+    >
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2 p-3">
+        {files.map((item) => {
+          const selected = selectedPaths.includes(item.path);
+          return (
+            <button
+              key={item.path}
+              type="button"
+              data-fm-item
+              onClick={(e) => onToggleSelect(item.path, e.ctrlKey || e.metaKey)}
+              onDoubleClick={() => onOpen(item)}
+              onContextMenu={(e) => onItemContextMenu(e, item)}
             className={cn(
               'flex flex-col items-center gap-2 rounded-xl border p-3 text-center transition select-none',
               selected
@@ -61,6 +84,7 @@ export default function FileGridView({ isDark, tr, files, selectedPaths, onOpen,
           </button>
         );
       })}
+      </div>
     </div>
   );
 }

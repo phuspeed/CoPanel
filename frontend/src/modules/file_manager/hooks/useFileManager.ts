@@ -244,28 +244,56 @@ export function useFileManager() {
     }
   };
 
+  const uploadSingleFile = useCallback(
+    (file: File, onProgress?: (pct: number) => void): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/file_manager/upload?path=${encodeURIComponent(currentPath)}`, true);
+        Object.entries(getAuthHeader()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable && onProgress) {
+            onProgress(Math.round((ev.loaded / ev.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error('Upload failed'));
+        };
+        xhr.onerror = () => reject(new Error('Upload network error'));
+        xhr.send(formData);
+      }),
+    [currentPath],
+  );
+
+  const handleUploadFiles = useCallback(
+    async (fileList: FileList | File[]) => {
+      const queue = Array.from(fileList).filter((f) => f.size >= 0);
+      if (!queue.length) return;
+      setUploadProgress(0);
+      try {
+        for (let i = 0; i < queue.length; i++) {
+          const file = queue[i];
+          await uploadSingleFile(file, (pct) => {
+            const overall = Math.round(((i + pct / 100) / queue.length) * 100);
+            setUploadProgress(overall);
+          });
+        }
+        void fetchPath(currentPath, false);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Upload error');
+      } finally {
+        setUploadProgress(null);
+      }
+    },
+    [currentPath, fetchPath, uploadSingleFile],
+  );
+
   const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    setUploadProgress(0);
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/file_manager/upload?path=${encodeURIComponent(currentPath)}`, true);
-    Object.entries(getAuthHeader()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-    xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-    };
-    xhr.onload = () => {
-      setUploadProgress(null);
-      if (xhr.status >= 200 && xhr.status < 300) void fetchPath(currentPath, false);
-      else alert('Upload failed');
-    };
-    xhr.onerror = () => {
-      setUploadProgress(null);
-      alert('Upload network error');
-    };
-    xhr.send(formData);
+    const list = e.target.files;
+    if (!list?.length) return;
+    void handleUploadFiles(list);
     e.target.value = '';
   };
 
@@ -578,6 +606,7 @@ export function useFileManager() {
     handleSaveFile,
     handleDownloadFile,
     handleUploadFile,
+    handleUploadFiles,
     handleCreateItem,
     handleRename,
     handleDelete,

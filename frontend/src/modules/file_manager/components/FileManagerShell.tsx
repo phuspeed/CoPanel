@@ -1,11 +1,14 @@
+import { useCallback, useRef, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import type { FileItem } from '../types';
 import type { FileManagerState } from '../hooks/useFileManager';
 import FileModals from './FileModals';
 import FileSidebar from './FileSidebar';
 import FileToolbar from './FileToolbar';
 import FileGridView from './FileGridView';
 import FileListView from './FileListView';
+import FileContextMenu, { type FileContextMenuState } from './FileContextMenu';
 
 export default function FileManagerShell(fm: FileManagerState) {
   const {
@@ -44,6 +47,7 @@ export default function FileManagerShell(fm: FileManagerState) {
     handleEditFile,
     handleDownloadFile,
     handleUploadFile,
+    handleUploadFiles,
     handleCut,
     handleCopy,
     handlePaste,
@@ -59,6 +63,62 @@ export default function FileManagerShell(fm: FileManagerState) {
     setRenamingItem,
     setRenameValue,
   } = fm;
+
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const openItemContextMenu = useCallback((e: React.MouseEvent, item: FileItem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedPaths.includes(item.path)) {
+      handleToggleSelect(item.path, false);
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'item', item });
+  }, [selectedPaths, handleToggleSelect]);
+
+  const openBlankContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-fm-item]')) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'blank' });
+  }, []);
+
+  const contextItem = contextMenu?.item;
+
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    dragDepthRef.current += 1;
+    setDragOver(true);
+  };
+
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (Array.from(e.dataTransfer.types).includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragOver(false);
+    const dropped = e.dataTransfer.files;
+    if (dropped?.length) void handleUploadFiles(dropped);
+  };
 
   return (
     <div
@@ -189,7 +249,24 @@ export default function FileManagerShell(fm: FileManagerState) {
             </div>
           )}
 
-          <div className={cn('relative min-h-0 flex-1 overflow-auto', isDark ? 'bg-slate-950/20' : 'bg-white')}>
+          <div
+            className={cn('relative min-h-0 flex-1 overflow-auto', isDark ? 'bg-slate-950/20' : 'bg-white')}
+            onDragEnter={onDragEnter}
+            onDragLeave={onDragLeave}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+          >
+            {dragOver && (
+              <div
+                className={cn(
+                  'pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 border-2 border-dashed',
+                  isDark ? 'border-blue-500/70 bg-blue-950/40 text-blue-200' : 'border-blue-500/70 bg-blue-50/90 text-blue-700',
+                )}
+              >
+                <Icons.UploadCloud className="h-10 w-10 opacity-80" />
+                <span className="text-sm font-semibold">{tr.dropToUpload}</span>
+              </div>
+            )}
             {loading && files.length === 0 ? (
               <div className="flex h-full items-center justify-center gap-2 text-xs text-slate-500">
                 <Icons.Loader className="h-5 w-5 animate-spin text-blue-500" />
@@ -208,6 +285,8 @@ export default function FileManagerShell(fm: FileManagerState) {
                 selectedPaths={selectedPaths}
                 onOpen={handleOpenItem}
                 onToggleSelect={handleToggleSelect}
+                onItemContextMenu={openItemContextMenu}
+                onBlankContextMenu={openBlankContextMenu}
               />
             ) : (
               <FileListView
@@ -233,6 +312,8 @@ export default function FileManagerShell(fm: FileManagerState) {
                 onCut={handleCut}
                 onCopy={handleCopy}
                 onDelete={handleDelete}
+                onItemContextMenu={openItemContextMenu}
+                onBlankContextMenu={openBlankContextMenu}
               />
             )}
           </div>
@@ -253,6 +334,49 @@ export default function FileManagerShell(fm: FileManagerState) {
       </div>
 
       <FileModals fm={fm} />
+
+      {contextMenu && (
+        <FileContextMenu
+          menu={contextMenu}
+          isDark={isDark}
+          tr={tr}
+          item={contextItem}
+          hasClipboard={!!clipboard}
+          bookmarksUiEnabled={!bookmarkBackendMissing}
+          bookmarked={contextItem ? bookmarkPathSet.has(contextItem.path) : false}
+          selectionCount={selectedPaths.length}
+          hasZipSelection={selectedPaths.length === 1 && selectedPaths[0].toLowerCase().endsWith('.zip')}
+          onClose={closeContextMenu}
+          onOpen={() => contextItem && handleOpenItem(contextItem)}
+          onEdit={() => contextItem && void handleEditFile(contextItem)}
+          onDownload={() => contextItem && void handleDownloadFile(contextItem)}
+          onRename={() => {
+            if (!contextItem) return;
+            setRenameValue(contextItem.name);
+            setRenamingItem(contextItem);
+          }}
+          onCut={() => handleCut(contextItem)}
+          onCopy={() => handleCopy(contextItem)}
+          onPaste={() => void handlePaste()}
+          onBookmarkToggle={() => contextItem && void toggleBookmarkForItem(contextItem)}
+          onDelete={() => void handleDelete(contextItem)}
+          onZip={() => {
+            fm.setZipArchiveName('archive.zip');
+            fm.setZipModalOpen(true);
+          }}
+          onExtract={() => {
+            fm.setExtractTargetDir(currentPath);
+            fm.setExtractModalOpen(true);
+          }}
+          onChmod={() => {
+            fm.setChmodValue('755');
+            fm.setChmodModalOpen(true);
+          }}
+          onCreateFile={() => setCreateType('file')}
+          onCreateDir={() => setCreateType('dir')}
+          onRefresh={refresh}
+        />
+      )}
     </div>
   );
 }
