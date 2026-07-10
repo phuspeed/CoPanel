@@ -518,12 +518,13 @@ async def zip_items(req: ZipRequest, user: Dict[str, Any] = Depends(get_current_
                 abs_p = check_safe_path(p, user)
                 if not os.path.exists(abs_p):
                     continue
-                
+
                 if os.path.isdir(abs_p):
+                    base_dir = os.path.dirname(abs_p)
                     for root, dirs, files in os.walk(abs_p):
                         for file in files:
                             file_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(file_path, os.path.dirname(abs_p))
+                            rel_path = os.path.relpath(file_path, base_dir).replace('\\', '/')
                             zip_file.write(file_path, rel_path)
                 else:
                     zip_file.write(abs_p, os.path.basename(abs_p))
@@ -533,6 +534,54 @@ async def zip_items(req: ZipRequest, user: Dict[str, Any] = Depends(get_current_
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _normalize_zip_member(name: str) -> str:
+    """Normalize archive member paths — Windows zips often use backslashes."""
+    member = name.replace('\\', '/')
+    while member.startswith('/'):
+        member = member[1:]
+    if len(member) >= 2 and member[1] == ':':
+        member = member.split(':', 1)[1].lstrip('/')
+    return member
+
+
+def _assert_extract_dest(dest: str, target_root: str, raw_name: str) -> str:
+    """Zip-slip guard: resolved path must stay under target_root."""
+    dest_real = os.path.realpath(dest)
+    root = os.path.realpath(target_root)
+    prefix = root if root.endswith(os.sep) else root + os.sep
+    if dest_real != root and not dest_real.startswith(prefix):
+        raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {raw_name}")
+    return dest_real
+
+
+def _safe_extract_zip(zip_file, target_dir: str) -> None:
+    """Extract zip members with normalized paths and directory creation."""
+    target_root = os.path.realpath(target_dir)
+    os.makedirs(target_root, exist_ok=True)
+
+    for info in zip_file.infolist():
+        member = _normalize_zip_member(info.filename)
+        if not member or member in ('.', '..'):
+            continue
+
+        is_dir = member.endswith('/') or (
+            hasattr(info, 'is_dir') and callable(info.is_dir) and info.is_dir()
+        )
+        if is_dir:
+            dir_path = os.path.join(target_dir, member.rstrip('/'))
+            _assert_extract_dest(dir_path, target_root, info.filename)
+            os.makedirs(dir_path, exist_ok=True)
+            continue
+
+        dest = os.path.join(target_dir, member)
+        _assert_extract_dest(dest, target_root, info.filename)
+        parent = os.path.dirname(dest)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with zip_file.open(info, 'r') as src, open(dest, 'wb') as out:
+            shutil.copyfileobj(src, out)
 
 
 @router.post("/extract")
@@ -550,7 +599,7 @@ async def extract_item(req: ExtractRequest, user: Dict[str, Any] = Depends(get_c
             
         os.makedirs(target_dir, exist_ok=True)
         with zipfile.ZipFile(archive_path, 'r') as zip_file:
-            zip_file.extractall(target_dir)
+            _safe_extract_zip(zip_file, target_dir)
 
         return {"status": "success", "message": "Archive extracted successfully."}
     except HTTPException:

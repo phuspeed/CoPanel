@@ -298,13 +298,13 @@ export default function FileManagerShell(fm: FileManagerState) {
             setRenameValue(contextItem.name);
             setRenamingItem(contextItem);
           }}
-          onCut={() => handleCut(contextItem)}
-          onCopy={() => handleCopy(contextItem)}
+          onCut={() => handleCut(selectedPaths.length > 1 ? undefined : contextItem)}
+          onCopy={() => handleCopy(selectedPaths.length > 1 ? undefined : contextItem)}
           onPaste={() => void handlePaste()}
           onBookmarkToggle={() => contextItem && void toggleBookmarkForItem(contextItem)}
           onBookmarkSelection={() => void bookmarkSelection()}
           onDeselect={clearSelection}
-          onDelete={() => void handleDelete(contextItem)}
+          onDelete={() => void handleDelete(selectedPaths.length > 1 ? undefined : contextItem)}
           onZip={() => {
             fm.setZipArchiveName('archive.zip');
             fm.setZipModalOpen(true);
