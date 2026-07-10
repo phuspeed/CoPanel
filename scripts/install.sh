@@ -392,7 +392,6 @@ install_dependencies() {
             nginx cron \
             curl wget git unzip zip rsync \
             build-essential \
-            nodejs npm \
             ufw inotify-tools certbot python3-certbot-nginx \
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
@@ -402,7 +401,6 @@ install_dependencies() {
             nginx cronie \
             curl wget git unzip zip \
             gcc gcc-c++ make \
-            nodejs npm \
             ufw inotify-tools certbot \
             2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
     fi
@@ -412,9 +410,9 @@ install_dependencies() {
         systemctl enable --now cron 2>/dev/null || systemctl enable --now crond 2>/dev/null || true
     fi
 
-    # Install Node.js 20 LTS if not installed or older than 18
-    if ! command_exists node || [[ $(node -v | cut -d. -f1 | tr -d 'v') -lt 18 ]]; then
-        log_info "Node.js is missing or version is too old. Installing Node.js 20 LTS via NodeSource..."
+    # NodeSource 20 LTS — distro apt npm 9.2 rejects npm: alias overrides.
+    if command_exists apt-get || command_exists yum; then
+        log_info "Installing Node.js 20 LTS via NodeSource..."
         if command_exists apt-get; then
             curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
             apt-get install -y nodejs || true
@@ -422,6 +420,7 @@ install_dependencies() {
             curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - || true
             yum install -y nodejs || true
         fi
+        copanel_ensure_modern_npm
     fi
 
     # Install Docker using official Docker convenience script if not installed
@@ -645,9 +644,12 @@ copanel_ensure_modern_npm() {
     fi
     local major
     major="$(copanel_npm_major_version)"
-    if [[ -z "$major" || "$major" -lt 9 ]]; then
-        log_info "Upgrading npm (current: $(npm -v 2>/dev/null || echo unknown))..."
-        npm install -g npm@10 2>/dev/null || npm install -g npm@9 2>/dev/null || true
+    # npm 9.2 (Ubuntu apt) rejects overrides like npm:esbuild-wasm@x — need npm 10+.
+    if [[ -z "$major" || "$major" -lt 10 ]]; then
+        log_info "Upgrading npm (current: $(npm -v 2>/dev/null || echo unknown)) → 10.x..."
+        if ! npm install -g npm@10; then
+            log_warning "npm upgrade failed — WASM override path may break on no-AVX hosts."
+        fi
     fi
 }
 
@@ -656,16 +658,35 @@ copanel_cpu_has_avx() {
     grep -q avx /proc/cpuinfo 2>/dev/null
 }
 
+copanel_strip_wasm_overrides() {
+    local pkg="$1"
+    [[ -f "$pkg" ]] || return 0
+    node -e '
+const fs = require("fs");
+const pkg = process.argv[1];
+const data = JSON.parse(fs.readFileSync(pkg, "utf8"));
+if (!data.overrides) process.exit(0);
+const o = data.overrides;
+const wasm = String(o.rollup || "").includes("wasm") || String(o.esbuild || "").includes("wasm");
+if (!wasm) process.exit(0);
+delete o.rollup;
+delete o.esbuild;
+if (Object.keys(o).length === 0) delete data.overrides;
+fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+' "$pkg"
+}
+
 copanel_maybe_apply_rollup_wasm_override() {
     local pkg="$1"
     [[ -f "$pkg" ]] || return 0
     if copanel_cpu_has_avx; then
+        copanel_strip_wasm_overrides "$pkg"
         return 0
     fi
     local major
     major="$(copanel_npm_major_version)"
-    if [[ -z "$major" || "$major" -lt 9 ]]; then
-        log_warning "CPU without AVX and npm < 9 — WASM overrides skipped (upgrade npm first)."
+    if [[ -z "$major" || "$major" -lt 10 ]]; then
+        log_warning "CPU without AVX and npm < 10 — WASM overrides skipped (upgrade npm first)."
         return 0
     fi
     log_info "CPU without AVX — configuring Rollup + esbuild WASM overrides..."

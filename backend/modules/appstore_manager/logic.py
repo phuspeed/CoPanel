@@ -522,10 +522,12 @@ def _discard_frontend_dist_backup(backup_root: Optional[Path]) -> None:
 
 
 def _prepare_frontend_for_build(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
-    """Match install.sh: WASM overrides + npm install on no-AVX; always wipe stale dist/."""
+    """Match install.sh: WASM overrides + npm install on no-AVX; strip overrides on AVX."""
     if _cpu_lacks_avx():
         _ensure_modern_npm(log_lines)
         _maybe_apply_rollup_wasm_override(frontend_dir, log_lines)
+    else:
+        _strip_wasm_overrides(frontend_dir, log_lines)
     _clean_frontend_dist(frontend_dir, log_lines)
     vite_cache = frontend_dir / "node_modules" / ".vite"
     if vite_cache.is_dir():
@@ -544,19 +546,43 @@ def _npm_major_version() -> int:
 
 
 def _ensure_modern_npm(log_lines: Optional[List[str]] = None) -> None:
-    if _npm_major_version() >= 9:
+    if _npm_major_version() >= 10:
         return
     if log_lines is not None:
-        log_lines.append("Upgrading npm to >= 9 (required for Rollup WASM overrides)...")
-    for target in ("npm@10", "npm@9"):
-        proc = subprocess.run(
-            ["npm", "install", "-g", target],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        if proc.returncode == 0 and _npm_major_version() >= 9:
-            return
+        log_lines.append("Upgrading npm to >= 10 (required for Rollup WASM overrides)...")
+    proc = subprocess.run(
+        ["npm", "install", "-g", "npm@10"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if proc.returncode != 0 and log_lines is not None:
+        log_lines.append("⚠️ npm upgrade failed — WASM override path may break on no-AVX hosts.")
+
+
+def _strip_wasm_overrides(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
+    pkg_path = frontend_dir / "package.json"
+    if not pkg_path.is_file():
+        return False
+    try:
+        data = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    overrides = data.get("overrides")
+    if not isinstance(overrides, dict):
+        return False
+    rollup = str(overrides.get("rollup") or "")
+    esbuild = str(overrides.get("esbuild") or "")
+    if "wasm" not in rollup.lower() and "wasm" not in esbuild.lower():
+        return False
+    overrides.pop("rollup", None)
+    overrides.pop("esbuild", None)
+    if not overrides:
+        data.pop("overrides", None)
+    pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if log_lines is not None:
+        log_lines.append("Removed WASM overrides (CPU has AVX — native esbuild/rollup).")
+    return True
 
 
 def _rollup_wasm_configured(frontend_dir: Path) -> bool:
@@ -581,9 +607,9 @@ def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[Li
     if not pkg_path.is_file():
         return False
     _ensure_modern_npm(log_lines)
-    if _npm_major_version() < 9:
+    if _npm_major_version() < 10:
         if log_lines is not None:
-            log_lines.append("⚠️ npm < 9 — cannot apply WASM overrides.")
+            log_lines.append("⚠️ npm < 10 — cannot apply WASM overrides.")
         return False
     try:
         data = json.loads(pkg_path.read_text(encoding="utf-8"))
