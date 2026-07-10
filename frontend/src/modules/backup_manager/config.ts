@@ -10,4 +10,7 @@ export default {
   path: '/backup-manager',
   description: 'Manage cron automated folder backups and Rclone cloud syncing.',
   component: BackupAndSyncDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1000, height: 680 },
+  singleton: true,
 };

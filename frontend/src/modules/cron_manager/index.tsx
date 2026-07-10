@@ -3,6 +3,7 @@
  * tagged so the UI never edits user-authored lines.
  */
 import { useEffect, useState } from 'react';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 import ModuleViewport from '../../core/shell/ModuleViewport';
@@ -156,6 +157,8 @@ function getNextRunTime(job: Pick<Job, 'minute' | 'hour' | 'day' | 'month' | 'we
 }
 
 export default function CronManager() {
+  const { theme } = useAppShellContext();
+  const isDark = theme === 'dark';
   const [jobs, setJobs] = useState<Job[]>([]);
   const [draft, setDraft] = useState<Job>({ ...EMPTY });
   const [builder, setBuilder] = useState<BuilderState>({ ...DEFAULT_BUILDER });
@@ -266,6 +269,7 @@ export default function CronManager() {
 
   return (
     <ModuleViewport constrained>
+    <div className={`h-full min-h-0 overflow-auto ${isDark ? 'dark' : ''}`}>
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Automation</p>
@@ -500,6 +504,7 @@ export default function CronManager() {
           ))
         )}
       </section>
+    </div>
     </div>
     </ModuleViewport>
   );

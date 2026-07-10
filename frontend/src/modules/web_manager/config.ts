@@ -9,4 +9,7 @@ export default {
   path: '/web-manager',
   description: 'Nginx & Apache vhosts, LEMP/LAMP stack, PHP-FPM overview and database services',
   component: WebManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1024, height: 700 },
+  singleton: true,
 };

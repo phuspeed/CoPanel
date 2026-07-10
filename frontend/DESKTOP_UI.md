@@ -218,24 +218,24 @@ Legend:
 
 | Module | Grade | `windowMode` | Notes |
 |--------|-------|--------------|-------|
-| `panel_settings` | **A** | ✓ | Windows Settings sidebar shell |
-| `file_manager` | **A** | ✓ | `WindowModal` file ops |
-| `appstore_manager` | **A** | ✓ | Deepin layout + build modals |
-| `firewall` | **B** | — | `useAppShellContext` ✓; chưa popup window |
-| `web_manager` | **B** | — | idem |
-| `cron_manager` | **C** | — | `ModuleViewport` ✓; còn `dark:` — Wave A |
-| `dns_manager` | **C** | — | idem |
-| `database_manager` | **C** | — | idem |
-| `site_wizard` | **C** | — | idem |
-| `terminal` | **B** | — | |
-| `system_monitor` | **B** | — | |
-| `system_cleaner` | **B** | — | |
-| `ssl_manager` | **B** | — | |
-| `php_manager` | **B** | — | |
-| `package_manager` | **B** | — | |
-| `docker_manager` | **B** | — | |
-| `backup_manager` | **B** | — | |
-| `users` | **B** | — | admin users (core, no App Store entry) |
+| `panel_settings` | **A** | ✓ | Windows Settings sidebar |
+| `file_manager` | **A** | ✓ | `WindowModal` |
+| `appstore_manager` | **A** | ✓ | Deepin layout |
+| `cron_manager` | **A** | ✓ | Wave A — `dark` wrapper |
+| `dns_manager` | **A** | ✓ | Wave A |
+| `database_manager` | **A** | ✓ | Wave A |
+| `site_wizard` | **A** | ✓ | Wave A |
+| `firewall` | **A** | ✓ | Wave B config |
+| `web_manager` | **A** | ✓ | modals backlog (`fixed inset`) |
+| `terminal` | **A** | ✓ | |
+| `system_monitor` | **A** | ✓ | modals backlog |
+| `system_cleaner` | **A** | ✓ | |
+| `ssl_manager` | **A** | ✓ | `WindowModal` issue dialog |
+| `php_manager` | **A** | ✓ | |
+| `package_manager` | **A** | ✓ | |
+| `docker_manager` | **A** | ✓ | `WindowModal` logs |
+| `backup_manager` | **A** | ✓ | modals backlog |
+| `users` | **A** | ✓ | admin only |
 
 **`curl install.sh`** ships all core modules at grades above. Grade **B/C** = usable on Desktop (sidebar / full workspace); chưa có floating window riêng.
 
@@ -259,9 +259,10 @@ Legend:
 | Wave | Scope | Status |
 |------|-------|--------|
 | Pilot | `file_manager`, `appstore_manager`, `panel_settings` | Done |
-| **C** | All `packages_src` catalog modules | Done (local) |
-| **A** | Core `cron_manager`, `dns_manager`, `database_manager`, `site_wizard` → grade B | Backlog |
-| **B** | Remaining core → add `windowMode` + `WindowModal` | Backlog |
+| **C** | All `packages_src` catalog modules | Done |
+| **A** | Core `cron_manager`, `dns_manager`, `database_manager`, `site_wizard` | Done |
+| **B** | All core `windowMode` in `config.ts` | Done |
+| **B2** | `WindowModal` for remaining `fixed inset` (web_manager, backup_manager, system_monitor) | Backlog |
 
 ---
 

@@ -9,4 +9,7 @@ export default {
   path: '/docker-manager',
   description: 'Manage containers and status metrics',
   component: DockerManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1000, height: 680 },
+  singleton: true,
 };

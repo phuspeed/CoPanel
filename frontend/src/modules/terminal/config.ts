@@ -11,4 +11,7 @@ export default {
   path: '/terminal',
   description: 'Interactive web terminal directly to your VPS server',
   component: TerminalDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 920, height: 580 },
+  singleton: true,
 };

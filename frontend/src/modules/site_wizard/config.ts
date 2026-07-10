@@ -6,4 +6,7 @@ export default {
   path: '/site-wizard',
   component: SiteWizard,
   description: 'Provision a complete website (Nginx + DB + SSL) end-to-end in one flow.',
+  windowMode: true,
+  defaultWindowSize: { width: 1000, height: 720 },
+  singleton: true,
 };

@@ -4,6 +4,7 @@
  * status pills.
  */
 import { useEffect, useState } from 'react';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 import ModuleViewport from '../../core/shell/ModuleViewport';
@@ -28,6 +29,8 @@ interface Zone {
 const TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'];
 
 export default function DnsManager() {
+  const { theme } = useAppShellContext();
+  const isDark = theme === 'dark';
   const [zones, setZones] = useState<Zone[]>([]);
   const [active, setActive] = useState<Zone | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +110,7 @@ export default function DnsManager() {
 
   return (
     <ModuleViewport constrained>
+    <div className={`h-full min-h-0 overflow-auto ${isDark ? 'dark' : ''}`}>
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Network</p>
@@ -223,6 +227,7 @@ export default function DnsManager() {
           )}
         </section>
       </div>
+    </div>
     </div>
     </ModuleViewport>
   );

@@ -5,6 +5,7 @@
  * details (database credentials, verification, SSL status).
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import * as Icons from 'lucide-react';
 import { api, jobsApi, useJob } from '../../core/platform';
 import ModuleViewport from '../../core/shell/ModuleViewport';
@@ -51,6 +52,8 @@ const INITIAL: FormState = {
 };
 
 export default function SiteWizard() {
+  const { theme } = useAppShellContext();
+  const isDark = theme === 'dark';
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(INITIAL);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -243,6 +246,7 @@ export default function SiteWizard() {
 
   return (
     <ModuleViewport constrained>
+    <div className={`h-full min-h-0 overflow-auto ${isDark ? 'dark' : ''}`}>
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Hosting</p>
@@ -289,6 +293,7 @@ export default function SiteWizard() {
       ) : (
         <RunPanel job={job} onReset={() => { setJobId(null); setStep(0); setForm(INITIAL); }} />
       )}
+    </div>
     </div>
     </ModuleViewport>
   );

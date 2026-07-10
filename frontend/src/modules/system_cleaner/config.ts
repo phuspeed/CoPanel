@@ -6,4 +6,7 @@ export default {
   icon: 'Trash2',
   path: '/system-cleaner',
   component: SystemCleanerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 900, height: 600 },
+  singleton: true,
 };

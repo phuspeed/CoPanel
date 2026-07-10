@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 
 interface Certificate {
@@ -512,23 +513,8 @@ export default function SSLManagerDashboard() {
       </div>
 
       {/* Inline Fast Issue/Renew Modal */}
-      {inlineDomain && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in select-none">
-          <form onSubmit={handleInlineIssue} className={`p-6 rounded-2xl w-full max-w-sm shadow-2xl border space-y-4 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className="flex items-center justify-between">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.Shield className={`w-4 h-4 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
-                {tr.confirmIssue}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setInlineDomain(null)}
-                className="text-slate-500 hover:text-red-400 transition"
-              >
-                &times;
-              </button>
-            </div>
-
+      <WindowModal open={!!inlineDomain} onClose={() => setInlineDomain(null)} title={tr.confirmIssue} maxWidth="sm">
+          <form onSubmit={handleInlineIssue} className="space-y-4 p-4">
             <div className="space-y-3">
               <div>
                 <label className={`text-[10px] font-bold block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -556,7 +542,7 @@ export default function SSLManagerDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 mt-4 border-t pt-3 dark:border-slate-800">
+            <div className="flex items-center justify-end gap-3 border-t pt-3 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setInlineDomain(null)}
@@ -574,8 +560,7 @@ export default function SSLManagerDashboard() {
               </button>
             </div>
           </form>
-        </div>
-      )}
+      </WindowModal>
     </div>
     </ModuleViewport>
   );

@@ -10,4 +10,7 @@ export default {
   path: '/ssl-manager',
   description: 'Issue Let\'s Encrypt certificates and upload custom private keys.',
   component: SSLManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 960, height: 640 },
+  singleton: true,
 };

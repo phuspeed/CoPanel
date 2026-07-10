@@ -9,4 +9,7 @@ export default {
   path: '/package-manager',
   description: 'Manage and install system packages & dynamic modules.',
   component: PackageManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 960, height: 640 },
+  singleton: true,
 };

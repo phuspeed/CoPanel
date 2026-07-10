@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 
 interface ContainerItem {
@@ -581,21 +582,14 @@ export default function DockerManagerDashboard() {
         </div>
       )}
 
-      {viewingLogs && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 animate-fade-in select-none">
-          <div className={`p-6 rounded-2xl w-full max-w-3xl h-[70vh] flex flex-col shadow-2xl space-y-4 border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className="flex items-center justify-between flex-shrink-0">
-              <h3 className={`text-sm font-bold flex items-center gap-2 truncate max-w-md ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.FileText className={`w-5 h-5 flex-shrink-0 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-                <span>{tr.viewLogsTitle}: {viewingLogs.name}</span>
-              </h3>
-              <button
-                onClick={() => setViewingLogs(null)}
-                className="text-slate-500 hover:text-red-400 transition"
-              >
-                <Icons.X className="w-4 h-4" />
-              </button>
-            </div>
+      <WindowModal
+        open={!!viewingLogs}
+        onClose={() => setViewingLogs(null)}
+        title={viewingLogs ? `${tr.viewLogsTitle}: ${viewingLogs.name}` : tr.viewLogsTitle}
+        maxWidth="2xl"
+        className="flex max-h-[70vh] max-w-3xl flex-col"
+      >
+          <div className="flex min-h-0 flex-1 flex-col space-y-4 p-4">
             <div className={`flex-1 rounded-xl overflow-hidden flex flex-col border min-h-0 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
               <div className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[10px] uppercase tracking-wider font-bold border-b shrink-0 ${isDark ? 'border-slate-800 text-slate-500 bg-slate-900/50' : 'border-slate-200 text-slate-400 bg-slate-100/80'}`}>
                 <span>{tr.logTime}</span>
@@ -609,7 +603,7 @@ export default function DockerManagerDashboard() {
                   </div>
                 ) : (
                   <div className="font-mono text-xs">
-                    {parseDockerLogs(viewingLogs.content).map((line, i) => (
+                    {parseDockerLogs(viewingLogs?.content ?? '').map((line, i) => (
                       <div
                         key={i}
                         className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-1.5 border-b last:border-0 ${isDark ? 'border-slate-800/60 hover:bg-slate-900/40' : 'border-slate-100 hover:bg-white/80'}`}
@@ -640,8 +634,7 @@ export default function DockerManagerDashboard() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </WindowModal>
     </div>
     </ModuleViewport>
   );

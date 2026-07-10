@@ -10,4 +10,7 @@ export default {
   path: '/php-manager',
   description: 'Manage and install PHP versions, edit php.ini configuration, and view modules.',
   component: PHPManagerDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 960, height: 640 },
+  singleton: true,
 };

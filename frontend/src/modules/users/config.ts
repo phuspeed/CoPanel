@@ -9,4 +9,8 @@ export default {
   path: '/users',
   description: 'Manage users, assign roles, set isolated home directories, and set dynamic module permissions.',
   component: UsersDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 900, height: 600 },
+  singleton: true,
+  adminOnly: true,
 };

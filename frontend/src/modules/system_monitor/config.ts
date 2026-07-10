@@ -10,4 +10,7 @@ export default {
   path: '/system-monitor',
   description: 'Real-time system resource monitoring',
   component: SystemMonitorDashboard,
+  windowMode: true,
+  defaultWindowSize: { width: 1024, height: 700 },
+  singleton: true,
 };
