@@ -1,0 +1,258 @@
+import * as Icons from 'lucide-react';
+import { cn } from '../../../lib/utils';
+import type { FileManagerState } from '../hooks/useFileManager';
+import FileModals from './FileModals';
+import FileSidebar from './FileSidebar';
+import FileToolbar from './FileToolbar';
+import FileGridView from './FileGridView';
+import FileListView from './FileListView';
+
+export default function FileManagerShell(fm: FileManagerState) {
+  const {
+    isDark,
+    tr,
+    windowed,
+    currentPath,
+    files,
+    allFilesCount,
+    loading,
+    error,
+    sortKey,
+    sortAsc,
+    viewMode,
+    setViewMode,
+    filterQuery,
+    setFilterQuery,
+    selectedPaths,
+    clipboard,
+    setClipboard,
+    uploadProgress,
+    bookmarkPathSet,
+    bookmarkBackendMissing,
+    bookmarks,
+    canGoBack,
+    canGoForward,
+    selectedSize,
+    navigateTo,
+    goBack,
+    goForward,
+    handleGoUp,
+    handleOpenItem,
+    handleToggleSelect,
+    handleSelectAll,
+    handleSort,
+    handleEditFile,
+    handleDownloadFile,
+    handleUploadFile,
+    handleCut,
+    handleCopy,
+    handlePaste,
+    handleDelete,
+    bookmarkSelection,
+    bookmarkCurrentDirectory,
+    openBookmark,
+    removeBookmarkByPath,
+    toggleBookmarkForItem,
+    refresh,
+    clearSelection,
+    setCreateType,
+    setRenamingItem,
+    setRenameValue,
+  } = fm;
+
+  return (
+    <div
+      className={cn(
+        'flex h-full min-h-0 flex-col overflow-hidden select-none',
+        isDark ? 'text-slate-100' : 'text-slate-900',
+        !windowed && 'rounded-2xl border',
+        !windowed && (isDark ? 'border-slate-800' : 'border-slate-200'),
+      )}
+    >
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <FileSidebar
+          isDark={isDark}
+          tr={tr}
+          currentPath={currentPath}
+          bookmarks={bookmarks}
+          bookmarkBackendMissing={bookmarkBackendMissing}
+          bookmarkPathSet={bookmarkPathSet}
+          onNavigate={navigateTo}
+          onOpenBookmark={(b) => void openBookmark(b)}
+          onRemoveBookmark={(p) => void removeBookmarkByPath(p)}
+          onBookmarkFolder={() => void bookmarkCurrentDirectory()}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <FileToolbar
+            isDark={isDark}
+            tr={tr}
+            currentPath={currentPath}
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            viewMode={viewMode}
+            filterQuery={filterQuery}
+            onBack={goBack}
+            onForward={goForward}
+            onUp={handleGoUp}
+            onRefresh={refresh}
+            onNavigate={navigateTo}
+            onViewMode={setViewMode}
+            onFilterQuery={setFilterQuery}
+            onCreateFile={() => setCreateType('file')}
+            onCreateDir={() => setCreateType('dir')}
+            onUpload={handleUploadFile}
+          />
+
+          {uploadProgress !== null && (
+            <div className={cn('shrink-0 border-b px-3 py-2', isDark ? 'border-slate-800 bg-blue-950/20' : 'border-blue-100 bg-blue-50')}>
+              <div className="flex justify-between text-[10px] font-semibold mb-1">
+                <span>{tr.uploading}</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className={cn('h-1.5 rounded-full overflow-hidden', isDark ? 'bg-slate-800' : 'bg-slate-200')}>
+                <div className="h-full bg-blue-600 transition-all" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {clipboard && (
+            <div className={cn('shrink-0 flex items-center justify-between gap-2 border-b px-3 py-2 text-xs', isDark ? 'border-amber-900/40 bg-amber-950/20 text-amber-100' : 'border-amber-200 bg-amber-50 text-amber-900')}>
+              <span>
+                {clipboard.paths.length} {tr.itemsTo} {clipboard.action === 'cut' ? tr.cut : tr.copy}
+              </span>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void handlePaste()} className="rounded-lg bg-amber-600/80 px-2.5 py-1 font-bold text-white hover:bg-amber-500">
+                  {tr.paste}
+                </button>
+                <button type="button" onClick={() => setClipboard(null)} className={cn('rounded-lg px-2.5 py-1 font-bold', isDark ? 'bg-slate-800' : 'bg-slate-200')}>
+                  {tr.cancel}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {selectedPaths.length > 0 && (
+            <div className={cn('shrink-0 flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs', isDark ? 'border-blue-900/40 bg-blue-950/20' : 'border-blue-100 bg-blue-50')}>
+              <span className="font-semibold">
+                {selectedPaths.length} {tr.itemsSelected}
+              </span>
+              <button type="button" onClick={() => handleCut()} className="rounded-lg border px-2 py-1 font-bold">
+                {tr.cut}
+              </button>
+              <button type="button" onClick={() => handleCopy()} className="rounded-lg border px-2 py-1 font-bold">
+                {tr.copy}
+              </button>
+              {!bookmarkBackendMissing && (
+                <button type="button" onClick={() => void bookmarkSelection()} className="rounded-lg border px-2 py-1 font-bold">
+                  {tr.bookmarkSelection}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  fm.setZipArchiveName('archive.zip');
+                  fm.setZipModalOpen(true);
+                }}
+                className="rounded-lg border px-2 py-1 font-bold"
+              >
+                {tr.zipLabelShort}
+              </button>
+              {selectedPaths.length === 1 && selectedPaths[0].toLowerCase().endsWith('.zip') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    fm.setExtractTargetDir(currentPath);
+                    fm.setExtractModalOpen(true);
+                  }}
+                  className="rounded-lg border px-2 py-1 font-bold"
+                >
+                  {tr.extractButton}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  fm.setChmodValue('755');
+                  fm.setChmodModalOpen(true);
+                }}
+                className="rounded-lg border px-2 py-1 font-bold"
+              >
+                {tr.chmodLabelShort}
+              </button>
+              <button type="button" onClick={() => void handleDelete()} className="rounded-lg border border-red-400 px-2 py-1 font-bold text-red-500">
+                {tr.deleteItem}
+              </button>
+              <button type="button" onClick={clearSelection} className="ml-auto font-bold opacity-70 hover:opacity-100">
+                {tr.deselect}
+              </button>
+            </div>
+          )}
+
+          <div className={cn('relative min-h-0 flex-1 overflow-auto', isDark ? 'bg-slate-950/20' : 'bg-white')}>
+            {loading && files.length === 0 ? (
+              <div className="flex h-full items-center justify-center gap-2 text-xs text-slate-500">
+                <Icons.Loader className="h-5 w-5 animate-spin text-blue-500" />
+                {tr.loading}
+              </div>
+            ) : error ? (
+              <div className="m-3 rounded-xl border border-red-500/30 bg-red-950/20 p-3 text-xs text-red-400 flex gap-2">
+                <Icons.AlertCircle className="h-4 w-4 shrink-0" />
+                {tr.errorLoading} {error}
+              </div>
+            ) : viewMode === 'grid' ? (
+              <FileGridView
+                isDark={isDark}
+                tr={tr}
+                files={files}
+                selectedPaths={selectedPaths}
+                onOpen={handleOpenItem}
+                onToggleSelect={handleToggleSelect}
+              />
+            ) : (
+              <FileListView
+                isDark={isDark}
+                tr={tr}
+                files={files}
+                selectedPaths={selectedPaths}
+                sortKey={sortKey}
+                sortAsc={sortAsc}
+                bookmarkPathSet={bookmarkPathSet}
+                bookmarksUiEnabled={!bookmarkBackendMissing}
+                onSort={handleSort}
+                onOpen={handleOpenItem}
+                onToggleSelect={handleToggleSelect}
+                onSelectAll={handleSelectAll}
+                onEdit={handleEditFile}
+                onDownload={handleDownloadFile}
+                onRename={(item) => {
+                  setRenameValue(item.name);
+                  setRenamingItem(item);
+                }}
+                onBookmarkToggle={(item) => void toggleBookmarkForItem(item)}
+                onCut={handleCut}
+                onCopy={handleCopy}
+                onDelete={handleDelete}
+              />
+            )}
+          </div>
+
+          <footer
+            className={cn(
+              'shrink-0 flex items-center justify-between border-t px-3 py-1.5 text-[10px] font-mono',
+              isDark ? 'border-slate-800 bg-slate-900/80 text-slate-500' : 'border-slate-200 bg-slate-50 text-slate-500',
+            )}
+          >
+            <span>{tr.statusItems(allFilesCount)}</span>
+            <span className="truncate max-w-[60%]">{currentPath || '/'}</span>
+            <span>
+              {selectedPaths.length > 0 ? tr.statusSelected(selectedPaths.length, selectedSize) : ' '}
+            </span>
+          </footer>
+        </div>
+      </div>
+
+      <FileModals fm={fm} />
+    </div>
+  );
+}

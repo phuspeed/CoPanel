@@ -22,8 +22,26 @@ export default defineConfig({
     sourcemap: !lowMemory,
     reportCompressedSize: !lowMemory,
     cssCodeSplit: !lowMemory,
+    modulePreload: !lowMemory,
     rollupOptions: {
       maxParallelFileOps: lowMemory ? 1 : undefined,
+      output: lowMemory
+        ? {
+            manualChunks: undefined,
+            inlineDynamicImports: true,
+          }
+        : undefined,
     },
   },
+  esbuild: lowMemory
+    ? {
+        target: 'es2020',
+        legalComments: 'none',
+      }
+    : undefined,
+  optimizeDeps: lowMemory
+    ? {
+        esbuildOptions: { target: 'es2020' },
+      }
+    : undefined,
 })

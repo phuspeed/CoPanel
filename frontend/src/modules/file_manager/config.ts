@@ -11,7 +11,7 @@ export default {
   description: 'Manage VPS files starting from /var/www or /root',
   component: FileManagerDashboard,
   windowMode: true,
-  defaultWindowSize: { width: 1000, height: 680 },
+  defaultWindowSize: { width: 1100, height: 720 },
   singleton: true,
   pinned: true,
 };

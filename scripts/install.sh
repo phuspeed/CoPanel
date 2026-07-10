@@ -23,6 +23,7 @@
 ###############################################################################
 
 set -e  # Exit on error
+set -o pipefail
 
 # Premium Aesthetic Color Palette
 BOLD=$(echo -e '\033[1m')
@@ -478,9 +479,10 @@ setup_user_and_dirs() {
             git config --global --add safe.directory '*' || true
             git config --system --add safe.directory '*' || true
             git fetch --all || true
-            git checkout "${COPANEL_GIT_BRANCH}" 2>/dev/null || git checkout -b "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
+            git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
+                || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
-            git clean -fd || true
+            git clean -fd --exclude=config || true
             git pull origin "${COPANEL_GIT_BRANCH}" --force || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             REPO_DIR="$CoPanel_HOME"
@@ -688,18 +690,51 @@ if (changed) {
 ' "$pkg"
 }
 
+copanel_frontend_npm_install_wasm() {
+    log_info "Reinstalling node_modules with WASM Rollup/esbuild (no native AVX binaries)..."
+    rm -rf node_modules
+    npm install --legacy-peer-deps || npm install --legacy-peer-deps
+}
+
+copanel_run_vite_build_noavx() {
+    local log
+    log="$(mktemp)"
+    local code=0
+    set +e
+    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}" \
+        VITE_BUILD_LOW_MEMORY=1 npm run build:appstore 2>&1 | tee "$log"
+    code="${PIPESTATUS[0]}"
+    set -e
+    if grep -qiE 'segmentation fault|segfault|core dumped' "$log"; then
+        code=139
+    fi
+    if [[ ! -f dist/index.html ]]; then
+        code=1
+    fi
+    rm -f "$log"
+    return "$code"
+}
+
 copanel_frontend_build_noavx() {
     local attempt
     for attempt in 1 2 3; do
         rm -rf dist node_modules/.vite
-        if VITE_BUILD_LOW_MEMORY=1 npm run build:appstore; then
+        copanel_run_vite_build_noavx
+        local code=$?
+        if [[ "$code" -eq 0 ]]; then
             return 0
         fi
-        local code=$?
-        log_warning "Frontend build attempt ${attempt}/3 failed (exit ${code})."
+        if grep -qi avx /proc/cpuinfo 2>/dev/null; then
+            :
+        elif [[ "$code" -eq 139 ]]; then
+            log_warning "Frontend build segfault (native esbuild/rollup). Forcing WASM reinstall..."
+        else
+            log_warning "Frontend build attempt ${attempt}/3 failed (exit ${code})."
+        fi
         if [[ "$attempt" -lt 3 ]]; then
-            log_info "Retrying with fresh npm install (WASM toolchain)..."
-            npm install || npm install --legacy-peer-deps
+            log_info "Retrying with fresh WASM node_modules..."
+            copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
+            copanel_frontend_npm_install_wasm
             sleep 2
         fi
     done
@@ -714,18 +749,21 @@ setup_frontend() {
 
         copanel_ensure_modern_npm
         copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
-        
-        # Install dependencies
-        log_info "Installing npm packages..."
-        npm install || npm install --legacy-peer-deps
-        
-        # Build frontend
+
+        if ! copanel_cpu_has_avx; then
+            copanel_frontend_npm_install_wasm
+        else
+            log_info "Installing npm packages..."
+            npm install || npm install --legacy-peer-deps
+        fi
+
         log_info "Building frontend..."
         if ! copanel_cpu_has_avx; then
             if ! copanel_frontend_build_noavx; then
-                log_warning "build:appstore failed — last resort: tsc + vite (low-memory)..."
+                log_warning "build:appstore failed — last resort: vite only (low-memory, WASM deps)..."
                 rm -rf dist node_modules/.vite
-                VITE_BUILD_LOW_MEMORY=1 npm run build || return 1
+                copanel_frontend_npm_install_wasm
+                copanel_run_vite_build_noavx || return 1
             fi
         else
             rm -rf dist
