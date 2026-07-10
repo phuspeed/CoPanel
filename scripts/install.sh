@@ -606,6 +606,16 @@ setup_frontend() {
     fi
 }
 
+copanel_write_ui_track() {
+    mkdir -p "$CoPanel_HOME/config"
+    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH:-}" == "DesktopUI" ]]; then
+        echo "desktop" > "$CoPanel_HOME/config/ui_track"
+        log_info "UI track: desktop (AppStore will preserve windowMode modules)"
+    elif [[ -f "$CoPanel_HOME/config/ui_track" ]]; then
+        echo "classic" > "$CoPanel_HOME/config/ui_track"
+    fi
+}
+
 ###############################################################################
 # Step 5: Nginx Configuration
 ###############################################################################
@@ -894,6 +904,7 @@ EOF
 
     log_step "Step 4: Build & Provision Frontend"
     setup_frontend
+    copanel_write_ui_track
 
     log_step "Step 5: Configure Nginx & Firewall"
     setup_nginx
