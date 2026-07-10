@@ -370,6 +370,17 @@ export default function Layout({
   }, [desktopMode]);
 
   useEffect(() => {
+    if (localStorage.getItem('copanel_desktop_ui') != null) return;
+    fetch('/ui-track.json', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { ui_track?: string } | null) => {
+        if (data?.ui_track === 'desktop') setDesktopMode(true);
+        if (data?.ui_track === 'classic') setDesktopMode(false);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     const onResize = () => setViewportWide(window.innerWidth >= 1024);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);

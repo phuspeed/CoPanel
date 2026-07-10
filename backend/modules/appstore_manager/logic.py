@@ -400,7 +400,7 @@ def _cpu_lacks_avx() -> bool:
 
 
 def _is_desktop_ui_track() -> bool:
-    """True when panel was installed from DesktopUI / install-desktop-ui.sh."""
+    """True when panel install chose Desktop UI (config/ui_track or env)."""
     if os.environ.get("COPANEL_UI_TRACK", "").strip().lower() == "desktop":
         return True
     marker = get_copanel_home() / "config" / "ui_track"

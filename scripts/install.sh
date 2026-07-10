@@ -4,7 +4,16 @@
 # CoPanel Installation Script
 # One-click setup for Linux VPS Management Panel
 # 
-# Usage: sudo bash install.sh
+# Usage:
+#   sudo bash install.sh              # interactive: choose Web UI or Desktop UI
+#   sudo bash install.sh --classic    # Web UI (sidebar)
+#   sudo bash install.sh --desktop    # Desktop UI (dock + windows)
+#   COPANEL_UI_TRACK=desktop sudo bash install.sh
+#
+# One-liner (curl):
+#   curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
+#     "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
+#   curl ... | sudo bash -s -- --desktop
 # 
 # Features:
 # - Python virtual environment setup
@@ -157,6 +166,98 @@ check_os() {
     if [[ "$ID" == "centos" && "$VERSION_ID" == "7" ]] || [[ "$ID" == "centos" && "$VERSION" =~ ^7 ]]; then
         log_error "CentOS 7 reached End-of-Life (EOL) and is no longer supported by CoPanel. Please use a modern Linux distribution (Ubuntu 20+, Debian 11+, Rocky Linux 8+, AlmaLinux 8+)."
         exit 1
+    fi
+}
+
+copanel_install_usage() {
+    cat <<EOF
+CoPanel install.sh — unified installer (Web UI + Desktop UI on branch main)
+
+Usage:
+  sudo bash install.sh                 Interactive UI choice
+  sudo bash install.sh --classic       Web UI (sidebar, default for curl pipe)
+  sudo bash install.sh --webui         Alias for --classic
+  sudo bash install.sh --desktop       Desktop UI (dock + floating windows)
+
+Environment:
+  COPANEL_UI_TRACK=classic|desktop     Skip prompt
+  COPANEL_NONINTERACTIVE=1             Non-interactive (default UI: classic)
+  COPANEL_GIT_BRANCH=main              Git branch to clone/update
+
+One-liner:
+  curl -fsSL -H "Accept: application/vnd.github.v3.raw" \\
+    "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
+  curl ... | sudo bash -s -- --desktop
+EOF
+}
+
+copanel_parse_install_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --desktop|-d)
+                export COPANEL_UI_TRACK=desktop
+                shift
+                ;;
+            --classic|--webui|-w)
+                export COPANEL_UI_TRACK=classic
+                shift
+                ;;
+            --help|-h)
+                copanel_install_usage
+                exit 0
+                ;;
+            *)
+                log_warning "Unknown option: $1 (see --help)"
+                shift
+                ;;
+        esac
+    done
+}
+
+copanel_prompt_ui_mode() {
+    if [[ -n "${COPANEL_UI_TRACK:-}" ]]; then
+        return 0
+    fi
+    if [[ -f "$CoPanel_HOME/config/ui_track" ]]; then
+        COPANEL_UI_TRACK="$(tr -d ' \t\r\n' < "$CoPanel_HOME/config/ui_track")"
+        export COPANEL_UI_TRACK
+        log_info "Keeping existing UI track: ${COPANEL_UI_TRACK} ($(copanel_ui_track_label))"
+        return 0
+    fi
+    if [[ -n "${COPANEL_NONINTERACTIVE:-}" ]]; then
+        export COPANEL_UI_TRACK=classic
+        return 0
+    fi
+    if [[ ! -t 0 ]]; then
+        export COPANEL_UI_TRACK=classic
+        log_info "Non-TTY install — default UI: Web UI (classic). Use: ... | sudo bash -s -- --desktop"
+        return 0
+    fi
+
+    echo ""
+    echo -e "   ${CYAN}${BOLD}Choose panel interface:${NC}"
+    echo -e "   ${BOLD}1)${NC} Web UI — classic sidebar ${GREEN}(recommended)${NC}"
+    echo -e "   ${BOLD}2)${NC} Desktop UI — dock + floating windows"
+    echo ""
+    local choice=""
+    read -r -p "   Enter 1 or 2 [1]: " choice
+    choice="${choice:-1}"
+    case "$choice" in
+        2|desktop|Desktop|d|D)
+            export COPANEL_UI_TRACK=desktop
+            ;;
+        *)
+            export COPANEL_UI_TRACK=classic
+            ;;
+    esac
+    log_info "Selected: ${COPANEL_UI_TRACK} UI"
+}
+
+copanel_ui_track_label() {
+    if [[ "${COPANEL_UI_TRACK:-classic}" == "desktop" ]]; then
+        printf 'Desktop UI'
+    else
+        printf 'Web UI (classic)'
     fi
 }
 
@@ -638,12 +739,15 @@ setup_frontend() {
 
 copanel_write_ui_track() {
     mkdir -p "$CoPanel_HOME/config"
-    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH:-}" == "DesktopUI" ]]; then
-        echo "desktop" > "$CoPanel_HOME/config/ui_track"
-        log_info "UI track: desktop (AppStore will preserve windowMode modules)"
-    elif [[ -f "$CoPanel_HOME/config/ui_track" ]]; then
-        echo "classic" > "$CoPanel_HOME/config/ui_track"
+    local track="classic"
+    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]]; then
+        track="desktop"
     fi
+    echo "$track" > "$CoPanel_HOME/config/ui_track"
+    if [[ -d "$CoPanel_HOME/frontend/dist" ]]; then
+        printf '{"ui_track":"%s"}\n' "$track" > "$CoPanel_HOME/frontend/dist/ui-track.json"
+    fi
+    log_info "UI track: $track ($(copanel_ui_track_label))"
 }
 
 ###############################################################################
@@ -856,6 +960,7 @@ ${GREEN}╚═══════════════════════
 ${BLUE}Installation Summary:${NC}
 
 📦 Panel version:    ${GREEN}v${COPANEL_VER:-?}${NC}
+🖥  Interface:        ${GREEN}$(copanel_ui_track_label)${NC} ${YELLOW}(toggle anytime in panel)${NC}
 📍 Admin Password:   ${GREEN}${ADMIN_PWD}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
@@ -894,6 +999,8 @@ EOF
 ###############################################################################
 
 main() {
+    copanel_parse_install_args "$@"
+
     # When the panel streams this script (COPANEL_NONINTERACTIVE=1), skip `clear`
     # so the browser log view is not wiped by ANSI.
     if [[ -z "${COPANEL_NONINTERACTIVE:-}" ]]; then
@@ -913,15 +1020,13 @@ EOF
     echo -e "${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "   ${CYAN}${BOLD}CoPanel - Advanced Linux VPS Management System${NC}"
-    if [[ "${COPANEL_UI_TRACK:-}" == "desktop" ]] || [[ "${COPANEL_GIT_BRANCH}" == "DesktopUI" ]]; then
-        echo -e "   ${YELLOW}${BOLD}Desktop UI track · branch ${COPANEL_GIT_BRANCH}${NC}"
-    fi
     echo -e "   ${BOLD}v${COPANEL_VER} - Premium Pluggable Architecture${NC}"
     echo -e "   ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
     check_root
     check_os
+    copanel_prompt_ui_mode
     
     log_step "Step 1: Check & Install Dependencies"
     install_dependencies

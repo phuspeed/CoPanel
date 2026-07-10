@@ -11,12 +11,17 @@
 ## Install / enable Desktop UI
 
 ```bash
-# Desktop track (same main branch)
+# Desktop track (unified install.sh)
+sudo bash scripts/install.sh --desktop
+
+# Or one-liner
 curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=main" | sudo bash
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" \
+  | sudo bash -s -- --desktop
 ```
 
-Or on existing install: toggle desktop in dock (bottom-right) · `localStorage` `copanel_desktop_ui` = `1`|`0`.
+Web UI (classic): `install.sh` or `install.sh --classic`.  
+Toggle anytime in panel · `localStorage` `copanel_desktop_ui` = `1`|`0`.
 
 ---
 

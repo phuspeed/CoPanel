@@ -10,8 +10,8 @@ A lightweight, high-performance Linux VPS management panel with a **pluggable ar
 
 | Mode | How to enable | Experience |
 |------|----------------|------------|
-| **Classic** | Default after `install.sh`, or toggle OFF | Sidebar + full-page modules |
-| **Desktop** | `install-desktop-ui.sh`, or toggle ON (≥1024px) | Deepin-style desktop, dock, floating windows |
+| **Classic (Web UI)** | Default in `install.sh`, or `--classic` | Sidebar + full-page modules |
+| **Desktop** | `install.sh --desktop`, or toggle ON | Deepin-style desktop, dock, floating windows |
 
 Both modes share the **same modules** and **same AppStore ZIPs**. Modules use `ModuleViewport` + optional `windowMode` in `config.ts` — classic ignores window fields.
 
@@ -91,21 +91,35 @@ Both modes share the **same modules** and **same AppStore ZIPs**. Modules use `M
 - **Python** 3.10+
 - **Node.js** 18+
 
-### Install options
+### Install (one script)
 
-**Classic UI (default)** — sidebar, stable default:
+**`scripts/install.sh`** — unified installer on branch `main`. Choose UI at install time.
+
+**Interactive** (local clone or SSH):
+
+```bash
+sudo bash scripts/install.sh
+# Prompt: 1) Web UI (classic)  2) Desktop UI
+```
+
+**One-liner — Web UI (default when piped from curl):**
 
 ```bash
 curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
   "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
 ```
 
-**Desktop UI** — same `main` branch, desktop track + toggle:
+**One-liner — Desktop UI:**
 
 ```bash
 curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=main" | sudo bash
+  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" \
+  | sudo bash -s -- --desktop
 ```
+
+**Flags:** `--classic` / `--webui` · `--desktop` · `COPANEL_UI_TRACK=classic|desktop`
+
+`install-desktop-ui.sh` remains as an alias for `--desktop` (backward compatible).
 
 **Upgrade existing `/opt/copanel`:**
 
