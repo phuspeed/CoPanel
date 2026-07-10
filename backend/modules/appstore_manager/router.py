@@ -30,6 +30,7 @@ def install_package(req: dict) -> Dict[str, Any]:
     system_packages = req.get("system_packages", [])
     pip_packages = req.get("pip_packages", [])
     requires_copanel_restart = bool(req.get("requires_copanel_restart", False))
+    frontend_install = str(req.get("frontend_install") or "rebuild")
     if not pkg_id or not download_url:
         raise HTTPException(status_code=400, detail="Package id and download_url are required.")
 
@@ -41,6 +42,7 @@ def install_package(req: dict) -> Dict[str, Any]:
             system_packages,
             pip_packages,
             requires_copanel_restart,
+            frontend_install,
         )
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
@@ -49,6 +51,15 @@ def install_package(req: dict) -> Dict[str, Any]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/extensions")
+def list_extensions() -> Dict[str, Any]:
+    """List installed AppStore frontend extensions (runtime modules)."""
+    try:
+        return {"status": "success", "data": AppStoreManager.list_installed_extensions()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/build-status/{pkg_id}")

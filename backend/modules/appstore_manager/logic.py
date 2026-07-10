@@ -168,6 +168,9 @@ def _new_build_task(logs: Optional[List[str]] = None) -> Dict[str, Any]:
         "progress": 3,
         "restart_required": False,
         "restart_reason": None,
+        "backend_status": "pending",
+        "frontend_status": "pending",
+        "ui_online": True,
     }
 
 
@@ -521,14 +524,177 @@ def _discard_frontend_dist_backup(backup_root: Optional[Path]) -> None:
         shutil.rmtree(backup_root, ignore_errors=True)
 
 
+def _staging_dist_dir(frontend_dir: Path) -> Path:
+    return frontend_dir / ".build-staging"
+
+
+def _promote_staging_dist(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
+    """Atomic swap: staging build → live dist/."""
+    staging = _staging_dist_dir(frontend_dir)
+    if not (staging / "index.html").is_file():
+        return False
+    dist = frontend_dir / "dist"
+    prev = frontend_dir / ".dist-prev"
+    shutil.rmtree(prev, ignore_errors=True)
+    if dist.exists():
+        dist.rename(prev)
+    staging.rename(dist)
+    shutil.rmtree(prev, ignore_errors=True)
+    if log_lines is not None:
+        log_lines.append("✓ Frontend dist promoted from staging (panel stayed online during build).")
+    return True
+
+
+def _extensions_registry_path() -> Path:
+    return get_copanel_home() / "config" / "frontend_extensions.json"
+
+
+def _load_extensions_registry() -> Dict[str, Any]:
+    path = _extensions_registry_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_extensions_registry(registry: Dict[str, Any]) -> None:
+    path = _extensions_registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_extensions_index(frontend_dir: Path) -> None:
+    registry = _load_extensions_registry()
+    entries = []
+    for pkg_id, meta in sorted(registry.items()):
+        if not isinstance(meta, dict):
+            continue
+        entries.append(
+            {
+                "id": pkg_id,
+                "path": meta.get("path"),
+                "name": meta.get("name"),
+                "manifest_url": meta.get("manifest_url") or f"/extensions/{pkg_id}/manifest.json",
+                "module_url": meta.get("module_url") or f"/extensions/{pkg_id}/module.js",
+            }
+        )
+    ext_dir = frontend_dir / "dist" / "extensions"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    (ext_dir / "index.json").write_text(
+        json.dumps({"extensions": entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _install_frontend_extension(
+    pkg_id: str,
+    src_extension: Path,
+    frontend_dir: Path,
+    log_lines: Optional[List[str]] = None,
+) -> None:
+    manifest_src = src_extension / "manifest.json"
+    module_src = src_extension / "module.js"
+    if not manifest_src.is_file():
+        raise ValueError(f"extension/manifest.json missing for {pkg_id}")
+    if not module_src.is_file():
+        raise ValueError(f"extension/module.js missing for {pkg_id}")
+
+    dest = frontend_dir / "dist" / "extensions" / pkg_id
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src_extension, dest, dirs_exist_ok=True)
+
+    manifest = json.loads(manifest_src.read_text(encoding="utf-8"))
+    registry = _load_extensions_registry()
+    registry[pkg_id] = {
+        "id": pkg_id,
+        "path": manifest.get("path"),
+        "name": manifest.get("name") or pkg_id,
+        "manifest_url": f"/extensions/{pkg_id}/manifest.json",
+        "module_url": f"/extensions/{pkg_id}/module.js",
+        "version": manifest.get("version"),
+        "core_ui": manifest.get("core_ui"),
+    }
+    _save_extensions_registry(registry)
+    _write_extensions_index(frontend_dir)
+    if log_lines is not None:
+        log_lines.append(f"✓ Extension installed to dist/extensions/{pkg_id}/ (no npm build).")
+
+
+def _remove_extension_install(pkg_id: str, frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
+    dest = frontend_dir / "dist" / "extensions" / pkg_id
+    removed = False
+    if dest.exists():
+        shutil.rmtree(dest)
+        removed = True
+    registry = _load_extensions_registry()
+    if pkg_id in registry:
+        del registry[pkg_id]
+        _save_extensions_registry(registry)
+        removed = True
+    if removed:
+        _write_extensions_index(frontend_dir)
+        if log_lines is not None:
+            log_lines.append(f"Removed extension dist/extensions/{pkg_id}/")
+    return removed
+
+
+def _normalize_frontend_install(
+    frontend_install: Optional[str],
+    extracted_dir: Path,
+    *,
+    auto_detect: bool = False,
+) -> str:
+    mode = (frontend_install or "").strip().lower()
+    if not mode and auto_detect:
+        if (extracted_dir / "extension" / "manifest.json").is_file():
+            return "extension"
+        if (extracted_dir / "frontend").is_dir():
+            return "rebuild"
+        return "none"
+    if not mode:
+        mode = "rebuild"
+    if mode not in ("rebuild", "extension", "none"):
+        mode = "rebuild"
+    if mode == "extension" and not (extracted_dir / "extension" / "manifest.json").is_file():
+        raise ValueError("ZIP missing extension/manifest.json but frontend_install=extension")
+    return mode
+
+
+def _should_run_npm_install(frontend_dir: Path) -> bool:
+    import os
+
+    if os.environ.get("COPANEL_FORCE_NPM_INSTALL", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.is_dir():
+        return True
+    pkg = frontend_dir / "package.json"
+    if not pkg.is_file():
+        return False
+    lock = frontend_dir / "package-lock.json"
+    pkg_mtime = pkg.stat().st_mtime
+    lock_mtime = lock.stat().st_mtime if lock.is_file() else pkg_mtime
+    nm_mtime = node_modules.stat().st_mtime
+    if pkg_mtime > nm_mtime or lock_mtime > nm_mtime:
+        return True
+    if _cpu_lacks_avx() and not _rollup_wasm_configured(frontend_dir):
+        return True
+    return False
+
+
 def _prepare_frontend_for_build(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
-    """Match install.sh: WASM overrides + npm install on no-AVX; strip overrides on AVX."""
+    """Staging build prep — never wipe live dist/ before success."""
     if _cpu_lacks_avx():
         _ensure_modern_npm(log_lines)
         _maybe_apply_rollup_wasm_override(frontend_dir, log_lines)
     else:
         _strip_wasm_overrides(frontend_dir, log_lines)
-    _clean_frontend_dist(frontend_dir, log_lines)
+    staging = _staging_dist_dir(frontend_dir)
+    shutil.rmtree(staging, ignore_errors=True)
     vite_cache = frontend_dir / "node_modules" / ".vite"
     if vite_cache.is_dir():
         if log_lines is not None:
@@ -629,6 +795,10 @@ def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[Li
             log_lines.append("ℹ️ CPU without AVX — applying Rollup + esbuild WASM overrides (npm install)...")
     elif log_lines is not None:
         log_lines.append("ℹ️ CPU without AVX — refreshing node_modules (WASM toolchain)...")
+    if not _should_run_npm_install(frontend_dir):
+        if log_lines is not None:
+            log_lines.append("ℹ️ Skipping npm install (node_modules up to date).")
+        return changed
     return _ensure_frontend_npm_deps(frontend_dir, log_lines)
 
 
@@ -713,6 +883,8 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
     """Run one frontend build attempt. Returns (return_code, output_lines)."""
     is_win = platform.system() == "Windows"
     lines: List[str] = []
+    env = _frontend_build_env(serial=serial)
+    env["VITE_BUILD_OUTDIR"] = str(_staging_dist_dir(frontend_dir))
     try:
         process = subprocess.Popen(
             _frontend_build_cmd(frontend_dir),
@@ -722,7 +894,7 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
             text=True,
             shell=is_win,
             bufsize=1,
-            env=_frontend_build_env(serial=serial),
+            env=env,
         )
         while True:
             line = process.stdout.readline()
@@ -738,11 +910,8 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
 
 
 def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
-    """Build frontend; on no-AVX use Rollup WASM + serial Vite, retry on segfault/OOM."""
+    """Build frontend into staging; promote to dist/ only on success."""
     lines: List[str] = []
-    dist_backup = _backup_frontend_dist(frontend_dir)
-    if dist_backup is not None:
-        lines.append("Backing up current frontend dist/ before rebuild...")
     try:
         _prepare_frontend_for_build(frontend_dir, lines)
         serial_first = _prefer_serial_vite_build()
@@ -752,6 +921,10 @@ def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
             lines.append(
                 "ℹ️ CPU without AVX — using Rollup WASM (when available) + serial Vite build."
             )
+        elif _should_run_npm_install(frontend_dir):
+            lines.append("Running npm install in frontend...")
+            if not _ensure_frontend_npm_deps(frontend_dir, lines):
+                lines.append("⚠️ npm install failed — continuing build attempt anyway.")
 
         return_code = -1
         max_attempts = 3
@@ -776,19 +949,23 @@ def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
             attempt_code, attempt_lines = _run_frontend_build_once(frontend_dir, serial=use_serial)
             lines.extend(attempt_lines)
             return_code = attempt_code
-            if return_code == 0:
+            staging_index = _staging_dist_dir(frontend_dir) / "index.html"
+            if return_code == 0 and staging_index.is_file():
+                _promote_staging_dist(frontend_dir, lines)
                 return 0, lines
+            if return_code == 0:
+                return_code = 1
+                lines.append("❌ Build exited 0 but staging index.html missing.")
 
         if return_code != 0:
-            index = frontend_dir / "dist" / "index.html"
-            if dist_backup is not None and not index.is_file():
-                _restore_frontend_dist(frontend_dir, dist_backup, lines)
+            shutil.rmtree(_staging_dist_dir(frontend_dir), ignore_errors=True)
             lines.append(
-                "💡 Panel UI was kept on the last good build when possible. Fix the reported error, then retry AppStore install."
+                "💡 Live panel dist/ was not replaced (staging build failed). Fix errors and retry."
             )
         return return_code, lines
-    finally:
-        _discard_frontend_dist_backup(dist_backup)
+    except Exception as exc:
+        shutil.rmtree(_staging_dist_dir(frontend_dir), ignore_errors=True)
+        return -1, lines + [str(exc)]
 
 
 def _run_frontend_build_sync() -> tuple:
@@ -1310,6 +1487,7 @@ class AppStoreManager:
         system_packages: list = None,
         pip_packages: list = None,
         requires_copanel_restart: bool = False,
+        frontend_install: str = "rebuild",
     ) -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
@@ -1397,8 +1575,19 @@ class AppStoreManager:
                 
                 src_backend = extracted_dir / "backend"
                 src_frontend = extracted_dir / "frontend"
+                src_extension = extracted_dir / "extension"
                 backend_updated = src_backend.exists()
-                frontend_updated = src_frontend.exists()
+
+                try:
+                    install_mode = _normalize_frontend_install(frontend_install, extracted_dir)
+                except ValueError as ve:
+                    BUILD_TASKS[pkg_id]["status"] = "failed"
+                    BUILD_TASKS[pkg_id]["error"] = str(ve)
+                    BUILD_TASKS[pkg_id]["logs"].append(f"❌ {ve}")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
+                    return
+
+                BUILD_TASKS[pkg_id]["logs"].append(f"Frontend install mode: {install_mode}")
                 
                 if Path("/opt/copanel").exists():
                     dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
@@ -1414,28 +1603,62 @@ class AppStoreManager:
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
                     shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
                     _purge_module_pycache(dst_backend)
+                    BUILD_TASKS[pkg_id]["backend_status"] = "success"
                 else:
                     is_new_backend = False
-                    
-                if src_frontend.exists():
-                    BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
-                    _install_frontend_module_tree(
-                        src_frontend,
-                        dst_frontend,
-                        pkg_id,
-                        BUILD_TASKS[pkg_id]["logs"],
-                    )
+                    BUILD_TASKS[pkg_id]["backend_status"] = "skipped"
 
-                if frontend_updated:
-                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")
+                return_code = 0
+                frontend_updated = False
+
+                if install_mode == "extension":
+                    BUILD_TASKS[pkg_id]["logs"].append("Installing pre-built extension (fast path)...")
                     BUILD_TASKS[pkg_id]["progress"] = 60
-
-                    return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
-                    for line in build_lines:
-                        BUILD_TASKS[pkg_id]["logs"].append(line)
+                    try:
+                        _install_frontend_extension(
+                            pkg_id,
+                            src_extension,
+                            frontend_cwd,
+                            BUILD_TASKS[pkg_id]["logs"],
+                        )
+                        if src_frontend.exists():
+                            BUILD_TASKS[pkg_id]["logs"].append(
+                                "ℹ️ Keeping frontend/ source in ZIP for debug — runtime uses extension/."
+                            )
+                            _install_frontend_module_tree(
+                                src_frontend,
+                                dst_frontend,
+                                pkg_id,
+                                BUILD_TASKS[pkg_id]["logs"],
+                            )
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "success"
+                        frontend_updated = True
+                    except Exception as ext_err:
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "failed"
+                        raise ext_err
+                elif install_mode == "rebuild":
+                    if src_frontend.exists():
+                        BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
+                        _install_frontend_module_tree(
+                            src_frontend,
+                            dst_frontend,
+                            pkg_id,
+                            BUILD_TASKS[pkg_id]["logs"],
+                        )
+                        frontend_updated = True
+                        BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore → staging)...")
+                        BUILD_TASKS[pkg_id]["progress"] = 60
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "building"
+                        return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                        for line in build_lines:
+                            BUILD_TASKS[pkg_id]["logs"].append(line)
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "success" if return_code == 0 else "failed"
+                    else:
+                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
                 else:
-                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
-                    return_code = 0
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ frontend_install=none — skipping frontend.")
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
 
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"
@@ -1481,6 +1704,12 @@ class AppStoreManager:
         return {"status": "success", "message": f"Package {pkg_id} installation started."}
 
     @staticmethod
+    def list_installed_extensions() -> dict:
+        """Return installed AppStore extension registry."""
+        registry = _load_extensions_registry()
+        return {"extensions": list(registry.values())}
+
+    @staticmethod
     def get_build_status(pkg_id: str) -> dict:
         """Retrieves status and logs for the given package ID."""
         global BUILD_TASKS
@@ -1491,6 +1720,9 @@ class AppStoreManager:
             "progress": 0,
             "restart_required": False,
             "restart_reason": None,
+            "backend_status": "unknown",
+            "frontend_status": "unknown",
+            "ui_online": True,
         }
         task = BUILD_TASKS.get(pkg_id)
         if not task:
@@ -1513,9 +1745,11 @@ class AppStoreManager:
         root = get_copanel_home()
         dst_backend = root / "backend" / "modules" / pid
         dst_frontend = root / "frontend" / "src" / "modules" / pid
+        frontend_dir = root / "frontend"
 
         removed_backend = False
         removed_frontend = False
+        removed_extension = False
         try:
             if dst_backend.exists():
                 shutil.rmtree(dst_backend)
@@ -1523,18 +1757,24 @@ class AppStoreManager:
             if dst_frontend.exists():
                 shutil.rmtree(dst_frontend)
                 removed_frontend = True
+            removed_extension = _remove_extension_install(pid, frontend_dir)
         except Exception as e:
             return {"status": "error", "message": f"Failed to remove module files: {e}"}
 
         remove_local_package_record(pid)
 
-        rebuild_ok, rebuild_err = _run_frontend_build_sync()
+        needs_rebuild = removed_frontend
+        rebuild_ok, rebuild_err = (True, "")
+        if needs_rebuild:
+            rebuild_ok, rebuild_err = _run_frontend_build_sync()
         parts = []
         if removed_backend:
             parts.append("Backend module removed.")
         if removed_frontend:
             parts.append("Frontend module removed.")
-        if not removed_backend and not removed_frontend:
+        if removed_extension:
+            parts.append("Extension removed (no full rebuild needed).")
+        if not removed_backend and not removed_frontend and not removed_extension:
             parts.append("Module was not installed locally.")
         base_msg = " ".join(parts)
 
@@ -1549,10 +1789,11 @@ class AppStoreManager:
 
         return {
             "status": "success",
-            "message": base_msg + " Frontend rebuilt.",
-            "rebuild_ok": True,
+            "message": base_msg + (" Frontend rebuilt." if needs_rebuild else ""),
+            "rebuild_ok": rebuild_ok,
             "removed_backend": removed_backend,
             "removed_frontend": removed_frontend,
+            "removed_extension": removed_extension,
         }
 
     @staticmethod
@@ -1582,6 +1823,7 @@ class AppStoreManager:
                 
                 found_backend = None
                 found_frontend = None
+                found_extension = None
                 
                 # Check all deep matches
                 for p in extracted_dir.rglob("*"):
@@ -1617,11 +1859,31 @@ class AppStoreManager:
                         if (subdirs[0] / "frontend").exists():
                             found_frontend = subdirs[0] / "frontend"
 
-                if not found_backend and not found_frontend:
+                # Standard AppStore ZIP layout (backend/ frontend/ extension/)
+                if (extracted_dir / "backend").is_dir():
+                    found_backend = extracted_dir / "backend"
+                if (extracted_dir / "frontend").is_dir():
+                    found_frontend = extracted_dir / "frontend"
+                found_extension = (extracted_dir / "extension") if (extracted_dir / "extension").is_dir() else None
+
+                if not found_backend and not found_frontend and not found_extension:
                     BUILD_TASKS[pkg_id]["status"] = "failed"
-                    BUILD_TASKS[pkg_id]["error"] = "Invalid ZIP structure: 'backend' or 'frontend' folder not found."
-                    BUILD_TASKS[pkg_id]["logs"].append("❌ Invalid ZIP structure: neither 'backend' nor 'frontend' folder found.")
+                    BUILD_TASKS[pkg_id]["error"] = "Invalid ZIP structure: need backend/, frontend/, or extension/."
+                    BUILD_TASKS[pkg_id]["logs"].append(
+                        "❌ Invalid ZIP structure: neither backend/, frontend/, nor extension/ found."
+                    )
                     return
+
+                try:
+                    install_mode = _normalize_frontend_install(None, extracted_dir, auto_detect=True)
+                except ValueError as ve:
+                    BUILD_TASKS[pkg_id]["status"] = "failed"
+                    BUILD_TASKS[pkg_id]["error"] = str(ve)
+                    BUILD_TASKS[pkg_id]["logs"].append(f"❌ {ve}")
+                    BUILD_TASKS[pkg_id]["progress"] = 100
+                    return
+
+                BUILD_TASKS[pkg_id]["logs"].append(f"Frontend install mode: {install_mode}")
 
                 if Path("/opt/copanel").exists():
                     dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
@@ -1638,12 +1900,34 @@ class AppStoreManager:
                     dst_backend.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(found_backend, dst_backend, dirs_exist_ok=True)
                     _purge_module_pycache(dst_backend)
+                    BUILD_TASKS[pkg_id]["backend_status"] = "success"
                 else:
                     is_new_backend = False
+                    BUILD_TASKS[pkg_id]["backend_status"] = "skipped"
                 backend_updated = bool(found_backend and found_backend.exists())
-                frontend_updated = bool(found_frontend and found_frontend.exists())
 
-                if found_frontend and found_frontend.exists():
+                return_code = 0
+                frontend_updated = False
+
+                if install_mode == "extension" and found_extension:
+                    BUILD_TASKS[pkg_id]["progress"] = 65
+                    _install_frontend_extension(
+                        pkg_id,
+                        found_extension,
+                        frontend_cwd,
+                        BUILD_TASKS[pkg_id]["logs"],
+                    )
+                    if found_frontend and found_frontend.exists():
+                        dst_frontend.parent.mkdir(parents=True, exist_ok=True)
+                        _install_frontend_module_tree(
+                            found_frontend,
+                            dst_frontend,
+                            pkg_id,
+                            BUILD_TASKS[pkg_id]["logs"],
+                        )
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "success"
+                    frontend_updated = True
+                elif install_mode == "rebuild" and found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
                     dst_frontend.parent.mkdir(parents=True, exist_ok=True)
                     _install_frontend_module_tree(
@@ -1652,17 +1936,17 @@ class AppStoreManager:
                         pkg_id,
                         BUILD_TASKS[pkg_id]["logs"],
                     )
-
-                if frontend_updated:
-                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore)...")
+                    frontend_updated = True
+                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore → staging)...")
                     BUILD_TASKS[pkg_id]["progress"] = 65
-
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "building"
                     return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
                     for line in build_lines:
                         BUILD_TASKS[pkg_id]["logs"].append(line)
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "success" if return_code == 0 else "failed"
                 else:
-                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
-                    return_code = 0
+                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend work for this ZIP.")
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
 
                 if return_code == 0:
                     BUILD_TASKS[pkg_id]["status"] = "success"

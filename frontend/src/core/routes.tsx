@@ -7,6 +7,7 @@ import { moduleRegistry, ModuleConfig } from './registry';
 import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
+import ExtensionErrorBoundary from './ExtensionErrorBoundary';
 
 interface BrandingSettings {
   site_title: string;
@@ -65,6 +66,14 @@ export function createRoutes() {
     }
   });
   const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
+  const [extensionsReady, setExtensionsReady] = useState(false);
+
+  useEffect(() => {
+    moduleRegistry
+      .loadExtensions()
+      .catch((err) => console.warn('Extension load failed:', err))
+      .finally(() => setExtensionsReady(true));
+  }, []);
 
   useEffect(() => {
     fetch('/api/panel_settings/branding/public')
@@ -119,6 +128,10 @@ export function createRoutes() {
     return <Login onLoginSuccess={handleLoginSuccess} branding={branding} />;
   }
 
+  if (!extensionsReady) {
+    return <ModuleLoader />;
+  }
+
   const modules = moduleRegistry.getAll();
 
   // Enforce dynamic module access permissions
@@ -158,7 +171,9 @@ export function createRoutes() {
               path={module.path}
               element={
                 <Suspense fallback={<ModuleLoader />}>
-                  <module.component />
+                  <ExtensionErrorBoundary moduleName={module.name}>
+                    <module.component />
+                  </ExtensionErrorBoundary>
                 </Suspense>
               }
             />

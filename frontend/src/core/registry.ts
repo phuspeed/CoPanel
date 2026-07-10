@@ -1,7 +1,10 @@
 /**
  * CoPanel Frontend Module Registry
- * Dynamically discovers and registers modules from the modules directory
+ * Core modules: Vite glob at build time.
+ * AppStore extensions: runtime load from /extensions/ (no full panel rebuild).
  */
+
+import React from 'react';
 
 export interface ModuleConfig {
   name: string;
@@ -9,111 +12,163 @@ export interface ModuleConfig {
   path: string;
   component: React.ComponentType<any>;
   description?: string;
-  /** Phase 1+ desktop UI: open in floating window instead of full page */
   windowMode?: boolean;
   defaultWindowSize?: { width: number; height: number };
   singleton?: boolean;
-  /** Pin to desktop dock quick-launch */
   pinned?: boolean;
   minWindowSize?: { width: number; height: number };
+  /** AppStore extension module id */
+  extensionId?: string;
+}
+
+export interface ExtensionManifest {
+  schema: number;
+  id: string;
+  name: string;
+  path: string;
+  icon?: string;
+  description?: string;
+  windowMode?: boolean;
+  defaultWindowSize?: { width: number; height: number };
+  pinned?: boolean;
+  core_ui?: string;
+  version?: string;
+}
+
+interface ExtensionIndexEntry {
+  id: string;
+  path?: string;
+  name?: string;
+  manifest_url?: string;
+  module_url?: string;
 }
 
 class ModuleRegistry {
   private modules: Map<string, ModuleConfig> = new Map();
+  private extensionsLoaded = false;
+  private loadPromise: Promise<void> | null = null;
 
   constructor() {
-    this.loadModules();
+    this.loadCoreModules();
   }
 
-  /**
-   * Dynamically load all modules using Vite's glob imports
-   * Each module must have a config.ts file that exports:
-   * - name: string
-   * - icon: string
-   * - path: string
-   * - component: React component
-   */
-  private loadModules(): void {
-    // This uses Vite's import.meta.glob to find all config.ts files
-    const moduleConfigs = (import.meta as any).glob(
-      '../modules/*/config.ts',
-      { eager: true }
-    ) as Record<string, any>;
+  private loadCoreModules(): void {
+    const moduleConfigs = (import.meta as any).glob('../modules/*/config.ts', {
+      eager: true,
+    }) as Record<string, any>;
 
     for (const [filePath, module] of Object.entries(moduleConfigs)) {
       try {
         const config = module.default || module;
-        
         if (!config.name || !config.path || !config.component) {
           console.warn(`Invalid module config in ${filePath}: missing required fields`);
           continue;
         }
-
-        const moduleKey = config.name.toLowerCase();
-        this.modules.set(moduleKey, {
-          name: config.name,
-          icon: config.icon || 'Grid',
-          path: config.path,
-          component: config.component,
-          description: config.description || '',
-          windowMode: config.windowMode === true,
-          defaultWindowSize: config.defaultWindowSize,
-          singleton: config.singleton,
-          pinned: config.pinned === true,
-          minWindowSize: config.minWindowSize,
-        });
-
-        console.log(`✓ Registered module: ${config.name}`);
+        this.registerModule(config);
+        console.log(`✓ Registered core module: ${config.name}`);
       } catch (error) {
         console.error(`Failed to load module from ${filePath}:`, error);
       }
     }
+  }
 
-    if (this.modules.size === 0) {
-      console.warn('No modules found in modules directory');
+  private registerModule(config: Partial<ModuleConfig> & Pick<ModuleConfig, 'name' | 'path' | 'component'>) {
+    const moduleKey = config.name.toLowerCase();
+    this.modules.set(moduleKey, {
+      name: config.name,
+      icon: config.icon || 'Grid',
+      path: config.path,
+      component: config.component,
+      description: config.description || '',
+      windowMode: config.windowMode === true,
+      defaultWindowSize: config.defaultWindowSize,
+      singleton: config.singleton,
+      pinned: config.pinned === true,
+      minWindowSize: config.minWindowSize,
+      extensionId: config.extensionId,
+    });
+  }
+
+  private registerExtension(manifest: ExtensionManifest, component: React.ComponentType<any>) {
+    this.registerModule({
+      name: manifest.name,
+      icon: manifest.icon || 'Grid',
+      path: manifest.path,
+      component,
+      description: manifest.description || '',
+      windowMode: manifest.windowMode === true,
+      defaultWindowSize: manifest.defaultWindowSize,
+      pinned: manifest.pinned === true,
+      extensionId: manifest.id,
+    });
+    console.log(`✓ Registered extension: ${manifest.name} (${manifest.id})`);
+  }
+
+  /** Load AppStore extensions from dist/extensions/index.json */
+  async loadExtensions(): Promise<void> {
+    if (this.extensionsLoaded) return;
+    if (!this.loadPromise) {
+      this.loadPromise = this.fetchAndRegisterExtensions();
+    }
+    await this.loadPromise;
+  }
+
+  private async fetchAndRegisterExtensions(): Promise<void> {
+    try {
+      const res = await fetch('/extensions/index.json', { cache: 'no-store' });
+      if (!res.ok) {
+        this.extensionsLoaded = true;
+        return;
+      }
+      const body = await res.json();
+      const entries: ExtensionIndexEntry[] = body.extensions || [];
+      for (const entry of entries) {
+        try {
+          const manifestUrl = entry.manifest_url || `/extensions/${entry.id}/manifest.json`;
+          const moduleUrl = entry.module_url || `/extensions/${entry.id}/module.js`;
+          const manifestRes = await fetch(manifestUrl, { cache: 'no-store' });
+          if (!manifestRes.ok) continue;
+          const manifest: ExtensionManifest = await manifestRes.json();
+          const mod = await import(/* @vite-ignore */ moduleUrl);
+          const component = mod.default || mod;
+          if (typeof component !== 'function' && typeof component !== 'object') {
+            console.warn(`Extension ${entry.id} has no default export`);
+            continue;
+          }
+          this.registerExtension(manifest, component);
+        } catch (err) {
+          console.error(`Failed to load extension ${entry.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('Extension index not available:', err);
+    } finally {
+      this.extensionsLoaded = true;
     }
   }
 
-  /**
-   * Get all registered modules
-   */
   getAll(): ModuleConfig[] {
     return Array.from(this.modules.values());
   }
 
-  /**
-   * Get a specific module by name
-   */
   getByName(name: string): ModuleConfig | undefined {
     return this.modules.get(name.toLowerCase());
   }
 
-  /**
-   * Get a module by its path
-   */
   getByPath(path: string): ModuleConfig | undefined {
     for (const module of this.modules.values()) {
-      if (module.path === path) {
-        return module;
-      }
+      if (module.path === path) return module;
     }
     return undefined;
   }
 
-  /**
-   * Check if a module exists
-   */
   exists(name: string): boolean {
     return this.modules.has(name.toLowerCase());
   }
 
-  /**
-   * Get module count
-   */
   count(): number {
     return this.modules.size;
   }
 }
 
-// Export singleton instance
 export const moduleRegistry = new ModuleRegistry();

@@ -231,6 +231,7 @@ export default function AppStoreDashboard() {
           version: pkg.version,
           system_packages: pkg.system_packages,
           pip_packages: pkg.pip_packages,
+          frontend_install: pkg.frontend_install || 'rebuild',
           requires_copanel_restart: !!pkg.requires_copanel_restart,
         }),
       });
