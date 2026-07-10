@@ -11,6 +11,7 @@ import platform
 import subprocess
 import shutil
 import shlex
+import tempfile
 import threading
 import time
 import zipfile
@@ -492,6 +493,34 @@ def _clean_frontend_dist(frontend_dir: Path, log_lines: Optional[List[str]] = No
         shutil.rmtree(dist, ignore_errors=True)
 
 
+def _backup_frontend_dist(frontend_dir: Path) -> Optional[Path]:
+    """Copy dist/ to a temp dir so a failed build can restore the live panel."""
+    dist = frontend_dir / "dist"
+    index = dist / "index.html"
+    if not index.is_file():
+        return None
+    backup_root = Path(tempfile.mkdtemp(prefix="copanel-dist-backup-"))
+    shutil.copytree(dist, backup_root / "dist", dirs_exist_ok=True)
+    return backup_root
+
+
+def _restore_frontend_dist(frontend_dir: Path, backup_root: Path, log_lines: Optional[List[str]] = None) -> bool:
+    src = backup_root / "dist"
+    if not (src / "index.html").is_file():
+        return False
+    dist = frontend_dir / "dist"
+    shutil.rmtree(dist, ignore_errors=True)
+    shutil.copytree(src, dist, dirs_exist_ok=True)
+    if log_lines is not None:
+        log_lines.append("⚠️ Build failed — restored previous frontend dist/ so the panel stays online.")
+    return True
+
+
+def _discard_frontend_dist_backup(backup_root: Optional[Path]) -> None:
+    if backup_root and backup_root.is_dir():
+        shutil.rmtree(backup_root, ignore_errors=True)
+
+
 def _prepare_frontend_for_build(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
     """Match install.sh: WASM overrides + npm install on no-AVX; always wipe stale dist/."""
     if _cpu_lacks_avx():
@@ -685,42 +714,55 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
 def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
     """Build frontend; on no-AVX use Rollup WASM + serial Vite, retry on segfault/OOM."""
     lines: List[str] = []
-    _prepare_frontend_for_build(frontend_dir, lines)
-    serial_first = _prefer_serial_vite_build()
+    dist_backup = _backup_frontend_dist(frontend_dir)
+    if dist_backup is not None:
+        lines.append("Backing up current frontend dist/ before rebuild...")
+    try:
+        _prepare_frontend_for_build(frontend_dir, lines)
+        serial_first = _prefer_serial_vite_build()
 
-    if serial_first:
-        _maybe_apply_rollup_wasm_override(frontend_dir, lines)
-        lines.append(
-            "ℹ️ CPU without AVX — using Rollup WASM (when available) + serial Vite build."
-        )
-
-    return_code = -1
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        if attempt == 1:
-            if _is_segfault_build_failure(return_code, lines):
-                if _maybe_apply_rollup_wasm_override(frontend_dir, lines):
-                    lines.append("⚠️ Rollup segfault (exit 139) — retrying with WASM Rollup...")
-                else:
-                    lines.append("⚠️ Rollup segfault (exit 139) — retrying with serial chunk rendering...")
-            elif _is_oom_build_failure(return_code, lines):
-                lines.append("⚠️ Build OOM (exit 137) — retrying with reduced memory settings...")
-            else:
-                break
-        elif attempt == 2:
-            if not _is_retriable_build_failure(return_code, lines):
-                break
+        if serial_first:
             _maybe_apply_rollup_wasm_override(frontend_dir, lines)
-            lines.append("⚠️ Final build retry (serial + Rollup WASM)...")
+            lines.append(
+                "ℹ️ CPU without AVX — using Rollup WASM (when available) + serial Vite build."
+            )
 
-        use_serial = serial_first or attempt > 0
-        attempt_code, attempt_lines = _run_frontend_build_once(frontend_dir, serial=use_serial)
-        lines.extend(attempt_lines)
-        return_code = attempt_code
-        if return_code == 0:
-            return 0, lines
+        return_code = -1
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            if attempt == 1:
+                if _is_segfault_build_failure(return_code, lines):
+                    if _maybe_apply_rollup_wasm_override(frontend_dir, lines):
+                        lines.append("⚠️ Rollup segfault (exit 139) — retrying with WASM Rollup...")
+                    else:
+                        lines.append("⚠️ Rollup segfault (exit 139) — retrying with serial chunk rendering...")
+                elif _is_oom_build_failure(return_code, lines):
+                    lines.append("⚠️ Build OOM (exit 137) — retrying with reduced memory settings...")
+                else:
+                    break
+            elif attempt == 2:
+                if not _is_retriable_build_failure(return_code, lines):
+                    break
+                _maybe_apply_rollup_wasm_override(frontend_dir, lines)
+                lines.append("⚠️ Final build retry (serial + Rollup WASM)...")
 
-    return return_code, lines
+            use_serial = serial_first or attempt > 0
+            attempt_code, attempt_lines = _run_frontend_build_once(frontend_dir, serial=use_serial)
+            lines.extend(attempt_lines)
+            return_code = attempt_code
+            if return_code == 0:
+                return 0, lines
+
+        if return_code != 0:
+            index = frontend_dir / "dist" / "index.html"
+            if dist_backup is not None and not index.is_file():
+                _restore_frontend_dist(frontend_dir, dist_backup, lines)
+            lines.append(
+                "💡 Panel UI was kept on the last good build when possible. Fix the reported error, then retry AppStore install."
+            )
+        return return_code, lines
+    finally:
+        _discard_frontend_dist_backup(dist_backup)
 
 
 def _run_frontend_build_sync() -> tuple:
