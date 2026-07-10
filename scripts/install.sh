@@ -11,9 +11,10 @@
 #   COPANEL_UI_TRACK=desktop sudo bash install.sh
 #
 # One-liner (curl):
-#   curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-#     "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
-#   curl ... | sudo bash -s -- --desktop
+#   curl -fsSL https://copanel.io.vn/install.sh | sudo bash
+#   curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
+# Alternate (GitHub raw):
+#   curl -fsSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 # 
 # Features:
 # - Python virtual environment setup
@@ -186,9 +187,8 @@ Environment:
   COPANEL_GIT_BRANCH=main              Git branch to clone/update
 
 One-liner:
-  curl -fsSL -H "Accept: application/vnd.github.v3.raw" \\
-    "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
-  curl ... | sudo bash -s -- --desktop
+  curl -fsSL https://copanel.io.vn/install.sh | sudo bash
+  curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 EOF
 }
 

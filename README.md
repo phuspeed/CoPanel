@@ -105,21 +105,26 @@ sudo bash scripts/install.sh
 **One-liner — Web UI (default when piped from curl):**
 
 ```bash
-curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" | sudo bash
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash
+```
+
+Alternate (GitHub raw, no custom domain):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 ```
 
 **One-liner — Desktop UI:**
 
 ```bash
-curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
-  "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install.sh?ref=main" \
-  | sudo bash -s -- --desktop
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 ```
 
 **Flags:** `--classic` / `--webui` · `--desktop` · `COPANEL_UI_TRACK=classic|desktop`
 
 `install-desktop-ui.sh` remains as an alias for `--desktop` (backward compatible).
+
+**Short URL on your domain** (e.g. `https://copanel.io.vn/install.sh`): nginx `proxy_pass` to GitHub raw — see [`website/nginx.copanel.io.vn.example.conf`](website/nginx.copanel.io.vn.example.conf).
 
 **Upgrade existing `/opt/copanel`:**
 
