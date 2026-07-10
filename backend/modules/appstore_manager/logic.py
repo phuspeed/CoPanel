@@ -493,15 +493,16 @@ def _clean_frontend_dist(frontend_dir: Path, log_lines: Optional[List[str]] = No
 
 
 def _prepare_frontend_for_build(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
-    """Match install.sh: WASM override + npm install on no-AVX; always wipe stale dist/."""
+    """Match install.sh: WASM overrides + npm install on no-AVX; always wipe stale dist/."""
     if _cpu_lacks_avx():
         _ensure_modern_npm(log_lines)
-        applied = _maybe_apply_rollup_wasm_override(frontend_dir, log_lines)
-        if not applied and _rollup_wasm_configured(frontend_dir):
-            if log_lines is not None:
-                log_lines.append("ℹ️ Rollup WASM override present — refreshing node_modules...")
-            _ensure_frontend_npm_deps(frontend_dir, log_lines)
+        _maybe_apply_rollup_wasm_override(frontend_dir, log_lines)
     _clean_frontend_dist(frontend_dir, log_lines)
+    vite_cache = frontend_dir / "node_modules" / ".vite"
+    if vite_cache.is_dir():
+        if log_lines is not None:
+            log_lines.append("Cleaning Vite cache...")
+        shutil.rmtree(vite_cache, ignore_errors=True)
 
 
 def _npm_major_version() -> int:
@@ -535,17 +536,17 @@ def _rollup_wasm_configured(frontend_dir: Path) -> bool:
         return False
     try:
         data = json.loads(pkg.read_text(encoding="utf-8"))
-        rollup = str((data.get("overrides") or {}).get("rollup") or "")
-        return "wasm" in rollup.lower()
+        overrides = data.get("overrides") or {}
+        rollup = str(overrides.get("rollup") or "")
+        esbuild = str(overrides.get("esbuild") or "")
+        return "wasm" in rollup.lower() and "wasm" in esbuild.lower()
     except Exception:
         return False
 
 
 def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
-    """Use @rollup/wasm-node on no-AVX hosts (same as scripts/install.sh). Returns True if applied."""
+    """Apply Rollup + esbuild WASM on no-AVX (same as scripts/install.sh). Returns True if npm install ran."""
     if not _cpu_lacks_avx():
-        return False
-    if _rollup_wasm_configured(frontend_dir):
         return False
     pkg_path = frontend_dir / "package.json"
     if not pkg_path.is_file():
@@ -553,30 +554,27 @@ def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[Li
     _ensure_modern_npm(log_lines)
     if _npm_major_version() < 9:
         if log_lines is not None:
-            log_lines.append("⚠️ npm < 9 — cannot apply Rollup WASM override.")
+            log_lines.append("⚠️ npm < 9 — cannot apply WASM overrides.")
         return False
     try:
         data = json.loads(pkg_path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    data.setdefault("overrides", {})["rollup"] = "npm:@rollup/wasm-node@4.60.2"
-    pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    if log_lines is not None:
-        log_lines.append("ℹ️ CPU without AVX — applying Rollup WASM override (npm install)...")
-    for cmd in (["npm", "install"], ["npm", "install", "--legacy-peer-deps"]):
-        proc = subprocess.run(
-            cmd,
-            cwd=str(frontend_dir),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        if proc.returncode == 0:
-            return True
-        err = (proc.stderr or proc.stdout or "").strip()
-        if log_lines is not None and err:
-            log_lines.append(f"⚠️ {' '.join(cmd)} failed: {err[-400:]}")
-    return False
+    overrides = data.setdefault("overrides", {})
+    changed = False
+    if "wasm" not in str(overrides.get("rollup") or "").lower():
+        overrides["rollup"] = "npm:@rollup/wasm-node@4.60.2"
+        changed = True
+    if "wasm" not in str(overrides.get("esbuild") or "").lower():
+        overrides["esbuild"] = "npm:esbuild-wasm@0.21.5"
+        changed = True
+    if changed:
+        pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        if log_lines is not None:
+            log_lines.append("ℹ️ CPU without AVX — applying Rollup + esbuild WASM overrides (npm install)...")
+    elif log_lines is not None:
+        log_lines.append("ℹ️ CPU without AVX — refreshing node_modules (WASM toolchain)...")
+    return _ensure_frontend_npm_deps(frontend_dir, log_lines)
 
 
 def _prefer_serial_vite_build() -> bool:

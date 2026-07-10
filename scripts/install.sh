@@ -562,21 +562,47 @@ copanel_maybe_apply_rollup_wasm_override() {
     local major
     major="$(copanel_npm_major_version)"
     if [[ -z "$major" || "$major" -lt 9 ]]; then
-        log_warning "CPU without AVX and npm < 9 — Rollup WASM override skipped (upgrade npm first)."
+        log_warning "CPU without AVX and npm < 9 — WASM overrides skipped (upgrade npm first)."
         return 0
     fi
-    if grep -q 'wasm-node' "$pkg" 2>/dev/null; then
-        return 0
-    fi
-    log_info "CPU without AVX detected — using Rollup WASM for frontend build..."
+    log_info "CPU without AVX — configuring Rollup + esbuild WASM overrides..."
     node -e '
 const fs = require("fs");
 const pkg = process.argv[1];
 const data = JSON.parse(fs.readFileSync(pkg, "utf8"));
 data.overrides = data.overrides || {};
-data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
-fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+let changed = false;
+if (!String(data.overrides.rollup || "").includes("wasm")) {
+  data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
+  changed = true;
+}
+if (!String(data.overrides.esbuild || "").includes("wasm")) {
+  data.overrides.esbuild = "npm:esbuild-wasm@0.21.5";
+  changed = true;
+}
+if (changed) {
+  fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
+  process.stdout.write("changed");
+}
 ' "$pkg"
+}
+
+copanel_frontend_build_noavx() {
+    local attempt
+    for attempt in 1 2 3; do
+        rm -rf dist node_modules/.vite
+        if VITE_BUILD_LOW_MEMORY=1 npm run build:appstore; then
+            return 0
+        fi
+        local code=$?
+        log_warning "Frontend build attempt ${attempt}/3 failed (exit ${code})."
+        if [[ "$attempt" -lt 3 ]]; then
+            log_info "Retrying with fresh npm install (WASM toolchain)..."
+            npm install || npm install --legacy-peer-deps
+            sleep 2
+        fi
+    done
+    return 1
 }
 
 setup_frontend() {
@@ -594,10 +620,14 @@ setup_frontend() {
         
         # Build frontend
         log_info "Building frontend..."
-        rm -rf dist
         if ! copanel_cpu_has_avx; then
-            VITE_BUILD_LOW_MEMORY=1 npm run build || npm run build
+            if ! copanel_frontend_build_noavx; then
+                log_warning "build:appstore failed — last resort: tsc + vite (low-memory)..."
+                rm -rf dist node_modules/.vite
+                VITE_BUILD_LOW_MEMORY=1 npm run build || return 1
+            fi
         else
+            rm -rf dist
             npm run build
         fi
         
