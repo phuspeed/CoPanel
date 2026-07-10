@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { api, jobsApi, useJob } from '../../core/platform';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 
 interface Template {
   id: string;
@@ -241,6 +242,7 @@ export default function SiteWizard() {
   }
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Hosting</p>
@@ -288,6 +290,7 @@ export default function SiteWizard() {
         <RunPanel job={job} onReset={() => { setJobId(null); setStep(0); setForm(INITIAL); }} />
       )}
     </div>
+    </ModuleViewport>
   );
 }
 

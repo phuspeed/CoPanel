@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 
 type EngineId = 'mysql' | 'postgres';
 
@@ -196,6 +197,7 @@ export default function DatabaseManager() {
   }
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
       <header className="space-y-2">
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Databases</p>
@@ -345,6 +347,7 @@ export default function DatabaseManager() {
         </div>
       </section>
     </div>
+    </ModuleViewport>
   );
 }
 

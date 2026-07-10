@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 
 interface Record {
   id: string;
@@ -105,6 +106,7 @@ export default function DnsManager() {
   }
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-widest text-blue-500 font-bold">Network</p>
@@ -222,5 +224,6 @@ export default function DnsManager() {
         </section>
       </div>
     </div>
+    </ModuleViewport>
   );
 }
