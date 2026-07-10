@@ -3,7 +3,9 @@
  * Stunning, dynamic, and glassmorphic UI with direct highlighting.
  */
 import { useEffect, useState } from 'react';
-import { useLocation, useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
+import { useLocation } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
 interface Package {
@@ -27,7 +29,7 @@ export default function PackageManagerDashboard() {
   const searchParams = new URLSearchParams(location.search);
   const selectedPackageId = searchParams.get('id');
 
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
@@ -186,6 +188,7 @@ export default function PackageManagerDashboard() {
     'min-h-[44px] px-3 py-2.5 text-xs font-bold rounded-xl transition-colors border focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none';
 
   return (
+    <ModuleViewport constrained>
     <div className={`p-3 sm:p-4 md:p-8 max-w-7xl mx-auto space-y-5 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
         isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
@@ -439,5 +442,6 @@ export default function PackageManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

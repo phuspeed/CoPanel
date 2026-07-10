@@ -1,7 +1,10 @@
 # CoPanel Desktop UI — Module Design Guide
 
-> **Nhánh Git:** `DesktopUI` — giao diện desktop thử nghiệm, tách khỏi `main` (classic sidebar UI).  
-> `main` = UI cũ ổn định · `DesktopUI` = desktop shell + window manager (beta).
+> **Unified UI (2026):** One codebase — classic sidebar + desktop shell. Toggle in dock or `localStorage` `copanel_desktop_ui`. AppStore ZIPs use `ModuleViewport` + optional `windowMode` (classic ignores window fields).
+
+> **Git:** Merging `DesktopUI` → `main`. Until then, `DesktopUI` branch or `COPANEL_UI_TRACK=desktop` install.
+
+> **Nhánh Git:** `DesktopUI` (beta) → `main` (unified). Classic = toggle OFF.
 
 ## Cài đặt / chuyển sang Desktop UI
 

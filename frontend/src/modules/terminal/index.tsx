@@ -3,7 +3,8 @@
  * Web terminal (xterm.js + WebSocket) and saved command snippets (REST + JSON).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 import type { Terminal } from '@xterm/xterm';
@@ -33,10 +34,7 @@ export default function TerminalDashboard() {
   const termInstanceRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const context = useOutletContext<{
-    theme: 'dark' | 'light';
-    language: 'en' | 'vi';
-  }>();
+  const context = useAppShellContext();
 
   const isDark = context?.theme === 'dark';
   const language = context?.language || 'en';
@@ -317,6 +315,7 @@ export default function TerminalDashboard() {
     : 'bg-white border-slate-200 text-slate-900';
 
   return (
+    <ModuleViewport constrained>
     <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div
         className={`relative overflow-hidden p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 border transition-all duration-300 ${
@@ -582,5 +581,6 @@ export default function TerminalDashboard() {
         </button>
       )}
     </div>
+    </ModuleViewport>
   );
 }

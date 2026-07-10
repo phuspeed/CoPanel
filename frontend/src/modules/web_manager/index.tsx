@@ -2,7 +2,8 @@
  * Web Manager — Nginx & Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM overview, databases.
  */
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 interface SiteItem {
@@ -25,7 +26,7 @@ export default function WebManagerDashboard() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
   const token = localStorage.getItem('copanel_token');
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
@@ -817,6 +818,7 @@ export default function WebManagerDashboard() {
   };
 
   return (
+    <ModuleViewport constrained>
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
       {/* Premium Dashboard Banner */}
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
@@ -1953,5 +1955,6 @@ export default function WebManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

@@ -3,7 +3,8 @@
  * Premium container and Compose management dashboard.
  */
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import ModuleViewport from '../../core/shell/ModuleViewport';
 import * as Icons from 'lucide-react';
 
 interface ContainerItem {
@@ -73,7 +74,7 @@ export default function DockerManagerDashboard() {
   const [actionOutput, setActionOutput] = useState<string | null>(null);
   const [composeListOpen, setComposeListOpen] = useState(true);
 
-  const { theme, language } = useOutletContext<{ theme: 'dark' | 'light'; language: 'en' | 'vi' }>();
+  const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
 
   const t = {
@@ -314,6 +315,7 @@ export default function DockerManagerDashboard() {
   };
 
   return (
+    <ModuleViewport constrained>
     <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
       <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 transition-all duration-300 ${
         isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
@@ -641,5 +643,6 @@ export default function DockerManagerDashboard() {
         </div>
       )}
     </div>
+    </ModuleViewport>
   );
 }

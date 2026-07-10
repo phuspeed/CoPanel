@@ -1,12 +1,13 @@
 #!/bin/bash
 
 ###############################################################################
-# CoPanel Desktop UI — installer (Git branch: DesktopUI)
+# CoPanel Desktop UI — installer (unified codebase on branch main or DesktopUI)
 #
-# Installs the experimental DSM-style desktop shell (floating windows, dock).
-# Stable classic UI remains on branch `main` + scripts/install.sh.
+# Same CoPanel repo: classic + desktop shell in one tree. This script sets
+# COPANEL_UI_TRACK=desktop and checks out DesktopUI until merge to main completes.
+# After unification, use: COPANEL_UI_TRACK=desktop sudo bash scripts/install.sh
 #
-# One-liner (recommended — GitHub API, avoids raw CDN rate limits):
+# One-liner:
 #   curl -fsSL -H "Accept: application/vnd.github.v3.raw" \
 #     "https://api.github.com/repos/phuspeed/CoPanel/contents/scripts/install-desktop-ui.sh?ref=DesktopUI" | sudo bash
 #
