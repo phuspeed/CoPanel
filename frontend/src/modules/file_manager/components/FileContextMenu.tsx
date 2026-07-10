@@ -39,6 +39,8 @@ interface Props {
   onCopy: () => void;
   onPaste: () => void;
   onBookmarkToggle: () => void;
+  onBookmarkSelection: () => void;
+  onDeselect: () => void;
   onDelete: () => void;
   onZip: () => void;
   onExtract: () => void;
@@ -99,6 +101,8 @@ export default function FileContextMenu({
   onCopy,
   onPaste,
   onBookmarkToggle,
+  onBookmarkSelection,
+  onDeselect,
   onDelete,
   onZip,
   onExtract,
@@ -173,6 +177,16 @@ export default function FileContextMenu({
                   icon: <Icons.Bookmark className={cn(iconCls, bookmarked && 'fill-current')} />,
                   onClick: onBookmarkToggle,
                 },
+                ...(selectionCount > 0
+                  ? [
+                      {
+                        id: 'bookmark-selection',
+                        label: tr.bookmarkSelection,
+                        icon: <Icons.BookmarkPlus className={iconCls} />,
+                        onClick: onBookmarkSelection,
+                      },
+                    ]
+                  : []),
               ]
             : []),
           ...(selectionCount > 0
@@ -183,6 +197,9 @@ export default function FileContextMenu({
                   : []),
                 { id: 'chmod', label: tr.chmodLabelShort, icon: <Icons.Shield className={iconCls} />, onClick: onChmod },
               ]
+            : []),
+          ...(selectionCount > 0
+            ? [{ id: 'deselect', label: tr.deselect, icon: <Icons.X className={iconCls} />, onClick: onDeselect }]
             : []),
           { id: 'delete', label: tr.deleteItem, icon: <Icons.Trash2 className={iconCls} />, onClick: onDelete, danger: true },
         ];

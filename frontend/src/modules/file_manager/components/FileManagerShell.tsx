@@ -192,63 +192,6 @@ export default function FileManagerShell(fm: FileManagerState) {
             </div>
           )}
 
-          {selectedPaths.length > 0 && (
-            <div className={cn('shrink-0 flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs', isDark ? 'border-blue-900/40 bg-blue-950/20' : 'border-blue-100 bg-blue-50')}>
-              <span className="font-semibold">
-                {selectedPaths.length} {tr.itemsSelected}
-              </span>
-              <button type="button" onClick={() => handleCut()} className="rounded-lg border px-2 py-1 font-bold">
-                {tr.cut}
-              </button>
-              <button type="button" onClick={() => handleCopy()} className="rounded-lg border px-2 py-1 font-bold">
-                {tr.copy}
-              </button>
-              {!bookmarkBackendMissing && (
-                <button type="button" onClick={() => void bookmarkSelection()} className="rounded-lg border px-2 py-1 font-bold">
-                  {tr.bookmarkSelection}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  fm.setZipArchiveName('archive.zip');
-                  fm.setZipModalOpen(true);
-                }}
-                className="rounded-lg border px-2 py-1 font-bold"
-              >
-                {tr.zipLabelShort}
-              </button>
-              {selectedPaths.length === 1 && selectedPaths[0].toLowerCase().endsWith('.zip') && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    fm.setExtractTargetDir(currentPath);
-                    fm.setExtractModalOpen(true);
-                  }}
-                  className="rounded-lg border px-2 py-1 font-bold"
-                >
-                  {tr.extractButton}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  fm.setChmodValue('755');
-                  fm.setChmodModalOpen(true);
-                }}
-                className="rounded-lg border px-2 py-1 font-bold"
-              >
-                {tr.chmodLabelShort}
-              </button>
-              <button type="button" onClick={() => void handleDelete()} className="rounded-lg border border-red-400 px-2 py-1 font-bold text-red-500">
-                {tr.deleteItem}
-              </button>
-              <button type="button" onClick={clearSelection} className="ml-auto font-bold opacity-70 hover:opacity-100">
-                {tr.deselect}
-              </button>
-            </div>
-          )}
-
           <div
             className={cn('relative min-h-0 flex-1 overflow-auto', isDark ? 'bg-slate-950/20' : 'bg-white')}
             onDragEnter={onDragEnter}
@@ -359,6 +302,8 @@ export default function FileManagerShell(fm: FileManagerState) {
           onCopy={() => handleCopy(contextItem)}
           onPaste={() => void handlePaste()}
           onBookmarkToggle={() => contextItem && void toggleBookmarkForItem(contextItem)}
+          onBookmarkSelection={() => void bookmarkSelection()}
+          onDeselect={clearSelection}
           onDelete={() => void handleDelete(contextItem)}
           onZip={() => {
             fm.setZipArchiveName('archive.zip');
