@@ -1,9 +1,11 @@
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
-export type SettingsTab = 'ssh' | 'root' | 'gate' | 'totp' | 'network' | 'branding';
+export type SettingsTab = 'datetime' | 'users' | 'ssh' | 'root' | 'gate' | 'totp' | 'network' | 'branding';
 
 const ITEMS: { id: SettingsTab; icon: typeof Icons.Terminal }[] = [
+  { id: 'datetime', icon: Icons.Clock },
+  { id: 'users', icon: Icons.Users },
   { id: 'ssh', icon: Icons.Terminal },
   { id: 'root', icon: Icons.KeyRound },
   { id: 'gate', icon: Icons.Shield },

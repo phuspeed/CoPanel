@@ -4,7 +4,7 @@ export default {
   name: 'Settings',
   icon: 'Settings',
   path: '/settings',
-  description: 'SSH port, root password, panel access gate, 2FA, and network configuration.',
+  description: 'Date & time, user accounts, SSH, security, network, and branding.',
   component: PanelSettings,
   windowMode: true,
   defaultWindowSize: { width: 980, height: 680 },
