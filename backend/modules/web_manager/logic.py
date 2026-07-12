@@ -426,6 +426,24 @@ def _php_run(cmd: List[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=False, capture_output=True, text=True)
 
 
+def _php_resolve_bin(name: str) -> Optional[str]:
+    """Resolve system binary when service PATH is minimal (systemd)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for path in (f"/usr/bin/{name}", f"/usr/sbin/{name}", f"/bin/{name}", f"/sbin/{name}"):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def _php_dpkg_query(args: List[str]) -> subprocess.CompletedProcess:
+    dpkg = _php_resolve_bin("dpkg-query")
+    if not dpkg:
+        return subprocess.CompletedProcess(args=["dpkg-query", *args], returncode=127, stdout="", stderr="")
+    return _php_run([dpkg, *args])
+
+
 def _php_package_matches_apt_stream(pkg: str, version: str) -> bool:
     base = f"php{version}"
     if pkg == base or pkg.startswith(f"{base}-"):
@@ -436,7 +454,7 @@ def _php_package_matches_apt_stream(pkg: str, version: str) -> bool:
 
 
 def _php_debian_dpkg_stream_has_installed_pkg(version: str) -> bool:
-    res = _php_run(["dpkg-query", "-W", "-f=${Status}\t${Package}\n"])
+    res = _php_dpkg_query(["-W", "-f=${Status}\t${Package}\n"])
     if res.returncode != 0 or not res.stdout.strip():
         return False
     for line in res.stdout.splitlines():
@@ -451,7 +469,7 @@ def _php_debian_dpkg_stream_has_installed_pkg(version: str) -> bool:
 
 
 def _php_debian_list_php_stream_packages(version: str) -> List[str]:
-    res = _php_run(["dpkg-query", "-W", "-f=${Status}\t${Package}\n"])
+    res = _php_dpkg_query(["-W", "-f=${Status}\t${Package}\n"])
     if res.returncode != 0 or not res.stdout.strip():
         return []
     ok_status = frozenset({"install ok installed", "deinstall ok config-files"})
@@ -472,8 +490,9 @@ def get_active_php_version() -> str:
         return PHP_SUPPORTED_VERSIONS[0]
     installed = set(get_php_versions())
     try:
-        if shutil.which("php"):
-            res = _php_run(["php", "-v"])
+        php_bin = _php_resolve_bin("php")
+        if php_bin:
+            res = _php_run([php_bin, "-v"])
             if res.returncode == 0 and res.stdout:
                 m = re.search(r"PHP\s+(\d+\.\d+)", res.stdout)
                 if m:
@@ -488,25 +507,47 @@ def get_active_php_version() -> str:
 def _is_php_version_installed(version: str) -> bool:
     if IS_WINDOWS:
         return False
-    if shutil.which("dpkg-query") and _php_debian_dpkg_stream_has_installed_pkg(version):
+    ver = version.strip()
+    if not ver:
+        return False
+
+    # FPM socket probe (same signal as Web Services stack tab; no PATH needed)
+    if detect_php_fpm_socket(ver):
         return True
-    php_bin = shutil.which(f"php{version}")
+
+    # systemd unit present
+    unit = f"php{ver}-fpm"
+    if _run_cmd(["systemctl", "cat", unit], timeout=5).returncode == 0:
+        return True
+
+    # Debian/Ubuntu dpkg stream packages
+    if _php_resolve_bin("dpkg-query") and _php_debian_dpkg_stream_has_installed_pkg(ver):
+        return True
+
+    php_bin = _php_resolve_bin(f"php{ver}")
     if php_bin:
         res = _php_run([php_bin, "-v"])
-        if res.returncode == 0 and res.stdout and version in res.stdout.splitlines()[0]:
+        if res.returncode == 0 and res.stdout and ver in res.stdout.splitlines()[0]:
             return True
-    if shutil.which(f"php-fpm{version}"):
+
+    if _php_resolve_bin(f"php-fpm{ver}"):
         return True
+
     return False
 
 
 def get_php_versions() -> List[str]:
     if IS_WINDOWS:
         return list(PHP_SUPPORTED_VERSIONS)
-    installed: List[str] = []
+    installed: set[str] = set()
     for v in PHP_SUPPORTED_VERSIONS:
         if _is_php_version_installed(v):
-            installed.append(v)
+            installed.add(v)
+    # Align with stack overview: include versions discovered via FPM sockets/units
+    for row in list_php_fpm_versions():
+        ver = str(row.get("version") or "").strip()
+        if ver in PHP_SUPPORTED_VERSIONS:
+            installed.add(ver)
     return sorted(installed, key=lambda x: tuple(map(int, x.split("."))), reverse=True)
 
 
@@ -549,7 +590,7 @@ def get_enabled_modules(version: str) -> List[str]:
                 out.add(low)
         return out
 
-    php_bin = shutil.which(f"php{version}")
+    php_bin = _php_resolve_bin(f"php{version}")
     if php_bin:
         res = _php_run([php_bin, "-m"])
         if res.returncode == 0 and res.stdout.strip():
@@ -563,7 +604,7 @@ def get_enabled_modules(version: str) -> List[str]:
     if modules_set:
         return sorted(modules_set)
 
-    fallback = shutil.which("php")
+    fallback = _php_resolve_bin("php")
     if fallback:
         res = _php_run([fallback, "-v"])
         if res.returncode == 0 and res.stdout and version in res.stdout.splitlines()[0]:
@@ -663,8 +704,8 @@ def set_active_php_version(version: str) -> Dict[str, Any]:
     if IS_WINDOWS:
         return {"status": "success", "message": f"PHP {version} set active (Mock mode)."}
     try:
-        php_bin = shutil.which(f"php{version}")
-        if php_bin and shutil.which("update-alternatives"):
+        php_bin = _php_resolve_bin(f"php{version}")
+        if php_bin and _php_resolve_bin("update-alternatives"):
             _php_run(["sudo", "update-alternatives", "--set", "php", php_bin])
         if shutil.which("systemctl"):
             _php_run(["sudo", "systemctl", "restart", f"php{version}-fpm"])

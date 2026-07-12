@@ -64,6 +64,7 @@ export default function PhpManagerPanel({ isDark, language, authHeaders }: Props
       enabledMods: 'Enabled',
       disabledMods: 'Disabled',
       loading: 'Loading...',
+      loadFailed: 'Could not load PHP versions from the server.',
       extNeedInstall: 'Install this PHP version on the Versions tab before managing extensions.',
       activeLabel: 'Active',
     },
@@ -84,6 +85,7 @@ export default function PhpManagerPanel({ isDark, language, authHeaders }: Props
       enabledMods: 'Đang bật',
       disabledMods: 'Đang tắt',
       loading: 'Đang tải...',
+      loadFailed: 'Không tải được danh sách phiên bản PHP từ máy chủ.',
       extNeedInstall: 'Hãy cài phiên bản PHP này ở tab Phiên bản trước khi quản lý extension.',
       activeLabel: 'Đang dùng',
     },
@@ -103,26 +105,30 @@ export default function PhpManagerPanel({ isDark, language, authHeaders }: Props
     setLoading(true);
     try {
       const res = await fetch(`${API}/versions`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        const installed: string[] = data.versions || [];
-        const active: string =
-          (data.active && installed.includes(data.active) ? data.active : '') || installed[0] || '';
-        setVersions(
-          INSTALLABLE_VERSIONS.map((v) => ({
-            version: v,
-            status:
-              v === active && installed.includes(v)
-                ? 'active'
-                : installed.includes(v)
-                  ? 'installed'
-                  : 'available',
-          })),
-        );
-        if (!selectedVersion) setSelectedVersion(active || installed[0] || '8.2');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showMsg(typeof err?.detail === 'string' ? err.detail : tr.loadFailed, 'err');
+        return;
       }
+      const data = await res.json();
+      const installed: string[] = data.versions || [];
+      const active: string =
+        (data.active && installed.includes(data.active) ? data.active : '') || installed[0] || '';
+      setVersions(
+        INSTALLABLE_VERSIONS.map((v) => ({
+          version: v,
+          status:
+            v === active && installed.includes(v)
+              ? 'active'
+              : installed.includes(v)
+                ? 'installed'
+                : 'available',
+        })),
+      );
+      if (active) setSelectedVersion((prev) => prev || active);
+      else if (installed[0]) setSelectedVersion(installed[0]);
     } catch {
-      /* ignore */
+      showMsg(tr.loadFailed, 'err');
     } finally {
       setLoading(false);
     }
