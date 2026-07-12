@@ -226,14 +226,13 @@ Legend:
 | `database_manager` | **A** | ✓ | Wave A |
 | `site_wizard` | **A** | ✓ | Wave A |
 | `firewall` | **A** | ✓ | Wave B config |
-| `web_manager` | **A** | ✓ | `WindowModal` site create + config |
+| `web_manager` | **A** | ✓ | `WindowModal` site create + config; PHP Manager embedded tab |
 | `backup_manager` | **A** | ✓ | `WindowModal` wizard/stream/explorer/oauth |
 | `system_monitor` | **A** | ✓ | `WindowModal` signal + process detail |
 | `terminal` | **A** | ✓ | |
 | `system_monitor` | **A** | ✓ | modals backlog |
 | `system_cleaner` | **A** | ✓ | |
 | `ssl_manager` | **A** | ✓ | `WindowModal` issue dialog |
-| `php_manager` | **A** | ✓ | |
 | `package_manager` | **A** | ✓ | |
 | `docker_manager` | **A** | ✓ | `WindowModal` logs |
 | `backup_manager` | **A** | ✓ | |

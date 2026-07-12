@@ -1,12 +1,13 @@
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
-export type WebManagerTab = 'sites' | 'services' | 'databases';
+export type WebManagerTab = 'sites' | 'services' | 'databases' | 'php';
 
 const ITEMS: { id: WebManagerTab; icon: typeof Icons.Globe }[] = [
   { id: 'sites', icon: Icons.Globe },
   { id: 'services', icon: Icons.Server },
   { id: 'databases', icon: Icons.Database },
+  { id: 'php', icon: Icons.Cpu },
 ];
 
 interface Props {

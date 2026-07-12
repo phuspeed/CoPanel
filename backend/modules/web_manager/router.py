@@ -1159,3 +1159,92 @@ async def save_phpmyadmin_credentials(req: SavePhpMyAdminCredentialsRequest) -> 
             
     return {"status": "success", "message": "Credentials updated successfully."}
 
+
+# --- PHP management (merged from php_manager) ---
+
+class InstallPHPRequest(BaseModel):
+    version: str
+
+
+class SetActivePHPRequest(BaseModel):
+    version: str
+
+
+class PHPModuleToggleRequest(BaseModel):
+    version: str
+    module: str
+    enable: bool
+
+
+class SavePHPIniRequest(BaseModel):
+    content: str
+
+
+@router.get("/php/versions")
+def get_php_versions_endpoint() -> Dict[str, Any]:
+    payload = logic.get_php_versions_meta()
+    return {"status": "success", **payload}
+
+
+@router.get("/php/modules")
+def get_php_modules_endpoint() -> Dict[str, Any]:
+    return {"status": "success", "modules": logic.get_php_modules()}
+
+
+@router.get("/php/modules/{version}")
+def get_php_modules_for_version(version: str) -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "enabled": logic.get_enabled_modules(version),
+        "all": logic.get_php_modules(),
+    }
+
+
+@router.post("/php/install")
+def install_php(req: InstallPHPRequest) -> Dict[str, Any]:
+    res = logic.install_php_version(req.version)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
+
+
+@router.delete("/php/uninstall/{version}")
+def uninstall_php(version: str) -> Dict[str, Any]:
+    res = logic.uninstall_php_version(version)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
+
+
+@router.post("/php/set_active")
+def set_active_php(req: SetActivePHPRequest) -> Dict[str, Any]:
+    res = logic.set_active_php_version(req.version)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
+
+
+@router.post("/php/module_toggle")
+def toggle_php_module(req: PHPModuleToggleRequest) -> Dict[str, Any]:
+    res = logic.toggle_php_module(req.version, req.module, req.enable)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
+
+
+@router.get("/php/php_ini/{version}")
+def get_php_ini_endpoint(version: str) -> Dict[str, Any]:
+    try:
+        content = logic.get_php_ini(version)
+        return {"status": "success", "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/php/php_ini/{version}")
+def save_php_ini_endpoint(version: str, req: SavePHPIniRequest) -> Dict[str, Any]:
+    res = logic.save_php_ini(version, req.content)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
+

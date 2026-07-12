@@ -15,7 +15,6 @@ FILES = [
     "ssl_manager/index.tsx",
     "firewall/index.tsx",
     "users/index.tsx",
-    "php_manager/index.tsx",
     "package_manager/index.tsx",
     "system_cleaner/index.tsx",
     "docker_manager/index.tsx",

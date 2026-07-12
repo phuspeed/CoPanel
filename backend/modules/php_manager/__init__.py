@@ -1,1 +1,0 @@
-# PHP Manager module
