@@ -30,7 +30,6 @@ export const requiredPackageMap: Record<string, { id: string; name: string }> = 
 const PACKAGE_CATEGORY_MAP: Record<string, PackageCategory> = {
   terminal: 'development',
   docker_manager: 'development',
-  php_manager: 'development',
   cron_manager: 'development',
   file_manager: 'system',
   system_monitor: 'system',

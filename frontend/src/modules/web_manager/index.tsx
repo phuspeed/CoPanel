@@ -6,6 +6,7 @@ import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
 import WebManagerSidebar, { type WebManagerTab } from './components/WebManagerSidebar';
+import PhpManagerPanel from './components/PhpManagerPanel';
 import * as Icons from 'lucide-react';
 
 interface SiteItem {
@@ -99,10 +100,11 @@ export default function WebManagerDashboard() {
   const t = {
     en: {
       title: 'Web Manager',
-      desc: 'Control website domains, web server stack (Nginx / Apache, PHP-FPM summary), and SQL database services. Use the PHP Manager module for php.ini and PHP versions.',
+      desc: 'Control website domains, web server stack (Nginx / Apache, PHP-FPM), SQL database services, and PHP versions/extensions/php.ini in one place.',
       tabSites: 'Website Management',
       tabServices: 'Web Services Status',
       tabDbs: 'SQL Database Manager',
+      tabPhp: 'PHP Manager',
       createBtn: 'Create New Site',
       loadingSites: 'Loading Nginx sites...',
       colFilename: 'Filename',
@@ -189,10 +191,11 @@ export default function WebManagerDashboard() {
     },
     vi: {
       title: 'Quản lý Web',
-      desc: 'Quản lý tên miền, stack web (Nginx / Apache, tóm tắt PHP-FPM) và dịch vụ SQL. Dùng module PHP Manager để chỉnh php.ini và phiên bản PHP.',
+      desc: 'Quản lý tên miền, stack web (Nginx / Apache, PHP-FPM), dịch vụ SQL và phiên bản/extension/php.ini PHP trong một module.',
       tabSites: 'Quản lý Website',
       tabServices: 'Dịch vụ Web',
       tabDbs: 'Dịch vụ Database & User',
+      tabPhp: 'Quản lý PHP',
       createBtn: 'Tạo website mới',
       loadingSites: 'Đang tải danh sách website...',
       colFilename: 'Tên tệp cấu hình',
@@ -458,12 +461,12 @@ export default function WebManagerDashboard() {
   useEffect(() => {
     const fetchPhpOptions = async () => {
       try {
-        const resV = await fetch('/api/php_manager/versions', { headers: authHeaders });
+        const resV = await fetch('/api/web_manager/php/versions', { headers: authHeaders });
         if (resV.ok) {
           const dV = await resV.json();
           if (dV.versions) setAvailablePhpVersions(dV.versions);
         }
-        const resM = await fetch('/api/php_manager/modules', { headers: authHeaders });
+        const resM = await fetch('/api/web_manager/php/modules', { headers: authHeaders });
         if (resM.ok) {
           const dM = await resM.json();
           if (dM.modules) setAvailablePhpModules(dM.modules);
@@ -823,6 +826,12 @@ export default function WebManagerDashboard() {
     sites: { title: tr.tabSites, desc: tr.desc },
     services: { title: tr.wsTitle, desc: tr.wsDesc },
     databases: { title: tr.dbTitle, desc: tr.dbDesc },
+    php: {
+      title: tr.tabPhp,
+      desc: language === 'vi'
+        ? 'Cài đặt phiên bản PHP, bật/tắt extension và chỉnh php.ini.'
+        : 'Install PHP versions, manage extensions, and edit php.ini.',
+    },
   };
 
   const openCreateSiteModal = () => {
@@ -845,6 +854,7 @@ export default function WebManagerDashboard() {
             sites: tr.tabSites,
             services: tr.tabServices,
             databases: tr.tabDbs,
+            php: tr.tabPhp,
           }}
           title={tr.title}
           subtitle={tr.desc}
@@ -1565,6 +1575,10 @@ export default function WebManagerDashboard() {
             )}
           </div>
         </div>
+      )}
+
+      {activeTab === 'php' && (
+        <PhpManagerPanel isDark={isDark} language={language || 'en'} authHeaders={authHeaders} />
       )}
         </main>
       </div>
