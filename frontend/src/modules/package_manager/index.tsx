@@ -1,10 +1,10 @@
 /**
- * Premium Package Manager Component
- * Stunning, dynamic, and glassmorphic UI with direct highlighting.
+ * Package Manager — Desktop sidebar shell + Classic full-page (dual UI).
  */
 import { useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import WindowModal from '../../core/shell/WindowModal';
 import { useLocation } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
@@ -24,6 +24,7 @@ export default function PackageManagerDashboard() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ msg: string; isError: boolean } | null>(null);
   const [mysqlCreds, setMysqlCreds] = useState<{ user: string; password: string; url?: string } | null>(null);
+  const [removeConfirm, setRemoveConfirm] = useState<{ id: string; name: string } | null>(null);
 
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
@@ -36,8 +37,9 @@ export default function PackageManagerDashboard() {
 
   const t = {
     en: {
+      category: 'System',
       title: 'Ubuntu Service & Packages',
-      desc: 'Directly manage Ubuntu system services and dynamic CoPanel modules. Interact with your stack using Install, Restart, Stop, and Remove.',
+      subtitle: 'Manage Ubuntu system services and CoPanel modules — install, restart, stop, or remove.',
       engine: 'System Engine',
       activeServices: 'Services Active',
       loadingPkg: 'Loading system packages...',
@@ -54,16 +56,20 @@ export default function PackageManagerDashboard() {
       remove: 'Remove',
       noPackages: 'No packages found in this category.',
       openPhpMyAdmin: 'Open phpMyAdmin',
-      phpmyadminPath: 'Access path'
+      phpmyadminPath: 'Access path',
+      confirmRemove: 'Remove this package? This may uninstall system software.',
+      cancel: 'Cancel',
+      confirmRemoveTitle: 'Confirm remove',
     },
     vi: {
+      category: 'Hệ thống',
       title: 'Dịch vụ & Gói Ubuntu',
-      desc: 'Quản lý trực tiếp các dịch vụ hệ thống Ubuntu và các module CoPanel. Thao tác với cài đặt, khởi động lại, dừng hoặc gỡ bỏ.',
+      subtitle: 'Quản lý dịch vụ Ubuntu và module CoPanel — cài, khởi động lại, dừng hoặc gỡ.',
       engine: 'Động cơ hệ thống',
       activeServices: 'Dịch vụ hoạt động',
       loadingPkg: 'Đang tải danh sách dịch vụ...',
       categories: ['Tất cả', 'Web Server', 'Database', 'Database Tools', 'Runtimes', 'DevOps', 'Security & System', 'Utilities'],
-      focusedPackage: 'Đang xem thông tin chi tiết gói',
+      focusedPackage: 'Đang xem chi tiết gói',
       showAll: 'Hiện tất cả gói',
       active: 'Đang chạy',
       stopped: 'Bị dừng',
@@ -73,15 +79,22 @@ export default function PackageManagerDashboard() {
       restart: 'Khởi động lại',
       start: 'Bắt đầu',
       remove: 'Gỡ bỏ',
-      noPackages: 'Không tìm thấy gói nào trong danh mục này.',
+      noPackages: 'Không tìm thấy gói trong danh mục này.',
       openPhpMyAdmin: 'Mở phpMyAdmin',
-      phpmyadminPath: 'Đường dẫn truy cập'
-    }
+      phpmyadminPath: 'Đường dẫn truy cập',
+      confirmRemove: 'Gỡ gói này? Có thể gỡ phần mềm hệ thống.',
+      cancel: 'Hủy',
+      confirmRemoveTitle: 'Xác nhận gỡ',
+    },
   };
 
   const tr = t[language || 'en'];
-
   const categories = tr.categories;
+  const muted = isDark ? 'text-slate-400' : 'text-slate-500';
+  const panel = isDark ? 'bg-slate-900/60 border-slate-700' : 'bg-white border-slate-200';
+  const btnSecondary = isDark
+    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
+    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200';
 
   const fetchPackages = () => {
     setLoading(true);
@@ -95,11 +108,8 @@ export default function PackageManagerDashboard() {
         return r;
       })
       .then((r) => r.json())
-
       .then((data) => {
-        if (data && data.packages) {
-          setPackages(data.packages);
-        }
+        if (data && data.packages) setPackages(data.packages);
         setLoading(false);
       })
       .catch((err) => {
@@ -125,15 +135,17 @@ export default function PackageManagerDashboard() {
     fetchMysqlCreds();
     const interval = setInterval(fetchPackages, 5000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleAction = async (id: string, action: 'install' | 'restart' | 'stop' | 'remove') => {
+  const handleAction = async (id: string, action: 'install' | 'restart' | 'stop' | 'remove' | 'start') => {
     setActionLoading(`${id}-${action}`);
     setActionMsg(null);
+    const apiAction = action === 'start' ? 'restart' : action;
     try {
-      const res = await fetch(`/api/package_manager/${id}/${action}`, {
+      const res = await fetch(`/api/package_manager/${id}/${apiAction}`, {
         method: 'POST',
-        headers: authHeaders
+        headers: authHeaders,
       });
       if (res.ok) {
         setActionMsg({ msg: `${id}: ${action} success`, isError: false });
@@ -148,6 +160,7 @@ export default function PackageManagerDashboard() {
       setActionMsg({ msg: `${id}: ${action} failed`, isError: true });
     } finally {
       setActionLoading(null);
+      if (action === 'remove') setRemoveConfirm(null);
     }
   };
 
@@ -170,7 +183,6 @@ export default function PackageManagerDashboard() {
     return <IconComponent className="w-5 h-5 md:w-6 md:h-6" />;
   };
 
-  // Convert categories dynamically for filtering
   const mapCatToEn = (cat: string) => {
     const idx = categories.indexOf(cat);
     if (idx !== -1) return t.en.categories[idx];
@@ -179,269 +191,308 @@ export default function PackageManagerDashboard() {
 
   const filteredPackages = selectedPackageId
     ? packages.filter((p) => p.id === selectedPackageId)
-    : (selectedCategory === categories[0] || selectedCategory === 'All'
+    : selectedCategory === categories[0] || selectedCategory === 'All'
       ? packages
-      : packages.filter((p) => p.category === mapCatToEn(selectedCategory)));
+      : packages.filter((p) => p.category === mapCatToEn(selectedCategory));
 
-  /** Shared: touch-friendly height + visible focus for keyboard */
   const actionBtnBase =
     'min-h-[44px] px-3 py-2.5 text-xs font-bold rounded-xl transition-colors border focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none';
 
+  const runningCount = packages.filter((p) => p.status === 'running').length;
+
   return (
     <ModuleViewport constrained>
-    <div className={`p-3 sm:p-4 md:p-8 max-w-7xl mx-auto space-y-5 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
-        isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-      }`}>
-        <div className="space-y-2 max-w-2xl text-center md:text-left">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight ${
-            isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
-          }`}>
-            {tr.title}
-          </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
-          </p>
-        </div>
-        <div className={`flex flex-col items-center md:items-end gap-1 text-right p-4 rounded-xl border backdrop-blur-sm self-stretch md:self-auto min-w-[180px] ${
-          isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
-        }`}>
-          <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{tr.engine}</span>
-          <span className={`text-lg md:text-2xl font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-            {packages.filter((p) => p.status === 'running').length} / {packages.length}
-          </span>
-          <span className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.activeServices}</span>
+      <div className={`flex flex-col h-full min-h-0 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+        <header
+          className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">{tr.category}</p>
+            <h1 className="text-lg font-semibold truncate">{tr.title}</h1>
+            <p className={`text-xs mt-0.5 line-clamp-2 ${muted}`}>{tr.subtitle}</p>
+          </div>
+          <div
+            className={`shrink-0 rounded-xl border p-3 text-right min-w-[140px] ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white'}`}
+          >
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+              {tr.engine}
+            </span>
+            <p className={`text-lg font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+              {runningCount} / {packages.length}
+            </p>
+            <span className={`text-[10px] ${muted}`}>{tr.activeServices}</span>
+          </div>
+        </header>
+
+        {actionMsg && (
+          <div
+            className={`shrink-0 mx-4 mt-2 rounded-xl border px-4 py-2 text-xs ${
+              actionMsg.isError
+                ? isDark
+                  ? 'bg-red-950/30 border-red-900/40 text-red-300'
+                  : 'bg-red-50 border-red-200 text-red-700'
+                : isDark
+                  ? 'bg-emerald-950/30 border-emerald-900/40 text-emerald-300'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            }`}
+          >
+            {actionMsg.msg}
+          </div>
+        )}
+
+        {selectedPackageId && (
+          <div className="shrink-0 mx-4 mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className={`flex items-center gap-2 text-xs px-3 py-2.5 border rounded-xl min-h-[44px] ${
+                isDark ? 'text-blue-400 bg-blue-950/40 border-blue-900/40' : 'text-blue-800 bg-blue-50 border-blue-200'
+              }`}
+            >
+              <Icons.Eye className="w-4 h-4 shrink-0" />
+              {tr.focusedPackage}
+            </div>
+            <button
+              type="button"
+              onClick={() => window.history.replaceState(null, '', window.location.pathname)}
+              className={`min-h-[44px] px-3 rounded-lg text-xs font-semibold border transition-colors ${btnSecondary}`}
+            >
+              {tr.showAll}
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-1 min-h-0">
+          {!selectedPackageId && (
+            <aside
+              className={`w-44 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
+            >
+              <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
+                {categories.map((cat) => {
+                  const isActive = selectedCategory === cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`w-full text-left px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition ${
+                        isActive
+                          ? isDark
+                            ? 'bg-blue-600/25 text-blue-300'
+                            : 'bg-blue-50 text-blue-700'
+                          : `${muted} ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`
+                      }`}
+                    >
+                      <span className="line-clamp-2">{cat}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+          )}
+
+          <main className="flex-1 min-h-0 overflow-y-auto p-4">
+            {loading && packages.length === 0 ? (
+              <div className={`flex flex-col items-center justify-center p-12 border rounded-xl ${panel}`}>
+                <Icons.Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                <span className={`text-xs mt-4 ${muted}`}>{tr.loadingPkg}</span>
+              </div>
+            ) : filteredPackages.length === 0 ? (
+              <div className={`rounded-2xl border p-8 text-center ${panel}`}>
+                <Icons.Package className={`w-10 h-10 mx-auto mb-3 ${muted}`} />
+                <p className={`text-sm ${muted}`}>{tr.noPackages}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredPackages.map((pkg) => (
+                  <div
+                    key={pkg.id}
+                    className={`group relative flex flex-col justify-between p-4 sm:p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300 hover:shadow-lg ${
+                      pkg.id === selectedPackageId
+                        ? isDark
+                          ? 'border-blue-500 bg-blue-950/20 ring-1 ring-blue-500/40'
+                          : 'border-blue-500 bg-blue-50/90 ring-2 ring-blue-200'
+                        : isDark
+                          ? 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30'
+                          : 'bg-white border-slate-200 hover:border-blue-400/60 shadow-sm'
+                    }`}
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`p-3 border rounded-xl ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}
+                          >
+                            {getIcon(pkg.icon)}
+                          </div>
+                          <div>
+                            <h4 className={`text-sm md:text-base font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                              {pkg.name}
+                            </h4>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded border ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}
+                            >
+                              {pkg.category}
+                            </span>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[11px] px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-medium ${
+                            pkg.status === 'running'
+                              ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                              : pkg.status === 'stopped'
+                                ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                                : isDark
+                                  ? 'bg-slate-800/80 text-slate-400 border-slate-700'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              pkg.status === 'running'
+                                ? 'bg-green-500 animate-pulse'
+                                : pkg.status === 'stopped'
+                                  ? 'bg-amber-400'
+                                  : 'bg-slate-500'
+                            }`}
+                          />
+                          {pkg.status === 'running' ? tr.active : pkg.status === 'stopped' ? tr.stopped : tr.notInstalled}
+                        </span>
+                      </div>
+
+                      <p className={`text-xs min-h-[38px] line-clamp-2 leading-relaxed ${muted}`}>{pkg.description}</p>
+
+                      {pkg.id === 'phpmyadmin' && pkg.status !== 'not_installed' && (
+                        <div
+                          className={`text-[11px] border rounded-xl px-2.5 py-2 ${isDark ? 'border-slate-700 bg-slate-800/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}
+                        >
+                          <div className="font-semibold">
+                            {tr.phpmyadminPath}: `{mysqlCreds?.url || '/phpmyadmin/index.php'}`
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              window.open(
+                                `${window.location.protocol}//${window.location.hostname}${mysqlCreds?.url || '/phpmyadmin/index.php'}`,
+                                '_blank'
+                              )
+                            }
+                            className="mt-2 w-full sm:w-auto min-h-[44px] text-xs px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 text-white font-semibold border border-blue-800"
+                          >
+                            {tr.openPhpMyAdmin}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={`mt-5 pt-4 border-t flex flex-col gap-2 sm:flex-row sm:flex-wrap ${isDark ? 'border-slate-800/80' : 'border-slate-200'}`}>
+                      {pkg.status === 'not_installed' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAction(pkg.id, 'install')}
+                          disabled={actionLoading !== null}
+                          className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-blue-700 hover:bg-blue-600 border-blue-800`}
+                        >
+                          {actionLoading === `${pkg.id}-install` ? (
+                            <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Icons.Download className="w-4 h-4 shrink-0" />
+                          )}
+                          {tr.install}
+                        </button>
+                      ) : (
+                        <>
+                          {pkg.status === 'running' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleAction(pkg.id, 'stop')}
+                                disabled={actionLoading !== null}
+                                className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-slate-700 hover:bg-slate-600 border-slate-500`}
+                              >
+                                {actionLoading === `${pkg.id}-stop` ? (
+                                  <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                ) : (
+                                  <Icons.Square className="w-4 h-4 shrink-0" />
+                                )}
+                                {tr.stop}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAction(pkg.id, 'restart')}
+                                disabled={actionLoading !== null}
+                                className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-indigo-700 hover:bg-indigo-600 border-indigo-800`}
+                              >
+                                {actionLoading === `${pkg.id}-restart` ? (
+                                  <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                ) : (
+                                  <Icons.RotateCw className="w-4 h-4 shrink-0" />
+                                )}
+                                {tr.restart}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleAction(pkg.id, 'start')}
+                              disabled={actionLoading !== null}
+                              className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-emerald-700 hover:bg-emerald-600 border-emerald-800`}
+                            >
+                              {actionLoading === `${pkg.id}-restart` ? (
+                                <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                              ) : (
+                                <Icons.Play className="w-4 h-4 shrink-0" />
+                              )}
+                              {tr.start}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setRemoveConfirm({ id: pkg.id, name: pkg.name })}
+                            disabled={actionLoading !== null}
+                            className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-red-600 hover:bg-red-700 border-red-700`}
+                          >
+                            <Icons.Trash2 className="w-4 h-4 shrink-0" />
+                            {tr.remove}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
         </div>
       </div>
 
-      {!selectedPackageId && (
-        <div
-          className={`-mx-3 sm:mx-0 px-3 sm:px-0 flex gap-1 overflow-x-auto pb-2 -mb-1 snap-x snap-mandatory select-none [scrollbar-width:thin] ${
-            isDark ? 'border-b border-slate-800/80' : 'border-b border-slate-200'
-          }`}
-        >
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => setSelectedCategory(cat)}
-              className={`shrink-0 snap-start min-h-[40px] px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
-                isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
-              } ${
-                selectedCategory === cat
-                  ? isDark
-                    ? 'border-blue-400 bg-blue-500/20 text-blue-200 shadow-sm'
-                    : 'border-blue-600 bg-blue-600 text-white shadow-sm'
-                  : isDark
-                    ? 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 hover:border-slate-700'
-                    : 'border-transparent text-slate-700 hover:text-slate-900 hover:bg-slate-100 hover:border-slate-300'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {selectedPackageId && (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className={`flex items-center gap-2 text-xs px-3 py-2.5 border rounded-xl min-h-[44px] ${
-            isDark ? 'text-blue-400 bg-blue-950/40 border-blue-900/40' : 'text-blue-800 bg-blue-50 border-blue-200'
-          }`}>
-            <Icons.Eye className="w-4 h-4 shrink-0" />
-            {tr.focusedPackage}
-          </div>
+      <WindowModal
+        open={removeConfirm !== null}
+        onClose={() => setRemoveConfirm(null)}
+        title={tr.confirmRemoveTitle}
+        maxWidth="sm"
+      >
+        <p className={`text-sm mb-4 ${muted}`}>
+          {tr.confirmRemove}
+          {removeConfirm && (
+            <>
+              <br />
+              <strong className={isDark ? 'text-slate-200' : 'text-slate-800'}>{removeConfirm.name}</strong>
+            </>
+          )}
+        </p>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => setRemoveConfirm(null)} className={`px-4 py-2 rounded-xl text-xs font-bold border ${btnSecondary}`}>
+            {tr.cancel}
+          </button>
           <button
             type="button"
-            onClick={() => window.history.replaceState(null, '', window.location.pathname)}
-            className={`min-h-[44px] px-3 rounded-lg text-xs font-semibold border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-              isDark
-                ? 'text-slate-200 border-slate-600 bg-slate-800 hover:bg-slate-700'
-                : 'text-slate-900 border-slate-300 bg-white hover:bg-slate-50'
-            }`}
+            disabled={actionLoading !== null}
+            onClick={() => removeConfirm && handleAction(removeConfirm.id, 'remove')}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
           >
-            {tr.showAll}
+            {tr.remove}
           </button>
         </div>
-      )}
-
-      {actionMsg && (
-        <div className={`text-xs border rounded-xl px-3 py-2 ${actionMsg.isError
-          ? (isDark ? 'bg-red-950/30 border-red-900/40 text-red-300' : 'bg-red-50 border-red-200 text-red-700')
-          : (isDark ? 'bg-emerald-950/30 border-emerald-900/40 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700')
-        }`}>
-          {actionMsg.msg}
-        </div>
-      )}
-
-      {loading && packages.length === 0 ? (
-        <div className={`flex flex-col items-center justify-center p-12 border rounded-xl ${isDark ? 'border-slate-800 bg-slate-900/20' : 'border-slate-200 bg-white'}`}>
-          <Icons.Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-          <span className="text-xs text-slate-400 mt-4">{tr.loadingPkg}</span>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          {filteredPackages.map((pkg) => (
-            <div
-              key={pkg.id}
-              className={`group relative flex flex-col justify-between p-4 sm:p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5 hover:-translate-y-0.5 ${
-                pkg.id === selectedPackageId
-                  ? isDark
-                    ? 'border-blue-500 bg-blue-950/20 ring-1 ring-blue-500/40 shadow-xl'
-                    : 'border-blue-500 bg-blue-50/90 ring-2 ring-blue-200 shadow-lg'
-                  : isDark ? 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30' : 'bg-white border-slate-200 hover:border-blue-400/60 shadow-sm hover:bg-slate-50/80'
-              }`}
-            >
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-3 border rounded-xl transition-all duration-300 ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                      {getIcon(pkg.icon)}
-                    </div>
-                    <div>
-                      <h4 className={`text-sm md:text-base font-bold transition-all ${isDark ? 'text-slate-200 group-hover:text-white' : 'text-slate-800 group-hover:text-slate-900'}`}>
-                        {pkg.name}
-                      </h4>
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                        {pkg.category}
-                      </span>
-                    </div>
-                  </div>
-                  <span className={`text-[11px] px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-medium transition duration-200 ${
-                    pkg.status === 'running'
-                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
-                      : pkg.status === 'stopped'
-                      ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                      : isDark ? 'bg-slate-800/80 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-500 border-slate-200'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      pkg.status === 'running'
-                        ? 'bg-green-500 animate-pulse'
-                        : pkg.status === 'stopped'
-                        ? 'bg-amber-400'
-                        : 'bg-slate-500'
-                    }`}></span>
-                    {pkg.status === 'running' ? tr.active : pkg.status === 'stopped' ? tr.stopped : tr.notInstalled}
-                  </span>
-                </div>
-
-                <p className={`text-xs min-h-[38px] line-clamp-2 leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {pkg.description}
-                </p>
-                {pkg.id === 'phpmyadmin' && pkg.status !== 'not_installed' && (
-                  <div className={`text-[11px] border rounded-xl px-2.5 py-2 ${isDark ? 'border-slate-700 bg-slate-800/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-                    <div className="font-semibold">{tr.phpmyadminPath}: `{mysqlCreds?.url || '/phpmyadmin/index.php'}`</div>
-                    <button
-                      type="button"
-                      onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}${mysqlCreds?.url || '/phpmyadmin/index.php'}`, '_blank')}
-                      className="mt-2 w-full sm:w-auto min-h-[44px] text-xs px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 text-white font-semibold border border-blue-800 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                    >
-                      {tr.openPhpMyAdmin}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div
-                className={`mt-5 pt-4 border-t flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch ${
-                  isDark ? 'border-slate-800/80' : 'border-slate-200'
-                }`}
-              >
-                {pkg.status === 'not_installed' ? (
-                  <button
-                    type="button"
-                    onClick={() => handleAction(pkg.id, 'install')}
-                    disabled={actionLoading !== null}
-                    className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-blue-700 hover:bg-blue-600 border-blue-800 shadow-md focus-visible:ring-blue-500 ${
-                      isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
-                    }`}
-                  >
-                    {actionLoading === `${pkg.id}-install` ? (
-                      <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                    ) : (
-                      <Icons.Download className="w-4 h-4 shrink-0" />
-                    )}
-                    {tr.install}
-                  </button>
-                ) : (
-                  <>
-                    {pkg.status === 'running' ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleAction(pkg.id, 'stop')}
-                          disabled={actionLoading !== null}
-                          className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 ${
-                            isDark
-                              ? 'text-white bg-slate-700 hover:bg-slate-600 border-slate-500 focus-visible:ring-slate-400 focus-visible:ring-offset-slate-950'
-                              : 'text-white bg-slate-800 hover:bg-slate-900 border-slate-900 focus-visible:ring-slate-700 focus-visible:ring-offset-white'
-                          }`}
-                        >
-                          {actionLoading === `${pkg.id}-stop` ? (
-                            <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                          ) : (
-                            <Icons.Square className="w-4 h-4 shrink-0" />
-                          )}
-                          {tr.stop}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAction(pkg.id, 'restart')}
-                          disabled={actionLoading !== null}
-                          className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-indigo-700 hover:bg-indigo-600 border-indigo-800 shadow-md focus-visible:ring-indigo-500 ${
-                            isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
-                          }`}
-                        >
-                          {actionLoading === `${pkg.id}-restart` ? (
-                            <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                          ) : (
-                            <Icons.RotateCw className="w-4 h-4 shrink-0" />
-                          )}
-                          {tr.restart}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleAction(pkg.id, 'restart')}
-                        disabled={actionLoading !== null}
-                        className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 text-white bg-emerald-700 hover:bg-emerald-600 border-emerald-800 shadow-md focus-visible:ring-emerald-500 ${
-                          isDark ? 'focus-visible:ring-offset-slate-950' : 'focus-visible:ring-offset-white'
-                        }`}
-                      >
-                        {actionLoading === `${pkg.id}-restart` ? (
-                          <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                        ) : (
-                          <Icons.Play className="w-4 h-4 shrink-0" />
-                        )}
-                        {tr.start}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleAction(pkg.id, 'remove')}
-                      disabled={actionLoading !== null}
-                      className={`${actionBtnBase} w-full sm:flex-1 flex items-center justify-center gap-1.5 ${
-                        isDark
-                          ? 'text-white bg-red-700 hover:bg-red-600 border-red-600 focus-visible:ring-red-500 focus-visible:ring-offset-slate-950'
-                          : 'text-white bg-red-600 hover:bg-red-700 border-red-700 focus-visible:ring-red-600 focus-visible:ring-offset-white'
-                      }`}
-                    >
-                      {actionLoading === `${pkg.id}-remove` ? (
-                        <Icons.Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                      ) : (
-                        <Icons.Trash2 className="w-4 h-4 shrink-0" />
-                      )}
-                      {tr.remove}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      </WindowModal>
     </ModuleViewport>
   );
 }
