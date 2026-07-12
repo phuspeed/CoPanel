@@ -9,6 +9,7 @@ from core.auth import optional_user
 from core.jobs import jobs as job_manager
 
 from .compose_manager import ComposeManager
+from .templates import COMPOSE_TEMPLATES
 from .logic import DockerManagerError, DockerService, should_allow_mock
 from .schemas import (
     ComposeBuildRequest,
@@ -19,6 +20,8 @@ from .schemas import (
     ContainerExecRequest,
     ContainerRenameRequest,
     ProjectCreateRequest,
+    ProjectComposeUpdateByPathRequest,
+    ProjectEnvUpdateRequest,
     ProjectInspectRequest,
     ProjectValidateContentRequest,
     StackComposeUpdateRequest,
@@ -376,6 +379,51 @@ async def read_stack_compose(stack_id: str) -> Dict[str, Any]:
 async def update_stack_compose(stack_id: str, req: StackComposeUpdateRequest) -> Dict[str, Any]:
     try:
         return {"status": "success", "data": compose_manager.update_compose_content(stack_id, req.compose_content)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/projects/list")
+async def project_list() -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.list_projects()}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/projects/templates")
+async def project_templates() -> Dict[str, Any]:
+    return {"status": "success", "data": COMPOSE_TEMPLATES}
+
+
+@router.get("/projects/compose")
+async def project_compose_read(path: str = Query(...)) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.get_compose_at_path(path)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.put("/projects/compose")
+async def project_compose_update(req: ProjectComposeUpdateByPathRequest) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.update_compose_at_path(req.path, req.compose_content)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/projects/env")
+async def project_env_read(path: str = Query(...)) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.get_env_at_path(path)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.put("/projects/env")
+async def project_env_update(req: ProjectEnvUpdateRequest) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.update_env_at_path(req.path, req.content)}
     except Exception as exc:
         _raise_http(exc)
 

@@ -18,6 +18,7 @@ MOCK_CONTAINERS = [
         "image": "fastapi:latest",
         "status": "running",
         "ports": "8000/tcp",
+        "project": "copanel",
     },
     {
         "id": "f8e7d6c5b4a3",
@@ -25,6 +26,7 @@ MOCK_CONTAINERS = [
         "image": "nginx:alpine",
         "status": "running",
         "ports": "80/tcp -> 8686",
+        "project": "copanel",
     },
 ]
 
@@ -91,13 +93,22 @@ class DockerService:
                             "image": c.image.tags[0] if c.image.tags else c.image.short_id,
                             "status": c.status,
                             "ports": ", ".join(ports) if ports else "-",
+                            "project": (c.labels or {}).get("com.docker.compose.project", ""),
                         }
                     )
                 return containers, False
             except Exception:
                 pass
 
-        result = self._run([self._docker_bin(), "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"])
+        result = self._run(
+            [
+                self._docker_bin(),
+                "ps",
+                "-a",
+                "--format",
+                '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Label "com.docker.compose.project"}}',
+            ]
+        )
         if result.returncode == 0 and result.stdout.strip():
             for line in result.stdout.strip().splitlines():
                 parts = line.split("\t")
@@ -118,6 +129,7 @@ class DockerService:
                         "image": parts[2],
                         "status": status,
                         "ports": parts[4] if len(parts) > 4 and parts[4] else "-",
+                        "project": parts[5] if len(parts) > 5 else "",
                     }
                 )
             return containers, False

@@ -94,6 +94,39 @@ class DockerManagerServiceTests(unittest.TestCase):
                 self.assertEqual(result["status"], "success")
                 mocked.assert_called_once()
 
+    def test_list_projects_and_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            managed = Path(tmp) / "managed"
+            stack = managed / "demo"
+            stack.mkdir(parents=True)
+            (stack / "docker-compose.yml").write_text("services:\n  web:\n    image: nginx:alpine\n", encoding="utf-8")
+            (stack / ".env.example").write_text("FOO=bar\n", encoding="utf-8")
+            manager = ComposeManager(managed_root=str(managed))
+
+            with patch.object(manager, "ps", return_value={"status": "success", "output": "running"}):
+                projects = manager.list_projects()
+            self.assertEqual(len(projects), 1)
+            self.assertEqual(projects[0]["id"], "demo")
+
+            env = manager.get_env_at_path(str(stack))
+            self.assertIn("FOO", env["content"])
+            manager.update_env_at_path(str(stack), "FOO=baz\n")
+            self.assertIn("baz", (stack / ".env").read_text(encoding="utf-8"))
+
+    def test_update_compose_at_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            managed = Path(tmp) / "managed"
+            stack = managed / "demo"
+            stack.mkdir(parents=True)
+            (stack / "docker-compose.yml").write_text("services:\n  web:\n    image: nginx:alpine\n", encoding="utf-8")
+            manager = ComposeManager(managed_root=str(managed))
+            new_yaml = "services:\n  web:\n    image: redis:7\n"
+
+            with patch.object(manager, "validate", return_value={"status": "success", "output": "ok"}):
+                result = manager.update_compose_at_path(str(stack), new_yaml)
+            self.assertTrue(result["validated"])
+            self.assertIn("redis:7", (stack / "docker-compose.yml").read_text(encoding="utf-8"))
+
     @patch("modules.docker_manager.logic.DockerService._run")
     def test_exec_requires_command(self, _mock_run):
         service = DockerService()

@@ -11,6 +11,16 @@ export type WizardStep = 1 | 2 | 3 | 4;
 export type ConfigMode = 'existing' | 'template' | 'paste';
 export type FolderMode = 'managed' | 'custom';
 
+interface ComposeTemplate {
+  id: string;
+  name_en: string;
+  name_vi: string;
+  description_en: string;
+  description_vi: string;
+  icon: string;
+  compose: string;
+}
+
 interface InspectData {
   path: string;
   exists: boolean;
@@ -52,6 +62,9 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validateMsg, setValidateMsg] = useState<string | null>(null);
+  const [gallery, setGallery] = useState<ComposeTemplate[]>([]);
+  const [templateSubMode, setTemplateSubMode] = useState<'gallery' | 'simple'>('gallery');
+  const [selectedGalleryId, setSelectedGalleryId] = useState<string | null>(null);
 
   const tr = useMemo(
     () =>
@@ -81,6 +94,8 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
           hostPort: 'Host port',
           containerPort: 'Container port',
           composeYaml: 'docker-compose.yml',
+          templateGallery: 'Template gallery',
+          singleContainer: 'Single container',
           validate: 'Validate YAML',
           validateOk: 'Compose file is valid.',
           validateFail: 'Validation failed.',
@@ -126,6 +141,8 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
           hostPort: 'Cổng host',
           containerPort: 'Cổng container',
           composeYaml: 'docker-compose.yml',
+          templateGallery: 'Thư viện template',
+          singleContainer: 'Container đơn',
           validate: 'Kiểm tra YAML',
           validateOk: 'Tệp compose hợp lệ.',
           validateFail: 'Kiểm tra thất bại.',
@@ -172,6 +189,10 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
       .then((d) => {
         if (d?.data?.managed_root) setManagedRoot(d.data.managed_root);
       })
+      .catch(() => undefined);
+    fetch('/api/docker_manager/projects/templates')
+      .then((r) => r.json())
+      .then((d) => setGallery(d.data || []))
       .catch(() => undefined);
   }, [open, reset]);
 
@@ -280,7 +301,8 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
     setBusy(true);
     setError(null);
     try {
-      const source = configMode;
+      const source =
+        configMode === 'template' && templateSubMode === 'gallery' && selectedGalleryId ? 'paste' : configMode;
       const body: Record<string, unknown> = {
         project_name: projectName.trim(),
         folder_mode: folderMode,
@@ -478,33 +500,90 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
             </div>
 
             {configMode === 'template' && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">{tr.image}</span>
-                  <input
-                    value={template.image}
-                    onChange={(e) => setTemplate((t) => ({ ...t, image: e.target.value }))}
-                    className={cn('w-full rounded-lg border px-2 py-1.5 text-xs font-mono', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">{tr.hostPort}</span>
-                  <input
-                    type="number"
-                    value={template.host_port}
-                    onChange={(e) => setTemplate((t) => ({ ...t, host_port: Number(e.target.value) }))}
-                    className={cn('w-full rounded-lg border px-2 py-1.5 text-xs', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase text-slate-500">{tr.containerPort}</span>
-                  <input
-                    type="number"
-                    value={template.container_port}
-                    onChange={(e) => setTemplate((t) => ({ ...t, container_port: Number(e.target.value) }))}
-                    className={cn('w-full rounded-lg border px-2 py-1.5 text-xs', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
-                  />
-                </label>
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTemplateSubMode('gallery')}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-[11px] font-bold border',
+                      templateSubMode === 'gallery' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200',
+                    )}
+                  >
+                    {tr.templateGallery}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemplateSubMode('simple')}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-[11px] font-bold border',
+                      templateSubMode === 'simple' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200',
+                    )}
+                  >
+                    {tr.singleContainer}
+                  </button>
+                </div>
+                {templateSubMode === 'gallery' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                    {gallery.map((tpl) => {
+                      const active = selectedGalleryId === tpl.id;
+                      return (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedGalleryId(tpl.id);
+                            setComposeContent(tpl.compose);
+                          }}
+                          className={cn(
+                            'rounded-xl border p-3 text-left transition',
+                            active
+                              ? isDark
+                                ? 'border-blue-500/50 bg-blue-500/10'
+                                : 'border-blue-400 bg-blue-50'
+                              : isDark
+                                ? 'border-slate-800 hover:border-slate-700'
+                                : 'border-slate-200 hover:border-slate-300',
+                          )}
+                        >
+                          <div className="text-xs font-bold">{language === 'vi' ? tpl.name_vi : tpl.name_en}</div>
+                          <div className="text-[10px] mt-1 text-slate-500 line-clamp-2">
+                            {language === 'vi' ? tpl.description_vi : tpl.description_en}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.image}</span>
+                      <input
+                        value={template.image}
+                        onChange={(e) => setTemplate((t) => ({ ...t, image: e.target.value }))}
+                        className={cn('w-full rounded-lg border px-2 py-1.5 text-xs font-mono', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.hostPort}</span>
+                      <input
+                        type="number"
+                        value={template.host_port}
+                        onChange={(e) => setTemplate((t) => ({ ...t, host_port: Number(e.target.value) }))}
+                        className={cn('w-full rounded-lg border px-2 py-1.5 text-xs', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.containerPort}</span>
+                      <input
+                        type="number"
+                        value={template.container_port}
+                        onChange={(e) => setTemplate((t) => ({ ...t, container_port: Number(e.target.value) }))}
+                        className={cn('w-full rounded-lg border px-2 py-1.5 text-xs', isDark ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white')}
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
             )}
 

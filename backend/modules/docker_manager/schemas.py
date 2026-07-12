@@ -75,6 +75,20 @@ class ProjectValidateContentRequest(BaseModel):
     compose_content: str
 
 
+class ProjectPathRequest(BaseModel):
+    path: str
+
+
+class ProjectComposeUpdateByPathRequest(BaseModel):
+    path: str
+    compose_content: str
+
+
+class ProjectEnvUpdateRequest(BaseModel):
+    path: str
+    content: str
+
+
 class DockerResponse(BaseModel):
     status: str
     message: Optional[str] = None

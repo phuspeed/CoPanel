@@ -362,6 +362,92 @@ class ComposeManager:
             "validated": True,
         }
 
+    def _project_status(self, path: str) -> str:
+        try:
+            result = self.ps(path)
+            if result.get("status") != "success":
+                return "unknown"
+            output = (result.get("output") or "").strip().lower()
+            if not output or "name" not in output and "container" not in output:
+                lines = [ln for ln in output.splitlines() if ln.strip()]
+                if not lines:
+                    return "stopped"
+            if "running" in output or "up " in output:
+                return "running"
+            if "exited" in output or "stopped" in output:
+                return "stopped"
+            return "partial" if output else "stopped"
+        except Exception:
+            return "unknown"
+
+    def list_projects(self) -> List[Dict[str, Any]]:
+        projects: List[Dict[str, Any]] = []
+        for stack in self.list_managed_stacks():
+            projects.append(
+                {
+                    "id": stack["id"],
+                    "name": stack["id"],
+                    "path": stack["path"],
+                    "compose_file": stack["compose_file"],
+                    "source": "managed",
+                    "status": self._project_status(stack["path"]),
+                }
+            )
+        return projects
+
+    def get_compose_at_path(self, path: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        compose_file = self._resolve_compose_file(folder)
+        if not compose_file:
+            raise DockerManagerError("Compose file not found", code="compose_missing")
+        return {
+            "path": str(folder),
+            "compose_file": str(compose_file),
+            "content": compose_file.read_text(encoding="utf-8"),
+        }
+
+    def update_compose_at_path(self, path: str, compose_content: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        compose_file = self._resolve_compose_file(folder) or (folder / "docker-compose.yml")
+        lock_key = str(folder)
+        lock = self._locks.setdefault(lock_key, threading.Lock())
+        with lock:
+            backup = compose_file.read_text(encoding="utf-8") if compose_file.exists() else ""
+            compose_file.write_text(compose_content, encoding="utf-8")
+            validation = self.validate(str(folder))
+            if validation["status"] != "success":
+                if backup:
+                    compose_file.write_text(backup, encoding="utf-8")
+                raise DockerManagerError(
+                    "Compose validation failed",
+                    code="compose_invalid",
+                    details=validation.get("error") or validation.get("output"),
+                )
+        return {"path": str(folder), "compose_file": str(compose_file), "validated": True}
+
+    def get_env_at_path(self, path: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        env_file = folder / ".env"
+        example_file = folder / ".env.example"
+        if env_file.exists():
+            content = env_file.read_text(encoding="utf-8")
+            exists = True
+        elif example_file.exists():
+            content = example_file.read_text(encoding="utf-8")
+            exists = False
+        else:
+            content = ""
+            exists = False
+        return {"path": str(folder), "content": content, "exists": exists}
+
+    def update_env_at_path(self, path: str, content: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        if not os.access(folder, os.W_OK):
+            raise DockerManagerError("Folder is not writable", code="path_forbidden")
+        env_file = folder / ".env"
+        env_file.write_text(content, encoding="utf-8")
+        return {"path": str(folder), "env_file": str(env_file), "saved": True}
+
     def init_stack(self, stack_id: str, image: str, host_port: int, container_port: int) -> Dict[str, Any]:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         sid = self._safe_stack_id(stack_id)
