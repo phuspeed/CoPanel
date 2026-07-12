@@ -163,12 +163,22 @@ export default function CronManager() {
   const [draft, setDraft] = useState<Job>({ ...EMPTY });
   const [builder, setBuilder] = useState<BuilderState>({ ...DEFAULT_BUILDER });
   const [error, setError] = useState<string | null>(null);
-  const [system, setSystem] = useState<{ crontab_available?: boolean; install_hint?: string } | null>(null);
+  const [system, setSystem] = useState<{
+    crontab_available?: boolean;
+    cron_service_active?: boolean;
+    install_hint?: string;
+    cron_daemon?: { service?: string | null; active?: boolean };
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadSystem = async () => {
     try {
-      const st = await api<{ crontab_available: boolean; install_hint?: string }>('/api/cron_manager/system');
+      const st = await api<{
+        crontab_available: boolean;
+        cron_service_active?: boolean;
+        install_hint?: string;
+        cron_daemon?: { service?: string | null; active?: boolean };
+      }>('/api/cron_manager/system');
       setSystem(st);
     } catch {
       setSystem(null);
@@ -283,13 +293,22 @@ export default function CronManager() {
         </p>
       </header>
 
-      {system && !system.crontab_available && (
+      {system && (!system.crontab_available || system.crontab_available && system.cron_service_active === false) && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200">
-          <p className="font-semibold">Cron hệ thống chưa sẵn sàng</p>
-          <p className="text-xs mt-1 opacity-90">
-            Module Cron Manager chỉ là giao diện — cần gói <code className="font-mono">cron</code> (lệnh{' '}
-            <code className="font-mono">crontab</code>) trên Linux. {system.install_hint}
+          <p className="font-semibold">
+            {!system.crontab_available ? 'Cron hệ thống chưa sẵn sàng' : 'Daemon cron chưa chạy'}
           </p>
+          <p className="text-xs mt-1 opacity-90">
+            Module Cron Manager chỉ là giao diện — job chạy qua daemon <code className="font-mono">cron</code> của OS,
+            không phải process CoPanel. Crontab có dòng không đủ — cần <code className="font-mono">systemctl enable --now cron</code>.
+            {' '}
+            {system.install_hint}
+          </p>
+          {system.cron_daemon?.service && (
+            <p className="text-[11px] mt-2 font-mono opacity-80">
+              Service: {system.cron_daemon.service} · active={String(system.cron_daemon.active)}
+            </p>
+          )}
           <button
             type="button"
             onClick={installCron}

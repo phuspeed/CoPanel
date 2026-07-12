@@ -16,6 +16,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple
 
+from core.cron_system import ensure_cron_service
+
 DB_PATH = Path("/opt/copanel/config/backup_manager.db")
 CRON_TAG_START = "# BEGIN COPANEL BACKUP"
 CRON_TAG_END = "# END COPANEL BACKUP"
@@ -575,6 +577,7 @@ class ProfileManager:
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip() or "crontab write failed"
             raise RuntimeError(err)
+        ensure_cron_service()
 
 
 class BackupTaskEngine:

@@ -16,18 +16,14 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List
 
-IS_WINDOWS = os.name == "nt"
+from core.cron_system import ensure_cron_service, get_cron_daemon_status, has_crontab as _has_crontab
 
 MARKER = "# copanel-id="
 BLOCK_START = "# BEGIN COPANEL CRON"
 BLOCK_END = "# END COPANEL CRON"
 BACKUP_BLOCK_START = "# BEGIN COPANEL BACKUP"
 BACKUP_BLOCK_END = "# END COPANEL BACKUP"
-DB_PATH = Path("./test_nginx/cron_manager.db") if IS_WINDOWS else Path("/opt/copanel/config/cron_manager.db")
-
-
-def _has_crontab() -> bool:
-    return not IS_WINDOWS and shutil.which("crontab") is not None
+DB_PATH = Path("./test_nginx/cron_manager.db") if os.name == "nt" else Path("/opt/copanel/config/cron_manager.db")
 
 
 def _db() -> sqlite3.Connection:
@@ -156,24 +152,28 @@ def _sync_managed_crontab() -> None:
         keep.extend([BLOCK_START, *managed_lines, BLOCK_END])
     content = "\n".join(keep).rstrip() + ("\n" if keep else "")
     _write_crontab(content)
+    ensure_cron_service()
 
 
 def _ensure_cron_service() -> None:
-    for svc in ("cron", "crond"):
-        probe = subprocess.run(["systemctl", "status", svc], capture_output=True, text=True)
-        if probe.returncode in (0, 3):
-            subprocess.run(["systemctl", "enable", "--now", svc], capture_output=True, text=True)
-            return
+    ensure_cron_service()
 
 
 def get_system_status() -> Dict[str, Any]:
     has = _has_crontab()
+    daemon = get_cron_daemon_status()
     return {
         "crontab_available": has,
+        "cron_daemon": daemon,
+        "cron_service_active": bool(daemon.get("active")),
         "install_hint": (
             ""
-            if has
-            else "Gói cron hệ thống chưa cài. Chạy: apt install cron && systemctl enable --now cron"
+            if has and daemon.get("active")
+            else (
+                "Gói cron hệ thống chưa cài. Chạy: apt install cron && systemctl enable --now cron"
+                if not has
+                else "Crontab có nhưng daemon cron chưa chạy. Bấm «Cài cron & sync» hoặc: systemctl enable --now cron"
+            )
         ),
     }
 
@@ -184,7 +184,7 @@ def ensure_crontab() -> Dict[str, Any]:
         _ensure_cron_service()
         _sync_managed_crontab()
         return {"ok": True, "message": "crontab available", "installed": False}
-    if IS_WINDOWS:
+    if os.name == "nt":
         return {"ok": False, "message": "Windows has no crontab."}
     if shutil.which("apt-get"):
         env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}

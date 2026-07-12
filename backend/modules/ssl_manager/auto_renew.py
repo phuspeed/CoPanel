@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+from core.cron_system import ensure_cron_service
+
 IS_WINDOWS = os.name == "nt"
 CONFIG_DIR = Path("/opt/copanel/config") if not IS_WINDOWS else Path("./test_copanel/config")
 LOG_DIR = Path("/opt/copanel/logs") if not IS_WINDOWS else Path("./test_copanel/logs")
@@ -196,3 +198,4 @@ class AutoRenewManager:
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip() or "crontab write failed"
             raise RuntimeError(err)
+        ensure_cron_service()
