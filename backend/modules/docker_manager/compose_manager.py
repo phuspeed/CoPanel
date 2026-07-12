@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -160,6 +161,292 @@ class ComposeManager:
                     }
                 )
         return stacks
+
+    def _custom_roots(self) -> List[Path]:
+        if os.name == "nt":
+            return [Path.cwd().resolve()]
+        roots: List[Path] = []
+        for entry in ("/home", "/var/www", "/opt/copanel", "/root"):
+            candidate = Path(entry)
+            if candidate.exists():
+                roots.append(candidate.resolve())
+        return roots
+
+    def _all_allowed_roots(self) -> List[Path]:
+        self.managed_root.mkdir(parents=True, exist_ok=True)
+        roots = [self.managed_root.resolve(), *self._custom_roots()]
+        seen: set[str] = set()
+        unique: List[Path] = []
+        for root in roots:
+            key = str(root)
+            if key not in seen:
+                seen.add(key)
+                unique.append(root)
+        return unique
+
+    def _path_under_managed(self, path: Path) -> bool:
+        managed = self.managed_root.resolve()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path.absolute()
+        return managed in resolved.parents or resolved == managed
+
+    def _resolve_allowed_path(self, path: str, must_exist: bool = True) -> Path:
+        target = Path(path)
+        try:
+            resolved = target.resolve()
+        except OSError:
+            resolved = target.absolute()
+        if not must_exist and self._path_under_managed(resolved):
+            self._resolve_within(resolved, self.managed_root.resolve())
+            return resolved
+        last_error: Optional[DockerManagerError] = None
+        for root in self._all_allowed_roots():
+            try:
+                return self._resolve_within(resolved, root)
+            except DockerManagerError as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        raise DockerManagerError("Path is outside allowed root", code="path_forbidden")
+
+    def _build_template_compose(self, service_name: str, image: str, host_port: int, container_port: int) -> str:
+        safe_name = self._safe_stack_id(service_name.replace("-", "_"))
+        return (
+            "services:\n"
+            f"  {safe_name}:\n"
+            f"    image: {image}\n"
+            "    restart: unless-stopped\n"
+            "    ports:\n"
+            f'      - "{host_port}:{container_port}"\n'
+        )
+
+    def resolve_project_folder(self, folder_mode: str, project_name: str, folder_path: Optional[str] = None) -> Path:
+        if folder_mode == "managed":
+            self.managed_root.mkdir(parents=True, exist_ok=True)
+            sid = self._safe_stack_id(project_name)
+            return self._resolve_within(self.managed_root / sid, self.managed_root.resolve())
+        if not folder_path:
+            raise DockerManagerError("folder_path is required for custom mode", code="invalid_request")
+        folder = self._resolve_allowed_path(folder_path, must_exist=True)
+        if not folder.is_dir():
+            raise DockerManagerError(f"The path '{folder}' is not a directory.", code="path_not_found")
+        return folder
+
+    def inspect_folder(self, path: str) -> Dict[str, Any]:
+        target = Path(path)
+        try:
+            resolved = target.resolve()
+        except OSError:
+            resolved = target.absolute()
+
+        if not resolved.exists():
+            if self._path_under_managed(resolved):
+                self.managed_root.mkdir(parents=True, exist_ok=True)
+                managed = self.managed_root.resolve()
+                return {
+                    "path": str(resolved),
+                    "exists": False,
+                    "has_compose": False,
+                    "compose_file": None,
+                    "compose_content": None,
+                    "writable": os.access(managed, os.W_OK),
+                }
+            raise DockerManagerError(f"The path '{path}' does not exist.", code="path_not_found")
+
+        folder = self._resolve_allowed_path(str(resolved), must_exist=True)
+        if not folder.is_dir():
+            raise DockerManagerError(f"The path '{path}' is not a directory.", code="path_not_found")
+
+        compose_file = self._resolve_compose_file(folder)
+        content: Optional[str] = None
+        if compose_file:
+            raw = compose_file.read_text(encoding="utf-8")
+            content = raw if len(raw) <= 32768 else raw[:32768] + "\n# ... truncated ..."
+
+        return {
+            "path": str(folder),
+            "exists": True,
+            "has_compose": compose_file is not None,
+            "compose_file": compose_file.name if compose_file else None,
+            "compose_content": content,
+            "writable": os.access(folder, os.W_OK),
+        }
+
+    def validate_compose_content(self, compose_content: str) -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="copanel-compose-validate-") as tmp:
+            folder = Path(tmp)
+            (folder / "docker-compose.yml").write_text(compose_content, encoding="utf-8")
+            return self.validate(str(folder))
+
+    def create_project(
+        self,
+        project_name: str,
+        folder_mode: str,
+        source: str,
+        folder_path: Optional[str] = None,
+        compose_content: Optional[str] = None,
+        template: Optional[Dict[str, Any]] = None,
+        overwrite_compose: bool = False,
+    ) -> Dict[str, Any]:
+        sid = self._safe_stack_id(project_name)
+        folder = self.resolve_project_folder(folder_mode, sid, folder_path)
+        folder.mkdir(parents=True, exist_ok=True)
+
+        existing = self._resolve_compose_file(folder)
+        target_file = folder / "docker-compose.yml"
+
+        if source == "existing":
+            if not existing:
+                raise DockerManagerError("No compose file found in the selected folder.", code="compose_missing")
+            if compose_content and compose_content.strip():
+                if existing and not overwrite_compose:
+                    current = existing.read_text(encoding="utf-8")
+                    if compose_content.strip() != current.strip():
+                        raise DockerManagerError(
+                            "Compose file already exists. Enable overwrite to replace it.",
+                            code="compose_exists",
+                        )
+                target_file = existing
+                if compose_content.strip() != existing.read_text(encoding="utf-8").strip():
+                    target_file.write_text(compose_content, encoding="utf-8")
+        elif source == "paste":
+            if not compose_content or not compose_content.strip():
+                raise DockerManagerError("Compose content is required.", code="compose_missing")
+            if existing and not overwrite_compose:
+                raise DockerManagerError(
+                    "Compose file already exists. Enable overwrite to replace it.",
+                    code="compose_exists",
+                )
+            target_file.write_text(compose_content, encoding="utf-8")
+        elif source == "template":
+            tpl = template or {}
+            generated = self._build_template_compose(
+                sid,
+                str(tpl.get("image") or "nginx:alpine"),
+                int(tpl.get("host_port") or 8080),
+                int(tpl.get("container_port") or 80),
+            )
+            if existing and not overwrite_compose:
+                raise DockerManagerError(
+                    "Compose file already exists. Enable overwrite to replace it.",
+                    code="compose_exists",
+                )
+            target_file.write_text(generated, encoding="utf-8")
+            compose_content = generated
+        else:
+            raise DockerManagerError("Invalid project source.", code="invalid_request")
+
+        validation = self.validate(str(folder))
+        if validation["status"] != "success":
+            raise DockerManagerError(
+                "Compose validation failed",
+                code="compose_invalid",
+                details=validation.get("error") or validation.get("output"),
+            )
+
+        if not (folder / ".env.example").exists():
+            (folder / ".env.example").write_text("# Add your env vars here\n", encoding="utf-8")
+        if not (folder / "README.md").exists():
+            (folder / "README.md").write_text(f"# Project {sid}\n\nManaged by CoPanel Docker Manager.\n", encoding="utf-8")
+
+        final_content = target_file.read_text(encoding="utf-8")
+        return {
+            "project_name": sid,
+            "path": str(folder),
+            "compose_file": str(target_file),
+            "compose_content": final_content,
+            "source": source,
+            "validated": True,
+        }
+
+    def _project_status(self, path: str) -> str:
+        try:
+            result = self.ps(path)
+            if result.get("status") != "success":
+                return "unknown"
+            output = (result.get("output") or "").strip().lower()
+            if not output or "name" not in output and "container" not in output:
+                lines = [ln for ln in output.splitlines() if ln.strip()]
+                if not lines:
+                    return "stopped"
+            if "running" in output or "up " in output:
+                return "running"
+            if "exited" in output or "stopped" in output:
+                return "stopped"
+            return "partial" if output else "stopped"
+        except Exception:
+            return "unknown"
+
+    def list_projects(self) -> List[Dict[str, Any]]:
+        projects: List[Dict[str, Any]] = []
+        for stack in self.list_managed_stacks():
+            projects.append(
+                {
+                    "id": stack["id"],
+                    "name": stack["id"],
+                    "path": stack["path"],
+                    "compose_file": stack["compose_file"],
+                    "source": "managed",
+                    "status": self._project_status(stack["path"]),
+                }
+            )
+        return projects
+
+    def get_compose_at_path(self, path: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        compose_file = self._resolve_compose_file(folder)
+        if not compose_file:
+            raise DockerManagerError("Compose file not found", code="compose_missing")
+        return {
+            "path": str(folder),
+            "compose_file": str(compose_file),
+            "content": compose_file.read_text(encoding="utf-8"),
+        }
+
+    def update_compose_at_path(self, path: str, compose_content: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        compose_file = self._resolve_compose_file(folder) or (folder / "docker-compose.yml")
+        lock_key = str(folder)
+        lock = self._locks.setdefault(lock_key, threading.Lock())
+        with lock:
+            backup = compose_file.read_text(encoding="utf-8") if compose_file.exists() else ""
+            compose_file.write_text(compose_content, encoding="utf-8")
+            validation = self.validate(str(folder))
+            if validation["status"] != "success":
+                if backup:
+                    compose_file.write_text(backup, encoding="utf-8")
+                raise DockerManagerError(
+                    "Compose validation failed",
+                    code="compose_invalid",
+                    details=validation.get("error") or validation.get("output"),
+                )
+        return {"path": str(folder), "compose_file": str(compose_file), "validated": True}
+
+    def get_env_at_path(self, path: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        env_file = folder / ".env"
+        example_file = folder / ".env.example"
+        if env_file.exists():
+            content = env_file.read_text(encoding="utf-8")
+            exists = True
+        elif example_file.exists():
+            content = example_file.read_text(encoding="utf-8")
+            exists = False
+        else:
+            content = ""
+            exists = False
+        return {"path": str(folder), "content": content, "exists": exists}
+
+    def update_env_at_path(self, path: str, content: str) -> Dict[str, Any]:
+        folder = self._resolve_allowed_path(path, must_exist=True)
+        if not os.access(folder, os.W_OK):
+            raise DockerManagerError("Folder is not writable", code="path_forbidden")
+        env_file = folder / ".env"
+        env_file.write_text(content, encoding="utf-8")
+        return {"path": str(folder), "env_file": str(env_file), "saved": True}
 
     def init_stack(self, stack_id: str, image: str, host_port: int, container_port: int) -> Dict[str, Any]:
         self.managed_root.mkdir(parents=True, exist_ok=True)

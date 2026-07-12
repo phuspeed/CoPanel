@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +48,45 @@ class StackInitRequest(BaseModel):
 
 class StackComposeUpdateRequest(BaseModel):
     compose_content: str
+
+
+class ProjectInspectRequest(BaseModel):
+    path: str
+
+
+class ProjectTemplate(BaseModel):
+    image: str = "nginx:alpine"
+    host_port: int = 8080
+    container_port: int = 80
+
+
+class ProjectCreateRequest(BaseModel):
+    project_name: str
+    folder_mode: Literal["managed", "custom"] = "managed"
+    folder_path: Optional[str] = None
+    source: Literal["existing", "template", "paste"]
+    compose_content: Optional[str] = None
+    template: Optional[ProjectTemplate] = None
+    deploy: bool = True
+    overwrite_compose: bool = False
+
+
+class ProjectValidateContentRequest(BaseModel):
+    compose_content: str
+
+
+class ProjectPathRequest(BaseModel):
+    path: str
+
+
+class ProjectComposeUpdateByPathRequest(BaseModel):
+    path: str
+    compose_content: str
+
+
+class ProjectEnvUpdateRequest(BaseModel):
+    path: str
+    content: str
 
 
 class DockerResponse(BaseModel):

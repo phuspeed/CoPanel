@@ -1,12 +1,14 @@
 /**
  * Docker Manager — Desktop sidebar shell with containers, compose, images, networks, volumes.
  */
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment, type ReactNode } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
 import DockerManagerSidebar, { type DockerTab } from './components/DockerManagerSidebar';
+import CreateProjectModal from './components/CreateProjectModal';
+import ProjectManagerPanel from './components/ProjectManagerPanel';
 import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
@@ -16,12 +18,7 @@ interface ContainerItem {
   image: string;
   status: string;
   ports: string;
-}
-
-interface ComposeFile {
-  path: string;
-  filename: string;
-  full_path: string;
+  project?: string;
 }
 
 interface ImageItem {
@@ -87,26 +84,24 @@ export default function DockerManagerDashboard() {
 
   const [tab, setTab] = useState<DockerTab>('containers');
   const [containers, setContainers] = useState<ContainerItem[]>([]);
-  const [composeFiles, setComposeFiles] = useState<ComposeFile[]>([]);
+  const [projectsCount, setProjectsCount] = useState(0);
   const [images, setImages] = useState<ImageItem[]>([]);
   const [networks, setNetworks] = useState<NetworkItem[]>([]);
   const [volumes, setVolumes] = useState<VolumeItem[]>([]);
 
   const [loading, setLoading] = useState(false);
-  const [composeLoading, setComposeLoading] = useState(false);
   const [imagesLoading, setImagesLoading] = useState(false);
   const [networksLoading, setNetworksLoading] = useState(false);
   const [volumesLoading, setVolumesLoading] = useState(false);
 
-  const [customPath, setCustomPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [runningCount, setRunningCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
   const [viewingLogs, setViewingLogs] = useState<{ id: string; name: string; content: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [actionOutput, setActionOutput] = useState<string | null>(null);
-  const [composeListOpen, setComposeListOpen] = useState(true);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectFilter, setProjectFilter] = useState<string>('all');
 
   const tr = useMemo(
     () =>
@@ -121,8 +116,8 @@ export default function DockerManagerDashboard() {
           volumes: 'Volumes',
           tabContainersTitle: 'Running Containers',
           tabContainersDesc: 'Start, stop, restart containers and inspect live logs.',
-          tabComposeTitle: 'Compose Stacks',
-          tabComposeDesc: 'Discover compose files and deploy stacks from local folders.',
+          tabComposeTitle: 'Projects & Compose',
+          tabComposeDesc: 'Manage panel projects (edit, deploy, logs) and discover external compose files.',
           tabImagesTitle: 'Docker Images',
           tabImagesDesc: 'View and manage images stored on this host.',
           tabNetworksTitle: 'Docker Networks',
@@ -130,6 +125,7 @@ export default function DockerManagerDashboard() {
           tabVolumesTitle: 'Docker Volumes',
           tabVolumesDesc: 'Inspect and remove unused volumes.',
           refresh: 'Refresh',
+          createProject: 'New Project',
           scanTitle: 'Discover Compose Files',
           scanDesc: 'Find local folders with compose stacks ready to be deployed.',
           scanPlaceholder: 'e.g. /home/Docker',
@@ -147,7 +143,11 @@ export default function DockerManagerDashboard() {
           colImage: 'Image Name',
           colStatus: 'Status',
           colPorts: 'Ports Mapping',
+          colProject: 'Project',
           colActions: 'Actions',
+          filterAllProjects: 'All projects',
+          filterStandalone: 'Standalone',
+          standaloneProject: 'Standalone',
           noContainers: 'No Docker containers on this system.',
           deleteConfirm: 'Are you sure you want to completely remove this container?',
           removeImageConfirm: 'Remove this image?',
@@ -186,8 +186,8 @@ export default function DockerManagerDashboard() {
           volumes: 'Volume',
           tabContainersTitle: 'Container đang chạy',
           tabContainersDesc: 'Khởi động, dừng, khởi động lại container và xem log trực tiếp.',
-          tabComposeTitle: 'Compose Stack',
-          tabComposeDesc: 'Tìm tệp compose và triển khai stack từ thư mục cục bộ.',
+          tabComposeTitle: 'Project & Compose',
+          tabComposeDesc: 'Quản lý project (sửa, triển khai, log) và quét compose bên ngoài.',
           tabImagesTitle: 'Docker Image',
           tabImagesDesc: 'Xem và quản lý image trên máy chủ.',
           tabNetworksTitle: 'Docker Network',
@@ -195,6 +195,7 @@ export default function DockerManagerDashboard() {
           tabVolumesTitle: 'Docker Volume',
           tabVolumesDesc: 'Xem và xóa volume không dùng.',
           refresh: 'Làm mới',
+          createProject: 'Tạo Project',
           scanTitle: 'Tìm tệp Compose',
           scanDesc: 'Tìm thư mục chứa compose stack sẵn sàng triển khai.',
           scanPlaceholder: 'Ví dụ: /home/Docker',
@@ -212,7 +213,11 @@ export default function DockerManagerDashboard() {
           colImage: 'Tên Image',
           colStatus: 'Trạng thái',
           colPorts: 'Bản đồ cổng',
+          colProject: 'Project',
           colActions: 'Hành động',
+          filterAllProjects: 'Tất cả project',
+          filterStandalone: 'Độc lập',
+          standaloneProject: 'Độc lập',
           noContainers: 'Không có container Docker trên hệ thống.',
           deleteConfirm: 'Bạn có chắc muốn xóa hoàn toàn container này?',
           removeImageConfirm: 'Xóa image này?',
@@ -289,22 +294,15 @@ export default function DockerManagerDashboard() {
     }
   }, []);
 
-  const fetchComposeFiles = useCallback(async (p?: string) => {
-    setComposeLoading(true);
+  const fetchProjectsCount = useCallback(async () => {
     try {
-      const url = p
-        ? `/api/docker_manager/scan-compose?custom_path=${encodeURIComponent(p)}`
-        : '/api/docker_manager/scan-compose';
-      const r = await fetch(url);
+      const r = await fetch('/api/docker_manager/projects/list');
       if (r.ok) {
         const d = await r.json();
-        setComposeFiles(d.compose_files || []);
-        setComposeListOpen(true);
+        setProjectsCount((d.data || []).length);
       }
     } catch {
       // ignore
-    } finally {
-      setComposeLoading(false);
     }
   }, []);
 
@@ -355,16 +353,16 @@ export default function DockerManagerDashboard() {
 
   const refreshTab = useCallback(() => {
     if (tab === 'containers') fetchContainers();
-    else if (tab === 'compose') fetchComposeFiles(customPath || undefined);
+    else if (tab === 'compose') fetchProjectsCount();
     else if (tab === 'images') fetchImages();
     else if (tab === 'networks') fetchNetworks();
     else if (tab === 'volumes') fetchVolumes();
-  }, [tab, customPath, fetchContainers, fetchComposeFiles, fetchImages, fetchNetworks, fetchVolumes]);
+  }, [tab, fetchContainers, fetchProjectsCount, fetchImages, fetchNetworks, fetchVolumes]);
 
   useEffect(() => {
     fetchContainers();
-    fetchComposeFiles();
-  }, [language, fetchContainers, fetchComposeFiles]);
+    fetchProjectsCount();
+  }, [language, fetchContainers, fetchProjectsCount]);
 
   useEffect(() => {
     if (tab === 'images' && images.length === 0) fetchImages();
@@ -469,25 +467,6 @@ export default function DockerManagerDashboard() {
     }
   };
 
-  const handleBuildCompose = async (path: string) => {
-    setActionOutput(tr.outputStarting);
-    try {
-      const res = await fetch('/api/docker_manager/up-compose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      const data = await res.json();
-      if (data.status === 'success') {
-        setActionOutput(data.message || tr.outputSuccess);
-        fetchContainers();
-      } else {
-        setActionOutput(data.message || tr.outputFailed);
-      }
-    } catch {
-      setActionOutput(tr.outputCommFailed);
-    }
-  };
 
   const handleRemoveImage = async (imageRef: string) => {
     if (!confirm(tr.removeImageConfirm)) return;
@@ -530,10 +509,31 @@ export default function DockerManagerDashboard() {
 
   const isRefreshing =
     (tab === 'containers' && loading) ||
-    (tab === 'compose' && composeLoading) ||
     (tab === 'images' && imagesLoading) ||
     (tab === 'networks' && networksLoading) ||
     (tab === 'volumes' && volumesLoading);
+
+  const projectNames = useMemo(
+    () => [...new Set(containers.map((c) => c.project).filter((p): p is string => !!p))].sort(),
+    [containers],
+  );
+
+  const filteredContainers = useMemo(() => {
+    if (projectFilter === 'all') return containers;
+    if (projectFilter === '__standalone__') return containers.filter((c) => !c.project);
+    return containers.filter((c) => c.project === projectFilter);
+  }, [containers, projectFilter]);
+
+  const containerGroups = useMemo((): [string, ContainerItem[]][] => {
+    if (projectFilter !== 'all') return [['', filteredContainers]];
+    const map = new Map<string, ContainerItem[]>();
+    for (const c of filteredContainers) {
+      const key = c.project || '__standalone__';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredContainers, projectFilter]);
 
   const card = cn(
     'border rounded-2xl overflow-hidden backdrop-blur-md transition-all',
@@ -604,6 +604,25 @@ export default function DockerManagerDashboard() {
         </div>
       ) : (
         <div className={card}>
+          <div className={cn('flex items-center justify-end gap-2 px-3 py-2 border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
+            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colProject}</label>
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className={cn(
+                'rounded-lg border px-2 py-1 text-xs font-medium focus:outline-none',
+                isDark ? 'border-slate-700 bg-slate-900 text-slate-200' : 'border-slate-200 bg-white text-slate-800',
+              )}
+            >
+              <option value="all">{tr.filterAllProjects}</option>
+              <option value="__standalone__">{tr.filterStandalone}</option>
+              {projectNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -614,6 +633,7 @@ export default function DockerManagerDashboard() {
                   )}
                 >
                   <th className="p-3 font-bold">{tr.colName}</th>
+                  <th className="p-3 font-bold">{tr.colProject}</th>
                   <th className="p-3 font-bold">{tr.colImage}</th>
                   <th className="p-3 font-bold">{tr.colStatus}</th>
                   <th className="p-3 font-bold">{tr.colPorts}</th>
@@ -621,235 +641,121 @@ export default function DockerManagerDashboard() {
                 </tr>
               </thead>
               <tbody className={cn('divide-y text-sm', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>
-                {containers.length === 0 && (
+                {filteredContainers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-10 text-center text-xs text-slate-400">
+                    <td colSpan={6} className="p-10 text-center text-xs text-slate-400">
                       {tr.noContainers}
                     </td>
                   </tr>
                 )}
-                {containers.map((item, idx) => {
-                  const isRunning = item.status.toLowerCase().includes('running');
-                  return (
-                    <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
-                      <td className="p-3">
-                        <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
-                        <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
-                          {item.id}
-                        </div>
-                      </td>
-                      <td className={cn('p-3 font-mono text-xs truncate max-w-[10rem]', isDark ? 'text-slate-300' : 'text-slate-600')} title={item.image}>
-                        {item.image}
-                      </td>
-                      <td className="p-3">
-                        <span
-                          className={cn(
-                            'px-2.5 py-0.5 text-xs font-semibold rounded-full border',
-                            isRunning
-                              ? 'bg-green-500/10 border-green-500/20 text-green-500'
-                              : isDark
-                                ? 'bg-slate-800/60 border-slate-700 text-slate-400'
-                                : 'bg-slate-100 border-slate-200 text-slate-600',
-                          )}
-                        >
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
-                      <td className="p-3 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {isRunning ? (
-                            <button
-                              onClick={() => handleStopContainer(item.id)}
+                {containerGroups.map(([groupKey, items]) => (
+                  <Fragment key={groupKey || 'flat'}>
+                    {projectFilter === 'all' && (
+                      <tr key={`group-${groupKey}`} className={isDark ? 'bg-slate-900/60' : 'bg-slate-50/80'}>
+                        <td colSpan={6} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                          {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
+                          <span className="ml-2 font-normal tabular-nums">({items.length})</span>
+                        </td>
+                      </tr>
+                    )}
+                    {items.map((item, idx) => {
+                      const isRunning = item.status.toLowerCase().includes('running');
+                      return (
+                        <tr key={`${groupKey}-${idx}`} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+                          <td className="p-3">
+                            <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
+                            <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                              {item.id}
+                            </div>
+                          </td>
+                          <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-400' : 'text-slate-600')}>
+                            {item.project || '—'}
+                          </td>
+                          <td className={cn('p-3 font-mono text-xs truncate max-w-[10rem]', isDark ? 'text-slate-300' : 'text-slate-600')} title={item.image}>
+                            {item.image}
+                          </td>
+                          <td className="p-3">
+                            <span
                               className={cn(
-                                'p-1.5 rounded-lg border transition',
-                                isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
+                                'px-2.5 py-0.5 text-xs font-semibold rounded-full border',
+                                isRunning
+                                  ? 'bg-green-500/10 border-green-500/20 text-green-500'
+                                  : isDark
+                                    ? 'bg-slate-800/60 border-slate-700 text-slate-400'
+                                    : 'bg-slate-100 border-slate-200 text-slate-600',
                               )}
-                              title="Stop"
                             >
-                              <Icons.Square className="w-3.5 h-3.5 fill-current" />
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleStartContainer(item.id)}
-                              className={cn(
-                                'p-1.5 rounded-lg border transition',
-                                isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {isRunning ? (
+                                <button
+                                  onClick={() => handleStopContainer(item.id)}
+                                  className={cn(
+                                    'p-1.5 rounded-lg border transition',
+                                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
+                                  )}
+                                  title="Stop"
+                                >
+                                  <Icons.Square className="w-3.5 h-3.5 fill-current" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleStartContainer(item.id)}
+                                  className={cn(
+                                    'p-1.5 rounded-lg border transition',
+                                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
+                                  )}
+                                  title="Start"
+                                >
+                                  <Icons.Play className="w-3.5 h-3.5 fill-current" />
+                                </button>
                               )}
-                              title="Start"
-                            >
-                              <Icons.Play className="w-3.5 h-3.5 fill-current" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleRestartContainer(item.id)}
-                            className={cn(
-                              'p-1.5 rounded-lg border transition',
-                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
-                            )}
-                            title="Restart"
-                          >
-                            <Icons.RefreshCcw className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleViewLogs(item)}
-                            className={cn(
-                              'p-1.5 rounded-lg border transition',
-                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600',
-                            )}
-                            title="Logs"
-                          >
-                            <Icons.FileText className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleRemoveContainer(item.id)}
-                            className={cn(
-                              'p-1.5 rounded-lg border transition',
-                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
-                            )}
-                            title="Remove"
-                          >
-                            <Icons.Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                              <button
+                                onClick={() => handleRestartContainer(item.id)}
+                                className={cn(
+                                  'p-1.5 rounded-lg border transition',
+                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
+                                )}
+                                title="Restart"
+                              >
+                                <Icons.RefreshCcw className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleViewLogs(item)}
+                                className={cn(
+                                  'p-1.5 rounded-lg border transition',
+                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600',
+                                )}
+                                title="Logs"
+                              >
+                                <Icons.FileText className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleRemoveContainer(item.id)}
+                                className={cn(
+                                  'p-1.5 rounded-lg border transition',
+                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                                )}
+                                title="Remove"
+                              >
+                                <Icons.Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
       )}
-    </div>
-  );
-
-  const renderCompose = () => (
-    <div className="space-y-5">
-      <div
-        className={cn(
-          'border p-5 rounded-2xl space-y-4',
-          isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200',
-        )}
-      >
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="space-y-1 min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className={cn('text-sm font-bold flex items-center gap-2', isDark ? 'text-indigo-200' : 'text-indigo-700')}>
-                <Icons.Zap className="w-4 h-4 text-indigo-400" />
-                {tr.scanTitle} ({composeFiles.length})
-              </h3>
-              {composeFiles.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setComposeListOpen((open) => !open)}
-                  className={cn(
-                    'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition',
-                    isDark ? 'border-slate-700 bg-slate-900/60 text-slate-300' : 'border-slate-200 bg-white text-slate-600',
-                  )}
-                >
-                  {composeListOpen ? <Icons.ChevronUp className="w-3.5 h-3.5" /> : <Icons.ChevronDown className="w-3.5 h-3.5" />}
-                  {composeListOpen ? tr.composeHide : tr.composeShow}
-                </button>
-              )}
-            </div>
-            <p className={cn('text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{tr.scanDesc}</p>
-          </div>
-          <div
-            className={cn(
-              'flex items-center gap-2 p-1.5 rounded-xl border w-full sm:w-auto',
-              isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200',
-            )}
-          >
-            <input
-              type="text"
-              value={customPath}
-              onChange={(e) => setCustomPath(e.target.value)}
-              placeholder={tr.scanPlaceholder}
-              className={cn('bg-transparent text-xs focus:outline-none px-2 w-full sm:w-52 font-mono', isDark ? 'text-slate-200' : 'text-slate-800')}
-            />
-            <button
-              onClick={() => fetchComposeFiles(customPath)}
-              disabled={composeLoading}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl transition flex items-center gap-1 shrink-0"
-            >
-              <Icons.Search className="w-3.5 h-3.5" />
-              {tr.scanBtn}
-            </button>
-          </div>
-        </div>
-
-        {composeFiles.length > 0 ? (
-          composeListOpen ? (
-            <div className={cn('rounded-xl border overflow-hidden', isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-white')}>
-              <div className="max-h-64 overflow-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead
-                    className={cn(
-                      'sticky top-0 z-10 text-[10px] uppercase tracking-wider font-bold',
-                      isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500',
-                    )}
-                  >
-                    <tr className={cn('border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
-                      <th className="px-3 py-2 w-32">{tr.composeColFile}</th>
-                      <th className="px-3 py-2">{tr.composeColPath}</th>
-                      <th className="px-3 py-2 text-right w-36">{tr.composeColAction}</th>
-                    </tr>
-                  </thead>
-                  <tbody className={cn('divide-y text-xs', isDark ? 'divide-slate-800/60' : 'divide-slate-100')}>
-                    {composeFiles.map((file, idx) => (
-                      <tr key={`${file.path}-${idx}`} className={cn('transition', isDark ? 'hover:bg-slate-900/50' : 'hover:bg-slate-50/80')}>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Icons.FileCode className={cn('w-3.5 h-3.5 shrink-0', isDark ? 'text-indigo-400' : 'text-indigo-600')} />
-                            <span className={cn('font-bold truncate', isDark ? 'text-slate-200' : 'text-slate-800')} title={file.filename}>
-                              {file.filename}
-                            </span>
-                          </div>
-                        </td>
-                        <td className={cn('px-3 py-2 font-mono text-[11px] break-all', isDark ? 'text-slate-400' : 'text-slate-500')}>
-                          {file.path}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            onClick={() => handleBuildCompose(file.path)}
-                            className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg transition whitespace-nowrap"
-                          >
-                            <Icons.Play className="w-3 h-3" />
-                            {tr.buildDeploy}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <div className={cn('text-[11px] border px-3 py-2 rounded-lg', isDark ? 'text-slate-500 border-slate-800/60' : 'text-slate-400 border-slate-200')}>
-              {tr.composeCollapsed.replace('{count}', String(composeFiles.length))}
-            </div>
-          )
-        ) : (
-          <div className={cn('text-xs border p-4 rounded-xl', isDark ? 'text-slate-500 border-slate-800/40' : 'text-slate-400 border-slate-200')}>
-            {tr.noCompose}
-          </div>
-        )}
-
-        {actionOutput && (
-          <div
-            className={cn(
-              'p-3 border rounded-xl font-mono text-xs max-h-36 overflow-auto whitespace-pre-wrap flex items-center justify-between',
-              isDark ? 'bg-slate-950 border-indigo-900/30 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-600',
-            )}
-          >
-            <span>{actionOutput}</span>
-            <button onClick={() => setActionOutput(null)} className="text-slate-500 hover:text-slate-300 font-bold px-1">
-              ✕
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   );
 
@@ -1005,7 +911,7 @@ export default function DockerManagerDashboard() {
           subtitle={tr.subtitle}
           counts={{
             containers: totalCount || undefined,
-            compose: composeFiles.length || undefined,
+            compose: projectsCount || undefined,
             images: images.length || undefined,
             networks: networks.length || undefined,
             volumes: volumes.length || undefined,
@@ -1019,28 +925,61 @@ export default function DockerManagerDashboard() {
                 <h2 className={cn('text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tabMeta[tab].title}</h2>
                 <p className={cn('text-xs max-w-2xl', isDark ? 'text-slate-400' : 'text-slate-500')}>{tabMeta[tab].desc}</p>
               </div>
-              <button
-                type="button"
-                onClick={refreshTab}
-                className={cn(
-                  'shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition',
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200',
+              <div className="flex shrink-0 items-center gap-2">
+                {tab === 'containers' && (
+                  <button
+                    type="button"
+                    onClick={() => setCreateProjectOpen(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition"
+                    title={tr.createProject}
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {tr.createProject}
+                  </button>
                 )}
-                title={tr.refresh}
-              >
-                <Icons.RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-                {tr.refresh}
-              </button>
+                <button
+                  type="button"
+                  onClick={refreshTab}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition',
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200',
+                  )}
+                  title={tr.refresh}
+                >
+                  <Icons.RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+                  {tr.refresh}
+                </button>
+              </div>
             </header>
 
             {tab === 'containers' && renderContainers()}
-            {tab === 'compose' && renderCompose()}
+            {tab === 'compose' && (
+              <ProjectManagerPanel
+                isDark={isDark}
+                language={language || 'en'}
+                onRefreshContainers={() => {
+                  fetchContainers();
+                  fetchProjectsCount();
+                }}
+              />
+            )}
             {tab === 'images' && renderImages()}
             {tab === 'networks' && renderNetworks()}
             {tab === 'volumes' && renderVolumes()}
           </main>
         </div>
       </div>
+
+      <CreateProjectModal
+        open={createProjectOpen}
+        onClose={() => setCreateProjectOpen(false)}
+        onCreated={() => {
+          fetchContainers();
+          fetchProjectsCount();
+        }}
+        isDark={isDark}
+        language={language || 'en'}
+      />
 
       <WindowModal
         open={!!viewingLogs}
