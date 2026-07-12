@@ -170,7 +170,6 @@ export default function Layout({
         'terminal': 'Terminal',
         'web_browser': 'Web Browser',
         'web_manager': 'Web',
-        'users': 'Users',
         'settings': 'System Settings',
       }
     },
@@ -221,7 +220,6 @@ export default function Layout({
         'terminal': 'Dòng lệnh',
         'web_browser': 'Trình duyệt Web',
         'web_manager': 'Quản lý Web',
-        'users': 'Người dùng',
         'settings': 'Cài đặt hệ thống',
       }
     }

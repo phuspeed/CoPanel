@@ -14,8 +14,10 @@ import re
 import socket
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo, available_timezones
 
 import psutil
 import pyotp
@@ -37,6 +39,14 @@ HTPASSWD_PATH = CONFIG_DIR / "panel_access.htpasswd"
 NGINX_SITE = Path("/etc/nginx/sites-available/copanel")
 SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 PANEL_PORT = 8686
+TIMESYNCD_CONF = Path("/etc/systemd/timesyncd.conf")
+GOOGLE_NTP_SERVERS = (
+    "time.google.com",
+    "time1.google.com",
+    "time2.google.com",
+    "time3.google.com",
+    "time4.google.com",
+)
 
 NGINX_AUTH_START = "# BEGIN COPANEL NGINX GATE"
 NGINX_AUTH_END = "# END COPANEL NGINX GATE"
@@ -1246,3 +1256,163 @@ def verify_user_totp(user: Dict[str, Any], code: Optional[str]) -> None:
         raise ValueError("TOTP_REQUIRED")
     if not pyotp.TOTP(secret).verify(code.strip(), valid_window=1):
         raise ValueError("Invalid two-factor code.")
+
+
+def _parse_timedatectl_show() -> Dict[str, str]:
+    if IS_WINDOWS:
+        return {}
+    proc = _run(["timedatectl", "show", "-p", "Timezone", "-p", "LocalRTC", "-p", "CanNTP", "-p", "NTP", "-p", "NTPSynchronized", "-p", "TimeUSec"])
+    if proc.returncode != 0:
+        return {}
+    out: Dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            out[key.strip()] = value.strip()
+    return out
+
+
+def _read_timesyncd_conf() -> str:
+    if not TIMESYNCD_CONF.is_file():
+        return ""
+    try:
+        return TIMESYNCD_CONF.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _google_ntp_configured() -> bool:
+    content = _read_timesyncd_conf()
+    if not content:
+        return False
+    return any(server in content for server in GOOGLE_NTP_SERVERS)
+
+
+def _configure_google_ntp() -> None:
+    ntp_value = " ".join(GOOGLE_NTP_SERVERS)
+    content = _read_timesyncd_conf()
+    time_block = (
+        "[Time]\n"
+        f"NTP={ntp_value}\n"
+        "FallbackNTP=0.pool.ntp.org 1.pool.ntp.org\n"
+    )
+    if re.search(r"^\[Time\]", content, re.MULTILINE):
+        content = re.sub(r"\[Time\][^\[]*", time_block, content, count=1, flags=re.DOTALL)
+    else:
+        content = content.rstrip() + ("\n\n" if content.strip() else "") + time_block
+    _write_file_privileged(TIMESYNCD_CONF, content)
+    restart = _run_privileged(["systemctl", "restart", "systemd-timesyncd"])
+    if restart.returncode != 0:
+        logger.warning("systemd-timesyncd restart failed: %s", (restart.stderr or restart.stdout or "").strip())
+
+
+def _validate_timezone(tz: str) -> str:
+    value = str(tz or "").strip()
+    if not value:
+        raise ValueError("Timezone is required.")
+    if value not in available_timezones():
+        raise ValueError(f"Unknown timezone: {value}")
+    return value
+
+
+def _parse_manual_datetime(value: str) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Date/time is required.")
+    normalized = raw.replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    raise ValueError("Invalid datetime format. Use YYYY-MM-DD HH:MM[:SS].")
+
+
+def get_datetime_status() -> Dict[str, Any]:
+    if IS_WINDOWS:
+        now = datetime.now().astimezone()
+        return {
+            "current_time": now.isoformat(),
+            "timezone": str(now.tzinfo),
+            "ntp_enabled": False,
+            "ntp_synchronized": False,
+            "google_ntp_configured": False,
+            "can_ntp": False,
+            "is_linux": False,
+        }
+
+    show = _parse_timedatectl_show()
+    tz_name = show.get("Timezone") or "UTC"
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now = datetime.now(timezone.utc)
+        tz_name = "UTC"
+
+    return {
+        "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": tz_name,
+        "ntp_enabled": show.get("NTP", "no") == "yes",
+        "ntp_synchronized": show.get("NTPSynchronized", "no") == "yes",
+        "google_ntp_configured": _google_ntp_configured(),
+        "can_ntp": show.get("CanNTP", "yes") == "yes",
+        "is_linux": True,
+    }
+
+
+def list_timezones(*, query: Optional[str] = None, limit: int = 200) -> List[str]:
+    zones = sorted(available_timezones())
+    q = (query or "").strip().lower()
+    if q:
+        zones = [z for z in zones if q in z.lower()]
+    return zones[: max(1, min(limit, 500))]
+
+
+def set_system_timezone(timezone_name: str) -> Dict[str, Any]:
+    tz = _validate_timezone(timezone_name)
+    if IS_WINDOWS:
+        raise ValueError("Timezone change is Linux-only.")
+    proc = _run_privileged(["timedatectl", "set-timezone", tz])
+    if proc.returncode != 0:
+        raise RuntimeError(f"Failed to set timezone: {(proc.stderr or proc.stdout or '').strip()}")
+    return {"timezone": tz, "message": f"Timezone set to {tz}."}
+
+
+def set_manual_datetime(value: str, *, confirm: bool = False) -> Dict[str, Any]:
+    if IS_WINDOWS:
+        raise ValueError("Manual time change is Linux-only.")
+    if not confirm:
+        raise ValueError("Set confirm=true to apply manual time change.")
+    dt = _parse_manual_datetime(value)
+    show = _parse_timedatectl_show()
+    if show.get("NTP", "no") == "yes":
+        disable = _run_privileged(["timedatectl", "set-ntp", "false"])
+        if disable.returncode != 0:
+            raise RuntimeError(f"Failed to disable NTP: {(disable.stderr or disable.stdout or '').strip()}")
+    formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
+    proc = _run_privileged(["timedatectl", "set-time", formatted])
+    if proc.returncode != 0:
+        raise RuntimeError(f"Failed to set time: {(proc.stderr or proc.stdout or '').strip()}")
+    return {"datetime": formatted, "message": f"System time set to {formatted}."}
+
+
+def configure_ntp_sync(*, enabled: bool, use_google: bool = True) -> Dict[str, Any]:
+    if IS_WINDOWS:
+        raise ValueError("NTP sync is Linux-only.")
+    if enabled and use_google:
+        _configure_google_ntp()
+    proc = _run_privileged(["timedatectl", "set-ntp", "true" if enabled else "false"])
+    if proc.returncode != 0:
+        raise RuntimeError(f"Failed to configure NTP: {(proc.stderr or proc.stdout or '').strip()}")
+    if enabled:
+        _run_privileged(["systemctl", "restart", "systemd-timesyncd"])
+        _run_privileged(["timedatectl", "timesync-status"])
+    status = get_datetime_status()
+    return {
+        "ntp_enabled": status["ntp_enabled"],
+        "ntp_synchronized": status["ntp_synchronized"],
+        "google_ntp_configured": status["google_ntp_configured"],
+        "message": "NTP sync enabled with Google servers." if enabled and use_google else (
+            "NTP sync enabled." if enabled else "NTP sync disabled."
+        ),
+    }

@@ -14,7 +14,6 @@ import ModuleViewport from '../../core/shell/ModuleViewport';
 FILES = [
     "ssl_manager/index.tsx",
     "firewall/index.tsx",
-    "users/index.tsx",
     "package_manager/index.tsx",
     "system_cleaner/index.tsx",
     "docker_manager/index.tsx",

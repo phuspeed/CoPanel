@@ -45,3 +45,17 @@ class NetworkConfigRequest(BaseModel):
     gateway: Optional[str] = None
     dns: Optional[List[str]] = None
     confirm: bool = False
+
+
+class DateTimeTimezoneRequest(BaseModel):
+    timezone: str = Field(..., min_length=1, max_length=64)
+
+
+class DateTimeManualRequest(BaseModel):
+    datetime: str = Field(..., min_length=10, max_length=40)
+    confirm: bool = False
+
+
+class DateTimeNtpRequest(BaseModel):
+    enabled: bool
+    use_google: bool = True

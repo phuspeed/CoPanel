@@ -12,6 +12,9 @@ from core.auth import require_admin
 from . import logic
 from .schemas import (
     BrandingSettingsRequest,
+    DateTimeManualRequest,
+    DateTimeNtpRequest,
+    DateTimeTimezoneRequest,
     NetworkConfigRequest,
     NginxGateRequest,
     RootPasswordRequest,
@@ -211,5 +214,83 @@ def totp_disable(req: TotpDisableRequest, user: Dict[str, Any] = Depends(require
         target=user.get("username"),
         actor=user.get("username"),
         actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
+@router.get("/datetime")
+def get_datetime(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    return ok(logic.get_datetime_status())
+
+
+@router.get("/datetime/timezones")
+def get_timezones(
+    query: str = "",
+    limit: int = 200,
+    _user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    return ok({"timezones": logic.list_timezones(query=query, limit=limit)})
+
+
+@router.put("/datetime/timezone")
+def set_datetime_timezone(
+    req: DateTimeTimezoneRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = logic.set_system_timezone(req.timezone)
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.datetime.timezone",
+        module="panel_settings",
+        target=req.timezone,
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
+@router.put("/datetime/time")
+def set_datetime_manual(
+    req: DateTimeManualRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = logic.set_manual_datetime(req.datetime, confirm=req.confirm)
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.datetime.manual",
+        module="panel_settings",
+        target=req.datetime,
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+    )
+    return ok(result)
+
+
+@router.put("/datetime/ntp")
+def set_datetime_ntp(
+    req: DateTimeNtpRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    try:
+        result = logic.configure_ntp_sync(enabled=req.enabled, use_google=req.use_google)
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.datetime.ntp",
+        module="panel_settings",
+        target="google" if req.use_google else "system",
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+        meta={"enabled": req.enabled},
     )
     return ok(result)

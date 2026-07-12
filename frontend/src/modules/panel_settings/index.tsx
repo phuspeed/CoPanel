@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import SettingsSidebar, { type SettingsTab } from './components/SettingsSidebar';
+import UsersPanel from './components/UsersPanel';
+import DateTimePanel from './components/DateTimePanel';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 
@@ -57,7 +59,7 @@ export default function PanelSettings() {
   const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
 
-  const [tab, setTab] = useState<Tab>('ssh');
+  const [tab, setTab] = useState<Tab>('datetime');
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -94,7 +96,9 @@ export default function PanelSettings() {
   const t = {
     en: {
       title: 'Settings',
-      desc: 'System and panel security configuration.',
+      desc: 'System time, users, security, network, and branding.',
+      datetime: 'Date & time',
+      users: 'Users',
       ssh: 'SSH Port',
       root: 'Root Password',
       gate: 'Panel access gate',
@@ -175,7 +179,9 @@ export default function PanelSettings() {
     },
     vi: {
       title: 'Cài đặt',
-      desc: 'Cấu hình bảo mật hệ thống và panel.',
+      desc: 'Giờ hệ thống, người dùng, bảo mật, mạng và nhận diện.',
+      datetime: 'Ngày & giờ',
+      users: 'Người dùng',
       ssh: 'Cổng SSH',
       root: 'Mật khẩu Root',
       gate: 'Bảo vệ truy cập panel',
@@ -534,6 +540,8 @@ export default function PanelSettings() {
           onTab={setTab}
           isDark={isDark}
           labels={{
+            datetime: t.datetime,
+            users: t.users,
             ssh: t.ssh,
             root: t.root,
             gate: t.gate,
@@ -557,9 +565,32 @@ export default function PanelSettings() {
             </div>
           )}
 
-          {!settings.is_linux && (
+          {!settings.is_linux && tab !== 'users' && tab !== 'branding' && (
             <p className={`mb-4 text-sm ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>{t.linuxOnly}</p>
           )}
+
+      {tab === 'datetime' && (
+        <DateTimePanel
+          isDark={isDark}
+          language={language}
+          isLinux={settings.is_linux}
+          card={card}
+          input={input}
+          label={label}
+          onError={setError}
+          onSaved={setMsg}
+        />
+      )}
+
+      {tab === 'users' && (
+        <UsersPanel
+          isDark={isDark}
+          language={language}
+          card={card}
+          input={input}
+          label={label}
+        />
+      )}
 
       {tab === 'ssh' && (
         <div className={card}>
