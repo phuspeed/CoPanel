@@ -402,7 +402,7 @@ def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
 
 CORE_PACKAGE_VERSIONS = {
     "appstore_manager": "1.0.21",
-    "ssl_manager": "1.0.1",
+    "ssl_manager": "1.1.0",
     "backup_manager": "1.0.3",
     "package_manager": "1.0.0"
 }

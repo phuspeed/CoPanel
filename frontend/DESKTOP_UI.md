@@ -232,7 +232,7 @@ Legend:
 | `terminal` | **A** | ✓ | |
 | `system_monitor` | **A** | ✓ | modals backlog |
 | `system_cleaner` | **A** | ✓ | |
-| `ssl_manager` | **A** | ✓ | `WindowModal` issue dialog |
+| `ssl_manager` | **A** | ✓ | Desktop sidebar; auto-renew cron + per-domain renew |
 | `package_manager` | **A** | ✓ | |
 | `docker_manager` | **A** | ✓ | `WindowModal` logs |
 | `backup_manager` | **A** | ✓ | |

@@ -1,12 +1,13 @@
 /**
- * SSL Manager Dashboard Component
- * Issue Free Certificates via Certbot or paste Custom certificates.
- * Fully supports mobile responsive view and stunning dark/light theme.
+ * SSL Manager — Desktop sidebar shell, certificates, issue, custom, auto-renew.
  */
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
+import SslManagerSidebar, { type SslTab } from './components/SslManagerSidebar';
+import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
 interface Certificate {
@@ -14,199 +15,268 @@ interface Certificate {
   active: boolean;
   type: string;
   expiry: string;
+  days_left?: number;
+}
+
+interface AutoRenewStatus {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+  cron_installed: boolean;
+  cron_expression: string | null;
+  certbot_installed: boolean;
+  certbot_timer: { active: boolean; source: string | null };
+  last_run: string | null;
+  last_status: string | null;
+  last_message: string | null;
+  log_file: string;
 }
 
 export default function SSLManagerDashboard() {
-  const [certs, setCerts] = useState<Certificate[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [renewing, setRenewing] = useState(false);
-  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
-
   const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
+  const windowed = useIsWindowedModule();
 
-  // Certbot state
+  const [tab, setTab] = useState<SslTab>('certificates');
+  const [certs, setCerts] = useState<Certificate[]>([]);
+  const [autoRenew, setAutoRenew] = useState<AutoRenewStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [renewing, setRenewing] = useState(false);
+  const [savingAuto, setSavingAuto] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
+
   const [certbotDomain, setCertbotDomain] = useState('');
   const [certbotEmail, setCertbotEmail] = useState('');
-
-  // Custom SSL state
   const [customDomain, setCustomDomain] = useState('');
   const [customPrivateKey, setCustomPrivateKey] = useState('');
   const [customCertificate, setCustomCertificate] = useState('');
 
-  // Inline action modal state
   const [inlineDomain, setInlineDomain] = useState<string | null>(null);
   const [inlineEmail, setInlineEmail] = useState('');
+  const [inlineMode, setInlineMode] = useState<'issue' | 'renew'>('issue');
+
+  const [autoEnabled, setAutoEnabled] = useState(false);
+  const [autoHour, setAutoHour] = useState(3);
+  const [autoMinute, setAutoMinute] = useState(30);
 
   const token = localStorage.getItem('copanel_token');
-  const authHeaders = (json = false): HeadersInit => {
-    const headers: Record<string, string> = {};
-    if (json) headers['Content-Type'] = 'application/json';
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
-  };
-
-  const t = {
-    en: {
-      title: 'SSL Certificate Manager',
-      desc: 'Generate and manage Let\'s Encrypt certificates automatically with Certbot, or upload your own SSL fullchains and private keys directly.',
-      status: 'SSL Status',
-      ready: 'Certbot Ready',
-      renewBtn: 'Auto Renew All SSL',
-      renewing: 'Renewing...',
-      loading: 'Loading domains...',
-      listingTitle: 'Domain SSL Listing',
-      colDomain: 'Domain',
-      colStatus: 'Status',
-      colType: 'Type',
-      colExpiry: 'Expiry',
-      colAction: 'Actions',
-      noDomains: 'No active website domains found to evaluate.',
-      secured: 'Secured',
-      noSsl: 'No SSL',
-      leTitle: 'Let\'s Encrypt Certbot',
-      leDesc: 'Issue a free, auto-renewing certificate directly to your domain server block.',
-      customTitle: 'Custom SSL Certificate',
-      customDesc: 'Install an external SSL fullchain and private key directly into Nginx.',
-      domainLabel: 'Domain Name',
-      emailLabel: 'Notification Email',
-      certLabel: 'Certificate Content (fullchain.pem)',
-      keyLabel: 'Private Key Content (privkey.pem)',
-      issueBtn: 'Issue Certificate',
-      saveBtn: 'Save Custom SSL',
-      issueDirect: 'Issue SSL',
-      renewDirect: 'Renew SSL',
-      confirmIssue: 'Confirm Issue SSL',
-      cancel: 'Cancel',
+  const authHeaders = useCallback(
+    (json = false): HeadersInit => {
+      const headers: Record<string, string> = {};
+      if (json) headers['Content-Type'] = 'application/json';
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return headers;
     },
-    vi: {
-      title: 'Quản lý Chứng chỉ SSL',
-      desc: 'Tự động tạo và quản lý chứng chỉ Let\'s Encrypt bằng Certbot, hoặc tải lên các tệp fullchain và khóa riêng SSL tùy chỉnh của bạn.',
-      status: 'Trạng thái SSL',
-      ready: 'Sẵn sàng Certbot',
-      renewBtn: 'Tự động Gia hạn SSL',
-      renewing: 'Đang gia hạn...',
-      loading: 'Đang tải danh sách tên miền...',
-      listingTitle: 'Danh sách Tên miền & SSL',
-      colDomain: 'Tên miền',
-      colStatus: 'Trạng thái',
-      colType: 'Loại',
-      colExpiry: 'Ngày hết hạn',
-      colAction: 'Thao tác',
-      noDomains: 'Không tìm thấy tên miền hoạt động nào.',
-      secured: 'Đã bảo mật',
-      noSsl: 'Chưa có SSL',
-      leTitle: 'Let\'s Encrypt Certbot',
-      leDesc: 'Cấp chứng chỉ miễn phí, tự động gia hạn trực tiếp cho tên miền của bạn.',
-      customTitle: 'Chứng chỉ SSL Tùy chỉnh',
-      customDesc: 'Cài đặt tệp fullchain và khóa riêng SSL bên ngoài trực tiếp vào Nginx.',
-      domainLabel: 'Tên miền (Domain Name)',
-      emailLabel: 'Email thông báo',
-      certLabel: 'Nội dung chứng chỉ (fullchain.pem)',
-      keyLabel: 'Nội dung khóa riêng (privkey.pem)',
-      issueBtn: 'Cấp chứng chỉ',
-      saveBtn: 'Lưu SSL Tùy chỉnh',
-      issueDirect: 'Cấp SSL',
-      renewDirect: 'Gia hạn',
-      confirmIssue: 'Xác nhận Cấp SSL',
-      cancel: 'Hủy',
-    }
+    [token],
+  );
+
+  const tr = useMemo(
+    () =>
+      ({
+        en: {
+          title: 'SSL Manager',
+          subtitle: "Let's Encrypt & custom certs",
+          certificates: 'Certificates',
+          issue: 'Issue LE',
+          custom: 'Custom SSL',
+          autoRenew: 'Auto Renew',
+          certTitle: 'Domain certificates',
+          certDesc: 'All domains detected from Nginx and certificate stores.',
+          issueTitle: "Let's Encrypt",
+          issueDesc: 'Issue a free certificate via Certbot for a new domain.',
+          customTitle: 'Custom certificate',
+          customDesc: 'Paste fullchain and private key for external SSL.',
+          autoTitle: 'Auto renew',
+          autoDesc: 'Schedule daily certbot renew via CoPanel cron. Reloads Nginx after renewal.',
+          secured: 'Secured',
+          noSsl: 'No SSL',
+          issueBtn: 'Issue',
+          renewBtn: 'Renew',
+          renewAll: 'Renew all now',
+          renewing: 'Renewing…',
+          saveAuto: 'Save schedule',
+          saving: 'Saving…',
+          autoOn: 'Enable auto-renew',
+          schedule: 'Daily at',
+          lastRun: 'Last run',
+          cronStatus: 'CoPanel cron',
+          certbotTimer: 'OS certbot timer',
+          active: 'Active',
+          inactive: 'Inactive',
+          installed: 'Installed',
+          notInstalled: 'Not installed',
+          loading: 'Loading…',
+          noDomains: 'No domains found.',
+          domain: 'Domain',
+          email: 'Email',
+          cancel: 'Cancel',
+          confirmIssue: 'Issue certificate',
+          confirmRenew: 'Renew certificate',
+        },
+        vi: {
+          title: 'Quản lý SSL',
+          subtitle: "Let's Encrypt & chứng chỉ tùy chỉnh",
+          certificates: 'Chứng chỉ',
+          issue: 'Cấp LE',
+          custom: 'SSL tùy chỉnh',
+          autoRenew: 'Tự gia hạn',
+          certTitle: 'Chứng chỉ tên miền',
+          certDesc: 'Tên miền từ Nginx và kho chứng chỉ.',
+          issueTitle: "Let's Encrypt",
+          issueDesc: 'Cấp chứng chỉ miễn phí qua Certbot.',
+          customTitle: 'Chứng chỉ tùy chỉnh',
+          customDesc: 'Dán fullchain và private key.',
+          autoTitle: 'Tự động gia hạn',
+          autoDesc: 'Lên lịch certbot renew hàng ngày qua cron CoPanel.',
+          secured: 'Đã bảo mật',
+          noSsl: 'Chưa SSL',
+          issueBtn: 'Cấp',
+          renewBtn: 'Gia hạn',
+          renewAll: 'Gia hạn tất cả',
+          renewing: 'Đang gia hạn…',
+          saveAuto: 'Lưu lịch',
+          saving: 'Đang lưu…',
+          autoOn: 'Bật tự gia hạn',
+          schedule: 'Hàng ngày lúc',
+          lastRun: 'Lần chạy cuối',
+          cronStatus: 'Cron CoPanel',
+          certbotTimer: 'Timer certbot OS',
+          active: 'Đang bật',
+          inactive: 'Tắt',
+          installed: 'Đã cài',
+          notInstalled: 'Chưa cài',
+          loading: 'Đang tải…',
+          noDomains: 'Không có tên miền.',
+          domain: 'Tên miền',
+          email: 'Email',
+          cancel: 'Hủy',
+          confirmIssue: 'Xác nhận cấp SSL',
+          confirmRenew: 'Xác nhận gia hạn',
+        },
+      })[language === 'vi' ? 'vi' : 'en'],
+    [language],
+  );
+
+  const labels: Record<SslTab, string> = {
+    certificates: tr.certificates,
+    issue: tr.issue,
+    custom: tr.custom,
+    auto_renew: tr.autoRenew,
   };
 
-  const tr = t[language || 'en'];
+  const tabMeta: Record<SslTab, { title: string; desc: string }> = {
+    certificates: { title: tr.certTitle, desc: tr.certDesc },
+    issue: { title: tr.issueTitle, desc: tr.issueDesc },
+    custom: { title: tr.customTitle, desc: tr.customDesc },
+    auto_renew: { title: tr.autoTitle, desc: tr.autoDesc },
+  };
 
-  const fetchCerts = async () => {
+  const fetchCerts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ssl_manager/certificates', {
-        headers: authHeaders()
-      });
+      const res = await fetch('/api/ssl_manager/certificates', { headers: authHeaders() });
       if (res.ok) {
         const d = await res.json();
         if (d.data) setCerts(d.data);
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      /* ignore */
     } finally {
       setLoading(false);
     }
-  };
+  }, [authHeaders]);
+
+  const fetchAutoRenew = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ssl_manager/auto_renew', { headers: authHeaders() });
+      if (res.ok) {
+        const d = await res.json();
+        const data = d.data as AutoRenewStatus;
+        setAutoRenew(data);
+        setAutoEnabled(!!data.enabled);
+        setAutoHour(data.hour ?? 3);
+        setAutoMinute(data.minute ?? 30);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [authHeaders]);
 
   useEffect(() => {
     fetchCerts();
-  }, []);
+    fetchAutoRenew();
+  }, [fetchCerts, fetchAutoRenew]);
 
-  const handleRenewSSL = async () => {
+  const showMsg = (text: string, isError: boolean) => {
+    setMsg({ text, isError });
+    setTimeout(() => setMsg(null), 5000);
+  };
+
+  const handleRenewAll = async () => {
     setRenewing(true);
-    setMsg({ text: 'Renewing all available Let\'s Encrypt certificates...', isError: false });
     try {
-      const res = await fetch('/api/ssl_manager/renew', {
-        method: 'POST',
-        headers: authHeaders()
-      });
+      const res = await fetch('/api/ssl_manager/renew', { method: 'POST', headers: authHeaders() });
       const d = await res.json();
       if (res.ok) {
-        setMsg({ text: `✓ Success: ${d.message || 'SSL certificates successfully renewed.'}`, isError: false });
+        showMsg(d.message || 'Renewed.', false);
         fetchCerts();
+        fetchAutoRenew();
       } else {
-        setMsg({ text: `Error: ${d.detail || 'Failed to renew SSL'}`, isError: true });
+        showMsg(d.detail || 'Renew failed', true);
       }
     } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
+      showMsg('Connection error', true);
     } finally {
       setRenewing(false);
     }
   };
 
-  const handleIssueCertbot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg({ text: 'Requesting Let\'s Encrypt certificate...', isError: false });
+  const handleRenewDomain = async (domain: string) => {
+    setRenewing(true);
+    try {
+      const res = await fetch(`/api/ssl_manager/renew/${encodeURIComponent(domain)}`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        showMsg(d.message || 'Renewed.', false);
+        fetchCerts();
+      } else {
+        showMsg(d.detail || 'Renew failed', true);
+      }
+    } catch {
+      showMsg('Connection error', true);
+    } finally {
+      setRenewing(false);
+      setInlineDomain(null);
+    }
+  };
+
+  const handleIssue = async (domain: string, email: string) => {
     try {
       const res = await fetch('/api/ssl_manager/issue', {
         method: 'POST',
         headers: authHeaders(true),
-        body: JSON.stringify({ domain: certbotDomain, email: certbotEmail })
+        body: JSON.stringify({ domain, email }),
       });
       const d = await res.json();
       if (res.ok) {
-        setMsg({ text: `✓ Success: ${d.message}`, isError: false });
+        showMsg(d.message || 'Issued.', false);
         fetchCerts();
         setCertbotDomain('');
         setCertbotEmail('');
-      } else {
-        setMsg({ text: `Error: ${d.detail || 'Could not issue SSL'}`, isError: true });
-      }
-    } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
-    }
-  };
-
-  const handleInlineIssue = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inlineDomain || !inlineEmail) return;
-    setMsg({ text: `Processing Let's Encrypt certificate for ${inlineDomain}...`, isError: false });
-    try {
-      const res = await fetch('/api/ssl_manager/issue', {
-        method: 'POST',
-        headers: authHeaders(true),
-        body: JSON.stringify({ domain: inlineDomain, email: inlineEmail })
-      });
-      const d = await res.json();
-      if (res.ok) {
-        setMsg({ text: `✓ Success: ${d.message}`, isError: false });
-        fetchCerts();
         setInlineDomain(null);
       } else {
-        setMsg({ text: `Error: ${d.detail || 'Could not issue SSL'}`, isError: true });
+        showMsg(d.detail || 'Issue failed', true);
       }
     } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
+      showMsg('Connection error', true);
     }
   };
 
-  const handleCustomSSL = async (e: React.FormEvent) => {
+  const handleCustom = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMsg({ text: 'Saving custom SSL files...', isError: false });
     try {
       const res = await fetch('/api/ssl_manager/custom', {
         method: 'POST',
@@ -214,354 +284,324 @@ export default function SSLManagerDashboard() {
         body: JSON.stringify({
           domain: customDomain,
           private_key: customPrivateKey,
-          certificate: customCertificate
-        })
+          certificate: customCertificate,
+        }),
       });
       const d = await res.json();
       if (res.ok) {
-        setMsg({ text: `✓ Success: ${d.message}`, isError: false });
+        showMsg(d.message || 'Saved.', false);
         fetchCerts();
         setCustomDomain('');
         setCustomPrivateKey('');
         setCustomCertificate('');
       } else {
-        setMsg({ text: `Error: ${d.detail || 'Could not install custom SSL'}`, isError: true });
+        showMsg(d.detail || 'Failed', true);
       }
     } catch {
-      setMsg({ text: 'Error communicating with backend.', isError: true });
+      showMsg('Connection error', true);
     }
   };
 
-  const openInlineModal = (domain: string) => {
-    setInlineDomain(domain);
-    setInlineEmail(certbotEmail || `admin@${domain}`);
+  const handleSaveAutoRenew = async () => {
+    setSavingAuto(true);
+    try {
+      const res = await fetch('/api/ssl_manager/auto_renew', {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ enabled: autoEnabled, hour: autoHour, minute: autoMinute }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        showMsg(d.message || 'Saved.', false);
+        fetchAutoRenew();
+      } else {
+        showMsg(d.detail || 'Save failed', true);
+      }
+    } catch {
+      showMsg('Connection error', true);
+    } finally {
+      setSavingAuto(false);
+    }
   };
 
-  return (
-    <ModuleViewport constrained>
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
-      {/* Premium Ambient Banner */}
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${isDark ? 'bg-gradient-to-br from-teal-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-teal-50/40 via-white to-slate-50 border-slate-200'
-        }`}>
-        <div className="space-y-2 max-w-2xl text-center md:text-left">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center justify-center md:justify-start gap-2 ${isDark ? 'bg-gradient-to-r from-teal-400 via-emerald-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-teal-600 via-emerald-600 to-slate-800 bg-clip-text text-transparent'
-            }`}>
-            <Icons.Shield className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
-            {tr.title}
-            <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.0.1
-            </span>
-          </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
+  const openAction = (cert: Certificate) => {
+    if (cert.active && cert.type === "Let's Encrypt") {
+      setInlineMode('renew');
+      setInlineDomain(cert.domain);
+    } else {
+      setInlineMode('issue');
+      setInlineDomain(cert.domain);
+      setInlineEmail(certbotEmail || `admin@${cert.domain}`);
+    }
+  };
+
+  const card = cn(
+    'rounded-2xl border p-5 shadow-sm',
+    isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200',
+  );
+  const inputCls = cn(
+    'w-full rounded-xl px-3 py-2.5 text-sm border transition focus:outline-none focus:border-teal-500',
+    isDark
+      ? 'bg-slate-950 border-slate-800 text-slate-100 placeholder-slate-600'
+      : 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400',
+  );
+
+  const expiringCount = certs.filter((c) => c.active && (c.days_left ?? 99) <= 30).length;
+
+  const renderCertificates = () => (
+    <div className="space-y-4">
+      {loading && certs.length === 0 ? (
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Icons.Loader className="w-4 h-4 animate-spin text-teal-500" /> {tr.loading}
+        </div>
+      ) : certs.length > 0 ? (
+        <div className={cn('overflow-x-auto border rounded-xl', isDark ? 'border-slate-800' : 'border-slate-100')}>
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className={cn('border-b font-bold uppercase tracking-wider', isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500')}>
+                <th className="p-3">{tr.domain}</th>
+                <th className="p-3">Status</th>
+                <th className="p-3">Type</th>
+                <th className="p-3">Expiry</th>
+                <th className="p-3 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody className={cn('divide-y font-mono', isDark ? 'divide-slate-800 text-slate-200' : 'divide-slate-100 text-slate-700')}>
+              {certs.map((cert) => (
+                <tr key={cert.domain} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}>
+                  <td className="p-3 font-bold text-teal-500">{cert.domain}</td>
+                  <td className="p-3">
+                    <span className={cn('px-2 py-0.5 rounded border text-[10px] font-bold uppercase', cert.active ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/10' : 'border-red-500/30 text-red-500 bg-red-500/10')}>
+                      {cert.active ? tr.secured : tr.noSsl}
+                    </span>
+                  </td>
+                  <td className="p-3">{cert.type}</td>
+                  <td className="p-3">
+                    <span className={cn((cert.days_left ?? 99) <= 14 && cert.active ? 'text-amber-500 font-bold' : 'text-slate-400')}>
+                      {cert.expiry}
+                      {cert.days_left !== undefined && cert.days_left >= 0 && ` (${cert.days_left}d)`}
+                    </span>
+                  </td>
+                  <td className="p-3 text-center">
+                    <button
+                      type="button"
+                      onClick={() => openAction(cert)}
+                      className={cn('px-3 py-1.5 rounded-lg text-[11px] font-bold border transition', isDark ? 'border-teal-800 bg-teal-950/40 text-teal-400 hover:bg-teal-900/40' : 'border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100')}
+                    >
+                      {cert.active && cert.type === "Let's Encrypt" ? tr.renewBtn : tr.issueBtn}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{tr.noDomains}</p>
+      )}
+    </div>
+  );
+
+  const renderIssue = () => (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        handleIssue(certbotDomain, certbotEmail);
+      }}
+    >
+      <Field label={tr.domain} isDark={isDark}>
+        <input value={certbotDomain} onChange={(e) => setCertbotDomain(e.target.value)} className={inputCls} placeholder="example.com" required />
+      </Field>
+      <Field label={tr.email} isDark={isDark}>
+        <input type="email" value={certbotEmail} onChange={(e) => setCertbotEmail(e.target.value)} className={inputCls} placeholder="admin@example.com" required />
+      </Field>
+      <button type="submit" className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-sm font-bold flex items-center gap-2">
+        <Icons.Zap className="w-4 h-4" /> {tr.issueBtn}
+      </button>
+    </form>
+  );
+
+  const renderCustom = () => (
+    <form className="space-y-4" onSubmit={handleCustom}>
+      <Field label={tr.domain} isDark={isDark}>
+        <input value={customDomain} onChange={(e) => setCustomDomain(e.target.value)} className={inputCls} required />
+      </Field>
+      <Field label="Certificate (fullchain.pem)" isDark={isDark}>
+        <textarea value={customCertificate} onChange={(e) => setCustomCertificate(e.target.value)} rows={4} className={cn(inputCls, 'font-mono resize-none')} required />
+      </Field>
+      <Field label="Private key" isDark={isDark}>
+        <textarea value={customPrivateKey} onChange={(e) => setCustomPrivateKey(e.target.value)} rows={4} className={cn(inputCls, 'font-mono resize-none')} required />
+      </Field>
+      <button type="submit" className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold flex items-center gap-2">
+        <Icons.Save className="w-4 h-4" /> Save
+      </button>
+    </form>
+  );
+
+  const renderAutoRenew = () => (
+    <div className="space-y-5">
+      <label className={cn('flex items-center justify-between gap-4 p-4 rounded-xl border', isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50')}>
+        <div>
+          <p className={cn('text-sm font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tr.autoOn}</p>
+          <p className={cn('text-xs mt-1', isDark ? 'text-slate-400' : 'text-slate-500')}>
+            {tr.schedule} {String(autoHour).padStart(2, '0')}:{String(autoMinute).padStart(2, '0')} UTC
           </p>
         </div>
-        <div className="flex flex-col items-center md:items-end gap-3 self-stretch md:self-auto">
-          <div className={`flex flex-col items-center md:items-end gap-1 text-center md:text-right px-4 py-3 rounded-xl border backdrop-blur-sm self-stretch md:self-auto min-w-[180px] ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white/80 border-slate-200 shadow-sm'
-            }`}>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>{tr.status}</span>
-            <span className={`text-lg md:text-xl font-mono font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.ready}</span>
-          </div>
-          <button
-            onClick={handleRenewSSL}
-            disabled={renewing}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-md ${isDark ? 'bg-emerald-600 hover:bg-emerald-500 hover:shadow-emerald-500/20' : 'bg-emerald-600 hover:bg-emerald-500'
-              }`}
-          >
-            {renewing ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RefreshCw className="w-4 h-4" />}
-            {renewing ? tr.renewing : tr.renewBtn}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setAutoEnabled((v) => !v)}
+          className={cn('relative w-11 h-6 rounded-full transition', autoEnabled ? 'bg-emerald-600' : isDark ? 'bg-slate-700' : 'bg-slate-300')}
+        >
+          <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition', autoEnabled ? 'left-[22px]' : 'left-0.5')} />
+        </button>
+      </label>
+
+      <div className="grid grid-cols-2 gap-3 max-w-xs">
+        <Field label="Hour (0-23)" isDark={isDark}>
+          <input type="number" min={0} max={23} value={autoHour} onChange={(e) => setAutoHour(Number(e.target.value))} className={inputCls} />
+        </Field>
+        <Field label="Minute (0-59)" isDark={isDark}>
+          <input type="number" min={0} max={59} value={autoMinute} onChange={(e) => setAutoMinute(Number(e.target.value))} className={inputCls} />
+        </Field>
       </div>
 
-      {msg && (
-        <div className={`p-3.5 border rounded-xl text-xs flex items-center gap-2 animate-fade-in ${msg.isError
-            ? (isDark ? 'bg-red-950/20 border-red-600/30 text-red-400' : 'bg-red-50 border-red-200 text-red-600')
-            : (isDark ? 'bg-teal-950/20 border-teal-600/30 text-teal-300' : 'bg-teal-50 border-teal-200 text-teal-600')
-          }`}>
-          {msg.isError ? <Icons.AlertCircle className="w-4 h-4 shrink-0" /> : <Icons.Info className="w-4 h-4 shrink-0" />}
-          <span>{msg.text}</span>
+      {autoRenew && (
+        <div className={cn('grid gap-2 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>
+          <StatusRow label={tr.cronStatus} value={autoRenew.cron_installed ? tr.installed : tr.notInstalled} ok={autoRenew.cron_installed} isDark={isDark} />
+          <StatusRow label={tr.certbotTimer} value={autoRenew.certbot_timer?.active ? tr.active : tr.inactive} ok={autoRenew.certbot_timer?.active} isDark={isDark} />
+          <StatusRow label="Certbot" value={autoRenew.certbot_installed ? tr.installed : tr.notInstalled} ok={autoRenew.certbot_installed} isDark={isDark} />
+          {autoRenew.last_run && (
+            <p>
+              {tr.lastRun}: {new Date(autoRenew.last_run).toLocaleString()} — {autoRenew.last_status}
+              {autoRenew.last_message ? ` (${autoRenew.last_message})` : ''}
+            </p>
+          )}
         </div>
       )}
 
-      {/* Active Certificates Table */}
-      <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 shadow-sm ${isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-        <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-          <Icons.ShieldCheck className={`w-5 h-5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} /> {tr.listingTitle}
-        </h3>
-        {loading && certs.length === 0 ? (
-          <div className="flex items-center gap-2 text-slate-400 text-xs">
-            <Icons.Loader className="w-4 h-4 animate-spin text-teal-500" />
-            <p>{tr.loading}</p>
-          </div>
-        ) : certs.length > 0 ? (
-          <div className="space-y-4">
-            {/* Desktop View */}
-            <div className={`hidden md:block overflow-x-auto border rounded-xl ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-              <table className="w-full text-left border-collapse select-none">
-                <thead>
-                  <tr className={`border-b text-xs font-bold uppercase tracking-widest ${isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50/80 border-slate-100 text-slate-600'
-                    }`}>
-                    <th className="p-4">{tr.colDomain}</th>
-                    <th className="p-4">{tr.colStatus}</th>
-                    <th className="p-4">{tr.colType}</th>
-                    <th className="p-4">{tr.colExpiry}</th>
-                    <th className="p-4 text-center">{tr.colAction}</th>
-                  </tr>
-                </thead>
-                <tbody className={`text-xs divide-y font-mono ${isDark ? 'text-slate-200 divide-slate-800/40' : 'text-slate-700 divide-slate-100'
-                  }`}>
-                  {certs.map((cert, idx) => (
-                    <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
-                      <td className={`p-4 font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{cert.domain}</td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-all ${cert.active
-                            ? 'bg-green-500/10 text-green-500 border-green-500/20'
-                            : 'bg-red-500/10 text-red-500 border-red-500/20'
-                          }`}>
-                          {cert.active ? tr.secured : tr.noSsl}
-                        </span>
-                      </td>
-                      <td className="p-4">{cert.type}</td>
-                      <td className="p-4 text-slate-400">{cert.expiry}</td>
-                      <td className="p-4 text-center">
-                        <button
-                          onClick={() => openInlineModal(cert.domain)}
-                          className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 mx-auto ${cert.active
-                              ? isDark ? 'bg-emerald-950/40 border-emerald-900/40 hover:bg-emerald-900/40 text-emerald-400' : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-600'
-                              : isDark ? 'bg-teal-950/40 border-teal-900/40 hover:bg-teal-900/40 text-teal-400' : 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-600'
-                            }`}
-                        >
-                          <Icons.Zap className="w-3.5 h-3.5" />
-                          {cert.active ? tr.renewDirect : tr.issueDirect}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile View - Cards */}
-            <div className="grid grid-cols-1 gap-4 md:hidden">
-              {certs.map((cert, idx) => (
-                <div
-                  key={idx}
-                  className={`p-4 rounded-xl border flex flex-col justify-between gap-4 transition duration-200 ${isDark ? 'bg-slate-900 border-slate-800 hover:border-slate-700' : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-mono font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-                        {cert.domain}
-                      </span>
-                      <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-all ${cert.active
-                          ? 'bg-green-500/10 text-green-500 border-green-500/20'
-                          : 'bg-red-500/10 text-red-500 border-red-500/20'
-                        }`}>
-                        {cert.active ? tr.secured : tr.noSsl}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1 text-xs">
-                      <span className={`font-mono truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
-                        <strong>{tr.colType}:</strong> {cert.type}
-                      </span>
-                      <span className={`font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                        <strong>{tr.colExpiry}:</strong> {cert.expiry}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end border-t pt-3 dark:border-slate-800">
-                    <button
-                      onClick={() => openInlineModal(cert.domain)}
-                      className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border flex items-center justify-center gap-1.5 ${cert.active
-                          ? isDark ? 'bg-emerald-950/40 border-emerald-900/40 hover:bg-emerald-900/40 text-emerald-400' : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-600'
-                          : isDark ? 'bg-teal-950/40 border-teal-900/40 hover:bg-teal-900/40 text-teal-400' : 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-600'
-                        }`}
-                    >
-                      <Icons.Zap className="w-3.5 h-3.5" />
-                      {cert.active ? tr.renewDirect : tr.issueDirect}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className={`text-xs border p-4 rounded-xl text-center md:text-left ${isDark ? 'text-slate-400 border-slate-800/40 bg-slate-950/20' : 'text-slate-500 border-slate-100 bg-slate-50/50'
-            }`}>
-            {tr.noDomains}
-          </div>
-        )}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={handleSaveAutoRenew}
+          disabled={savingAuto}
+          className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold disabled:opacity-50"
+        >
+          {savingAuto ? tr.saving : tr.saveAuto}
+        </button>
+        <button
+          type="button"
+          onClick={handleRenewAll}
+          disabled={renewing}
+          className={cn('px-4 py-2.5 rounded-xl border text-sm font-bold flex items-center gap-2', isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600')}
+        >
+          {renewing ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.RefreshCw className="w-4 h-4" />}
+          {renewing ? tr.renewing : tr.renewAll}
+        </button>
       </div>
-
-      {/* Issuing Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-        {/* Let's Encrypt issuance */}
-        <form onSubmit={handleIssueCertbot} className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 flex flex-col justify-between transition-all duration-300 shadow-sm ${isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-          }`}>
-          <div className="space-y-4">
-            <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-              <Icons.Shield className={`w-5 h-5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
-              {tr.leTitle}
-            </h3>
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              {tr.leDesc}
-            </p>
-
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.domainLabel}</label>
-                <input
-                  type="text"
-                  value={certbotDomain}
-                  onChange={(e) => setCertbotDomain(e.target.value)}
-                  placeholder="example.com"
-                  required
-                  className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-teal-500 transition-all ${isDark ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                    }`}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.emailLabel}</label>
-                <input
-                  type="email"
-                  value={certbotEmail}
-                  onChange={(e) => setCertbotEmail(e.target.value)}
-                  placeholder="admin@example.com"
-                  required
-                  className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-teal-500 transition-all ${isDark ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                    }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className={`flex flex-wrap items-center gap-2 pt-4 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-            <button
-              type="submit"
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-3 bg-teal-600 hover:bg-teal-500 rounded-xl font-bold text-xs text-white transition-all shadow-md"
-            >
-              <Icons.Zap className="w-4 h-4" /> {tr.issueBtn}
-            </button>
-          </div>
-        </form>
-
-        {/* Custom SSL uploading */}
-        <form onSubmit={handleCustomSSL} className={`border p-6 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 shadow-sm ${isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-          }`}>
-          <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-            <Icons.Key className={`w-5 h-5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`} />
-            {tr.customTitle}
-          </h3>
-          <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-            {tr.customDesc}
-          </p>
-
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.domainLabel}</label>
-              <input
-                type="text"
-                value={customDomain}
-                onChange={(e) => setCustomDomain(e.target.value)}
-                placeholder="example.com"
-                required
-                className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-teal-500 transition-all ${isDark ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                  }`}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.certLabel}</label>
-              <textarea
-                value={customCertificate}
-                onChange={(e) => setCustomCertificate(e.target.value)}
-                placeholder="-----BEGIN CERTIFICATE-----"
-                required
-                rows={3}
-                className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-teal-500 font-mono transition-all resize-none ${isDark ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                  }`}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{tr.keyLabel}</label>
-              <textarea
-                value={customPrivateKey}
-                onChange={(e) => setCustomPrivateKey(e.target.value)}
-                placeholder="-----BEGIN PRIVATE KEY-----"
-                required
-                rows={3}
-                className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-teal-500 font-mono transition-all resize-none ${isDark ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-100 hover:border-slate-200 text-slate-800'
-                  }`}
-              />
-            </div>
-          </div>
-
-          <div className={`flex flex-wrap items-center gap-2 pt-2 border-t ${isDark ? 'border-slate-800/60' : 'border-slate-100'}`}>
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-2 px-3 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-xs text-white transition-all shadow-md"
-            >
-              <Icons.Save className="w-4 h-4" /> {tr.saveBtn}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* Inline Fast Issue/Renew Modal */}
-      <WindowModal open={!!inlineDomain} onClose={() => setInlineDomain(null)} title={tr.confirmIssue} maxWidth="sm">
-          <form onSubmit={handleInlineIssue} className="space-y-4 p-4">
-            <div className="space-y-3">
-              <div>
-                <label className={`text-[10px] font-bold block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {tr.domainLabel}
-                </label>
-                <div className={`p-3 font-mono text-xs rounded-xl border mt-1 font-bold ${isDark ? 'bg-slate-950 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-700'
-                  }`}>
-                  {inlineDomain}
-                </div>
-              </div>
-
-              <div>
-                <label className={`text-[10px] font-bold block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {tr.emailLabel}
-                </label>
-                <input
-                  type="email"
-                  value={inlineEmail}
-                  onChange={(e) => setInlineEmail(e.target.value)}
-                  placeholder="admin@example.com"
-                  required
-                  className={`w-full border px-3 py-2 rounded-xl outline-none focus:border-teal-500 font-mono text-xs transition-all mt-1 ${isDark ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-100 text-slate-800'
-                    }`}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 border-t pt-3 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setInlineDomain(null)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-              >
-                {tr.cancel}
-              </button>
-              <button
-                type="submit"
-                className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1.5"
-              >
-                <Icons.Zap className="w-3.5 h-3.5" />
-                {tr.issueBtn}
-              </button>
-            </div>
-          </form>
-      </WindowModal>
     </div>
+  );
+
+  return (
+    <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
+      <div className={cn('flex h-full min-h-0', isDark ? 'text-slate-100' : 'text-slate-900')}>
+        <SslManagerSidebar
+          tab={tab}
+          onTab={setTab}
+          isDark={isDark}
+          labels={labels}
+          title={tr.title}
+          subtitle={tr.subtitle}
+          autoRenewOn={autoRenew?.enabled}
+          counts={{ certificates: certs.length || undefined, auto_renew: expiringCount || undefined }}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
+            <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1.5">
+                <h2 className={cn('text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tabMeta[tab].title}</h2>
+                <p className={cn('text-xs max-w-2xl', isDark ? 'text-slate-400' : 'text-slate-500')}>{tabMeta[tab].desc}</p>
+              </div>
+              {tab === 'certificates' && (
+                <button
+                  type="button"
+                  onClick={handleRenewAll}
+                  disabled={renewing}
+                  className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50"
+                >
+                  <Icons.RefreshCw className={cn('w-4 h-4', renewing && 'animate-spin')} />
+                  {tr.renewAll}
+                </button>
+              )}
+            </header>
+
+            {msg && (
+              <div className={cn('mb-4 p-3 border rounded-xl text-xs flex items-center gap-2', msg.isError ? 'border-red-500/30 text-red-400 bg-red-950/20' : 'border-teal-500/30 text-teal-300 bg-teal-950/20')}>
+                {msg.isError ? <Icons.AlertCircle className="w-4 h-4" /> : <Icons.CheckCircle2 className="w-4 h-4" />}
+                {msg.text}
+              </div>
+            )}
+
+            <div className={card}>
+              {tab === 'certificates' && renderCertificates()}
+              {tab === 'issue' && renderIssue()}
+              {tab === 'custom' && renderCustom()}
+              {tab === 'auto_renew' && renderAutoRenew()}
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <WindowModal
+        open={!!inlineDomain}
+        onClose={() => setInlineDomain(null)}
+        title={inlineMode === 'renew' ? tr.confirmRenew : tr.confirmIssue}
+        maxWidth="sm"
+      >
+        <div className="space-y-4 p-4">
+          <p className={cn('font-mono text-sm font-bold', isDark ? 'text-teal-400' : 'text-teal-600')}>{inlineDomain}</p>
+          {inlineMode === 'issue' && (
+            <Field label={tr.email} isDark={isDark}>
+              <input type="email" value={inlineEmail} onChange={(e) => setInlineEmail(e.target.value)} className={inputCls} required />
+            </Field>
+          )}
+          <div className="flex justify-end gap-2 border-t pt-3">
+            <button type="button" onClick={() => setInlineDomain(null)} className={cn('px-3 py-2 rounded-xl text-xs font-bold border', isDark ? 'border-slate-700' : 'border-slate-200')}>
+              {tr.cancel}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!inlineDomain) return;
+                if (inlineMode === 'renew') handleRenewDomain(inlineDomain);
+                else handleIssue(inlineDomain, inlineEmail);
+              }}
+              className="px-3 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold"
+            >
+              {inlineMode === 'renew' ? tr.renewBtn : tr.issueBtn}
+            </button>
+          </div>
+        </div>
+      </WindowModal>
     </ModuleViewport>
+  );
+}
+
+function Field({ label, children, isDark }: { label: string; children: React.ReactNode; isDark: boolean }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={cn('text-[11px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function StatusRow({ label, value, ok, isDark }: { label: string; value: string; ok: boolean; isDark: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span>{label}</span>
+      <span className={cn('font-semibold', ok ? 'text-emerald-500' : isDark ? 'text-slate-500' : 'text-slate-400')}>{value}</span>
+    </div>
   );
 }

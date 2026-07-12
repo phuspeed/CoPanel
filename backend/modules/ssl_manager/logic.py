@@ -170,10 +170,34 @@ class SSLManager:
 
             # Reload Nginx after a successful renewal
             if shutil.which("nginx"):
-                subprocess.run(["nginx", "-t"], shell=False, capture_output=True)
-                subprocess.run(["systemctl", "reload", "nginx"], shell=False, capture_output=True)
+                subprocess.run(["sudo", "nginx", "-t"], shell=False, capture_output=True, text=True)
+                subprocess.run(["sudo", "systemctl", "reload", "nginx"], shell=False, capture_output=True, text=True)
 
             return {"status": "success", "message": "All Let's Encrypt certificates successfully renewed and Nginx reloaded."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @staticmethod
+    def renew_domain(domain: str, force: bool = False) -> dict:
+        """Renew a single Let's Encrypt certificate by domain name."""
+        if IS_WINDOWS:
+            return {"status": "success", "message": f"Renewed SSL for {domain} (Mock Mode)."}
+        if not shutil.which("certbot"):
+            return {"status": "error", "message": "Certbot CLI is not installed on this server."}
+        domain = domain.strip().lower()
+        if not domain:
+            return {"status": "error", "message": "Domain is required."}
+        try:
+            cmd = ["sudo", "certbot", "renew", "--cert-name", domain, "--non-interactive"]
+            if force:
+                cmd.append("--force-renewal")
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                return {"status": "error", "message": f"Certbot renewal failed: {res.stderr or res.stdout}"}
+            if shutil.which("nginx"):
+                subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+                subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+            return {"status": "success", "message": f"Certificate for {domain} renewed and Nginx reloaded."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -268,7 +292,6 @@ class SSLManager:
         vhost_path.write_text(content, encoding="utf-8")
 
         if not IS_WINDOWS:
-            # Reload Nginx
             if shutil.which("nginx"):
-                subprocess.run(["nginx", "-t"], shell=False, capture_output=True)
-                subprocess.run(["systemctl", "reload", "nginx"], shell=False, capture_output=True)
+                subprocess.run(["sudo", "nginx", "-t"], shell=False, capture_output=True, text=True)
+                subprocess.run(["sudo", "systemctl", "reload", "nginx"], shell=False, capture_output=True, text=True)
