@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import * as Icons from 'lucide-react';
 
 import type { Terminal } from '@xterm/xterm';
@@ -35,6 +36,7 @@ export default function TerminalDashboard() {
   const wsRef = useRef<WebSocket | null>(null);
 
   const context = useAppShellContext();
+  const isWindowed = useIsWindowedModule();
 
   const isDark = context?.theme === 'dark';
   const language = context?.language || 'en';
@@ -313,77 +315,70 @@ export default function TerminalDashboard() {
   const shell = isDark
     ? 'bg-slate-900/40 border-slate-800/80 text-slate-100'
     : 'bg-white border-slate-200 text-slate-900';
+  const muted = isDark ? 'text-slate-400' : 'text-slate-500';
+  const btnSecondary = isDark
+    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
+    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200';
 
   return (
     <ModuleViewport constrained>
-    <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-      <div
-        className={`relative overflow-hidden p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 border transition-all duration-300 ${
-          isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-        }`}
-      >
-        <div>
-          <h1
-            className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2 ${
-              isDark
-                ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent'
-                : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
-            }`}
-          >
-            <Icons.Terminal className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            {tr.title}
-          </h1>
-          <p className={`${isDark ? 'text-slate-400' : 'text-slate-600'} text-xs md:text-sm mt-2 max-w-xl leading-relaxed`}>
-            {tr.desc}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 md:flex-col md:items-end">
-          <span
-            className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg ${
-              wsConnected
-                ? isDark
-                  ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/50'
-                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                : isDark
-                  ? 'bg-slate-800 text-slate-500 border border-slate-700'
-                  : 'bg-slate-100 text-slate-500 border border-slate-200'
-            }`}
-          >
-            {wsConnected ? 'WS ●' : 'WS ○'}
-          </span>
-          <button
-            type="button"
-            onClick={() => setPanelOpen((v) => !v)}
-            className={`xl:hidden flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl border ${
-              isDark ? 'border-slate-700 bg-slate-800 hover:bg-slate-700' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
-            }`}
-          >
-            <Icons.Sparkles className="w-4 h-4" />
-            {panelOpen ? tr.collapse : tr.expand} {tr.togglePanel}
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4 items-stretch">
-        <div className={`p-4 rounded-2xl backdrop-blur-md shadow-xl border transition-all duration-300 h-[480px] sm:h-[560px] md:h-[600px] flex flex-col min-h-0 ${shell}`}>
-          <div
-            className={`flex items-center gap-2 px-2 py-1 mb-3 border-b text-xs font-mono select-none shrink-0 ${
-              isDark ? 'border-slate-800/40' : 'border-slate-200'
-            }`}
-          >
-            <span className="w-3 h-3 rounded-full bg-red-500" />
-            <span className="w-3 h-3 rounded-full bg-yellow-500" />
-            <span className="w-3 h-3 rounded-full bg-green-500" />
-            <span className={`ml-2 font-bold ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>root@vps:bash</span>
-          </div>
-          <div ref={terminalRef} className="flex-1 min-h-0 overflow-hidden" />
-        </div>
-
-        <aside
-          className={`rounded-2xl border shadow-xl min-h-0 transition-all duration-300 xl:max-h-[600px] ${
-            panelOpen ? 'flex flex-col' : 'hidden xl:flex flex-col'
-          } ${shell}`}
+      <div className={`flex flex-col h-full min-h-0 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+        <header
+          className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">System</p>
+            <h1 className="text-lg font-semibold truncate flex items-center gap-2">
+              <Icons.Terminal className="w-5 h-5 text-blue-500 shrink-0" />
+              {tr.title}
+            </h1>
+            <p className={`text-xs mt-0.5 line-clamp-1 ${muted}`}>{tr.desc}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg border ${
+                wsConnected
+                  ? isDark
+                    ? 'bg-emerald-950/50 text-emerald-300 border-emerald-800/50'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : isDark
+                    ? 'bg-slate-800 text-slate-500 border-slate-700'
+                    : 'bg-slate-100 text-slate-500 border-slate-200'
+              }`}
+            >
+              {wsConnected ? 'WS ●' : 'WS ○'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPanelOpen((v) => !v)}
+              className={`lg:hidden flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl border ${btnSecondary}`}
+            >
+              <Icons.Sparkles className="w-4 h-4" />
+              {panelOpen ? tr.collapse : tr.expand}
+            </button>
+          </div>
+        </header>
+
+        <div className={`flex flex-1 min-h-0 gap-0 ${isWindowed ? '' : 'max-h-[calc(100vh-8rem)]'}`}>
+          <div className={`flex-1 min-h-0 min-w-0 p-3 flex flex-col ${shell} border-r-0 lg:border-r ${isDark ? 'lg:border-slate-800' : 'lg:border-slate-200'}`}>
+            <div
+              className={`flex items-center gap-2 px-2 py-1 mb-2 border-b text-xs font-mono shrink-0 ${
+                isDark ? 'border-slate-800/40' : 'border-slate-200'
+              }`}
+            >
+              <span className="w-3 h-3 rounded-full bg-red-500" />
+              <span className="w-3 h-3 rounded-full bg-yellow-500" />
+              <span className="w-3 h-3 rounded-full bg-green-500" />
+              <span className={`ml-2 font-bold ${muted}`}>root@vps:bash</span>
+            </div>
+            <div ref={terminalRef} className="flex-1 min-h-0 overflow-hidden rounded-lg" />
+          </div>
+
+          <aside
+            className={`shrink-0 border-l flex flex-col min-h-0 w-72 transition-all ${
+              panelOpen ? 'flex' : 'hidden lg:flex'
+            } ${shell} ${isDark ? 'border-slate-800' : 'border-slate-200'}`}
+          >
           <div className={`p-4 border-b shrink-0 ${isDark ? 'border-slate-800/60' : 'border-slate-200'}`}>
             <h2 className="text-sm font-bold flex items-center gap-2">
               <Icons.Bookmark className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
@@ -566,13 +561,14 @@ export default function TerminalDashboard() {
             {saveState === 'err' && <p className="text-[10px] mt-2 text-center text-red-500">{tr.saveError}</p>}
           </div>
         </aside>
+        </div>
       </div>
 
       {!panelOpen && (
         <button
           type="button"
           onClick={() => setPanelOpen(true)}
-          className={`xl:hidden fixed bottom-4 right-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full shadow-lg text-xs font-bold ${
+          className={`lg:hidden fixed bottom-4 right-4 z-40 flex items-center gap-2 px-4 py-3 rounded-full shadow-lg text-xs font-bold ${
             isDark ? 'bg-amber-600 text-white' : 'bg-amber-500 text-white'
           }`}
         >
@@ -580,7 +576,6 @@ export default function TerminalDashboard() {
           {tr.togglePanel}
         </button>
       )}
-    </div>
     </ModuleViewport>
   );
 }
