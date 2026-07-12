@@ -11,6 +11,6 @@ export default {
   description: 'Manage cron automated folder backups and Rclone cloud syncing.',
   component: BackupAndSyncDashboard,
   windowMode: true,
-  defaultWindowSize: { width: 1000, height: 680 },
+  defaultWindowSize: { width: 1024, height: 680 },
   singleton: true,
 };

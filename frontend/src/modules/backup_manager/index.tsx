@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
+import BackupManagerSidebar, { type BackupTab } from './components/BackupManagerSidebar';
+import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
 // --- Types ---
@@ -145,7 +148,10 @@ function humanizeCron(cron: string, lang: 'en' | 'vi'): string {
 export default function BackupManagerDashboard() {
   const { theme, language } = useAppShellContext();
   const isDark = theme === 'dark';
+  const windowed = useIsWindowedModule();
   const token = localStorage.getItem('copanel_token');
+
+  const [tab, setTab] = useState<BackupTab>('profiles');
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [remotes, setRemotes] = useState<RemoteInfo[]>([]);
@@ -156,7 +162,6 @@ export default function BackupManagerDashboard() {
 
   // System & rclone config states
   const [systemFolders, setSystemFolders] = useState<{ name: string; path: string }[]>([]);
-  const [showRcloneConfig, setShowRcloneConfig] = useState(false);
   const [rcloneConfigPath, setRcloneConfigPath] = useState('');
   const [oauthForm, setOauthForm] = useState({
     remote_name: '',
@@ -217,10 +222,20 @@ export default function BackupManagerDashboard() {
   const [explorerItems, setExplorerItems] = useState<{ name: string; path: string; type: string }[]>([]);
   const [explorerLoading, setExplorerLoading] = useState(false);
 
-  const t = {
+  const t = useMemo(
+    () => ({
     en: {
-      title: 'Professional Cloud Backup',
-      desc: 'Zero-CLI backup manager powered by rclone. Automate cloud sync and real-time watching.',
+      title: 'Backup Manager',
+      subtitle: 'rclone cloud backup & sync',
+      profiles: 'Profiles',
+      remotes: 'Cloud Remotes',
+      cloudSetup: 'Cloud Setup',
+      profilesTitle: 'Backup Profiles',
+      profilesDesc: 'Automated folder and MySQL backups to cloud storage via rclone.',
+      remotesTitle: 'Configured Remotes',
+      remotesDesc: 'rclone remotes detected on this server. Add new remotes via Cloud Setup.',
+      cloudSetupTitle: 'Cloud Remote Setup',
+      cloudSetupDesc: 'Connect Google Drive with OAuth or paste a manual rclone authorize token.',
       newProfile: 'Create Backup Profile',
       taskMonitor: 'Task Monitor Dashboard',
       runNow: 'Run Now',
@@ -286,8 +301,17 @@ export default function BackupManagerDashboard() {
       freqMonthly: 'Monthly',
     },
     vi: {
-      title: 'Quản trị Sao lưu Đám mây',
-      desc: 'Công cụ quản lý sao lưu Zero-CLI với rclone. Tự động hóa đồng bộ đám mây và theo dõi thời gian thực.',
+      title: 'Backup Manager',
+      subtitle: 'Sao lưu & đồng bộ rclone',
+      profiles: 'Cấu hình',
+      remotes: 'Cloud Remotes',
+      cloudSetup: 'Cloud Setup',
+      profilesTitle: 'Cấu hình sao lưu',
+      profilesDesc: 'Sao lưu thư mục và MySQL tự động lên cloud qua rclone.',
+      remotesTitle: 'Remote đã cấu hình',
+      remotesDesc: 'Danh sách rclone remote trên máy chủ. Thêm remote mới qua Cloud Setup.',
+      cloudSetupTitle: 'Thiết lập Cloud Remote',
+      cloudSetupDesc: 'Kết nối Google Drive qua OAuth hoặc dán token rclone authorize thủ công.',
       newProfile: 'Tạo cấu hình mới',
       taskMonitor: 'Giám sát tiến trình (Task Monitor)',
       runNow: 'Chạy ngay',
@@ -352,8 +376,22 @@ export default function BackupManagerDashboard() {
       freqWeekly: 'Hằng tuần',
       freqMonthly: 'Hằng tháng',
     },
+  }),
+    [],
+  );
+  const tr = t[language === 'vi' ? 'vi' : 'en'];
+
+  const sidebarLabels: Record<BackupTab, string> = {
+    profiles: tr.profiles,
+    remotes: tr.remotes,
+    cloud_setup: tr.cloudSetup,
   };
-  const tr = t[language || 'en'];
+
+  const tabMeta: Record<BackupTab, { title: string; desc: string }> = {
+    profiles: { title: tr.profilesTitle, desc: tr.profilesDesc },
+    remotes: { title: tr.remotesTitle, desc: tr.remotesDesc },
+    cloud_setup: { title: tr.cloudSetupTitle, desc: tr.cloudSetupDesc },
+  };
 
   const showMsg = useCallback((text: string, isError = false) => {
     setMsg({ text, isError });
@@ -431,10 +469,11 @@ export default function BackupManagerDashboard() {
   }, [cronMode, cronFrequency, cronMinute, cronHour, cronIntervalHours, cronWeekday, cronDayOfMonth]);
 
   useEffect(() => {
-    if (showRcloneConfig) {
+    if (tab === 'cloud_setup') {
+      fetchRcloneConfig();
       fetchOAuthStatusList();
     }
-  }, [showRcloneConfig]);
+  }, [tab]);
 
   useEffect(() => {
     return () => {
@@ -817,9 +856,6 @@ export default function BackupManagerDashboard() {
     isDark ? 'bg-slate-950 border-slate-800 text-slate-200 placeholder-slate-600' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-400'
   }`;
   const card = `border p-6 rounded-2xl shadow-sm ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200'}`;
-  const modalBox = `w-full rounded-2xl shadow-2xl flex flex-col overflow-hidden ${isDark ? 'bg-slate-900 border border-slate-800' : 'bg-white border border-slate-200'}`;
-  const modalHeader = `p-4 flex items-center justify-between border-b ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`;
-  const modalFooter = `p-4 border-t flex justify-end gap-3 ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`;
 
   // ---- Remote select option renderer ----
   const renderRemoteOption = (r: RemoteInfo) => {
@@ -998,7 +1034,7 @@ export default function BackupManagerDashboard() {
                     <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.noRemotesHint}</p>
                     <button
                       type="button"
-                      onClick={() => { fetchRcloneConfig(); setShowRcloneConfig(true); }}
+                      onClick={() => { fetchRcloneConfig(); setTab('cloud_setup'); setShowWizard(false); }}
                       className="mt-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition"
                     >
                       Open Rclone Profiles
@@ -1368,356 +1404,414 @@ export default function BackupManagerDashboard() {
     );
   };
 
-  // ---- Main render ----
-  return (
-    <ModuleViewport constrained>
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
-      {/* Header */}
-      <div
-        className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all ${
-          isDark
-            ? 'bg-gradient-to-br from-indigo-900/30 via-slate-900 to-slate-950 border-slate-800'
-            : 'bg-gradient-to-br from-indigo-50/50 via-white to-slate-50 border-slate-200'
-        }`}
-      >
-        <div className="space-y-2 max-w-2xl text-center md:text-left">
-          <h2
-            className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center justify-center md:justify-start gap-2 ${
-              isDark
-                ? 'bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent'
-                : 'bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent'
-            }`}
-          >
-            <Icons.Cloud className={`w-8 h-8 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-            {tr.title}
-          </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{tr.desc}</p>
+  const openCreateWizard = () => {
+    setForm({ profile_name: '', source_type: 'folder', source_path: '', remote_name: '', remote_path: '', cron_expression: '0 0 * * *', is_active: 1, realtime_sync: 0, rclone_flags: '{}' });
+    setFlags({ inplace: false, metadata: false, size_only: false, sync_deletions: true, transfers: 4 });
+    setCronMode('guided');
+    setCronFrequency('daily');
+    setCronMinute(0);
+    setCronHour(2);
+    setCronIntervalHours(6);
+    setCronWeekday(0);
+    setCronDayOfMonth(1);
+    setWizardTab(1);
+    setWizardError('');
+    setShowWizard(true);
+  };
+
+  const renderProfiles = () => (
+    <div className={card}>
+      <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 mb-6 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+        <Icons.LayoutDashboard className="w-5 h-5 text-indigo-500" />
+        {tr.taskMonitor}
+        <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+          {profiles.length}
+        </span>
+      </h3>
+
+      {profiles.length === 0 ? (
+        <div className={`p-10 text-center border-2 border-dashed rounded-xl ${isDark ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-400'}`}>
+          <Icons.CloudOff className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p className="text-sm font-medium">{tr.noProfiles}</p>
         </div>
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <button
-            onClick={() => { fetchRcloneConfig(); setShowRcloneConfig(true); }}
-            className="px-5 py-3 bg-slate-600 hover:bg-slate-500 text-white font-bold text-sm rounded-xl shadow-lg flex items-center gap-2 transition"
-          >
-            <Icons.Settings className="w-5 h-5" />
-            Cloud Setup
-          </button>
-          <button
-            onClick={() => {
-              setForm({ profile_name: '', source_type: 'folder', source_path: '', remote_name: '', remote_path: '', cron_expression: '0 0 * * *', is_active: 1, realtime_sync: 0, rclone_flags: '{}' });
-              setFlags({ inplace: false, metadata: false, size_only: false, sync_deletions: true, transfers: 4 });
-              setCronMode('guided');
-              setCronFrequency('daily');
-              setCronMinute(0);
-              setCronHour(2);
-              setCronIntervalHours(6);
-              setCronWeekday(0);
-              setCronDayOfMonth(1);
-              setWizardTab(1);
-              setWizardError('');
-              setShowWizard(true);
-            }}
-            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition"
-          >
-            <Icons.Plus className="w-5 h-5" />
-            {tr.newProfile}
-          </button>
-        </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {profiles.map((p) => {
+            const remoteInfo = remotes.find((r) => r.name === p.remote_name);
+            const remoteMeta = remoteInfo ? getRemoteMeta(remoteInfo.type) : null;
 
-      {/* Toast message */}
-      {msg && (
-        <div
-          className={`p-4 border rounded-xl text-xs flex items-center gap-2 ${
-            msg.isError
-              ? 'bg-red-500/10 border-red-500/30 text-red-500'
-              : 'bg-green-500/10 border-green-500/30 text-green-500'
-          }`}
-        >
-          {msg.isError ? <Icons.AlertTriangle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle className="w-4 h-4 shrink-0" />}
-          <span className="flex-1">{msg.text}</span>
-          <button onClick={() => setMsg(null)} className="opacity-60 hover:opacity-100">
-            <Icons.X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+            return (
+              <div
+                key={p.id}
+                className={`p-5 rounded-xl border relative overflow-hidden group ${
+                  isDark ? 'bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className={`absolute top-0 right-0 w-16 h-16 -mr-8 -mt-8 rotate-45 ${p.is_active ? 'bg-green-500/20' : 'bg-slate-500/20'}`} />
 
-      {/* Profiles grid */}
-      <div className={card}>
-        <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 mb-6 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-          <Icons.LayoutDashboard className="w-5 h-5 text-indigo-500" />
-          {tr.taskMonitor}
-          <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
-            {profiles.length}
-          </span>
-        </h3>
-
-        {profiles.length === 0 ? (
-          <div className={`p-10 text-center border-2 border-dashed rounded-xl ${isDark ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-400'}`}>
-            <Icons.CloudOff className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p className="text-sm font-medium">{tr.noProfiles}</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {profiles.map((p) => {
-              const remoteInfo = remotes.find((r) => r.name === p.remote_name);
-              const remoteMeta = remoteInfo ? getRemoteMeta(remoteInfo.type) : null;
-
-              return (
-                <div
-                  key={p.id}
-                  className={`p-5 rounded-xl border relative overflow-hidden group ${
-                    isDark ? 'bg-slate-950/50 border-slate-800 hover:border-slate-700' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className={`absolute top-0 right-0 w-16 h-16 -mr-8 -mt-8 rotate-45 ${p.is_active ? 'bg-green-500/20' : 'bg-slate-500/20'}`} />
-
-                  <div className="flex items-start justify-between mb-3 relative z-10">
-                    <div className="space-y-1 min-w-0 flex-1 mr-3">
-                      <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                        {p.source_type === 'mysql' ? (
-                          <Icons.Database className="w-4 h-4 text-blue-500 shrink-0" />
-                        ) : (
-                          <Icons.Folder className="w-4 h-4 text-yellow-500 shrink-0" />
-                        )}
-                        <span className="truncate">{p.profile_name}</span>
-                      </h4>
-                      <div className={`text-[11px] font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                        <span className="text-indigo-400">{p.source_path}</span>
-                        <span className="mx-1">→</span>
-                        <span className={remoteMeta?.color ?? 'text-slate-400'}>
-                          {p.remote_name}:{p.remote_path}
-                        </span>
-                      </div>
-                      {remoteMeta && (
-                        <div className={`text-[10px] font-semibold ${remoteMeta.color}`}>
-                          {remoteMeta.label}
-                        </div>
+                <div className="flex items-start justify-between mb-3 relative z-10">
+                  <div className="space-y-1 min-w-0 flex-1 mr-3">
+                    <h4 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                      {p.source_type === 'mysql' ? (
+                        <Icons.Database className="w-4 h-4 text-blue-500 shrink-0" />
+                      ) : (
+                        <Icons.Folder className="w-4 h-4 text-yellow-500 shrink-0" />
                       )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      {p.realtime_sync === 1 && (
-                        <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded text-[10px] font-bold flex items-center gap-1">
-                          <Icons.Eye className="w-3 h-3" /> Watch
-                        </span>
-                      )}
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-slate-500/10 text-slate-500 border border-slate-500/20'}`}>
-                        {p.is_active ? 'Active' : 'Inactive'}
+                      <span className="truncate">{p.profile_name}</span>
+                    </h4>
+                    <div className={`text-[11px] font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <span className="text-indigo-400">{p.source_path}</span>
+                      <span className="mx-1">→</span>
+                      <span className={remoteMeta?.color ?? 'text-slate-400'}>
+                        {p.remote_name}:{p.remote_path}
                       </span>
                     </div>
+                    {remoteMeta && (
+                      <div className={`text-[10px] font-semibold ${remoteMeta.color}`}>
+                        {remoteMeta.label}
+                      </div>
+                    )}
                   </div>
-
-                  <div className={`flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-                    <span className="flex items-center gap-1.5">
-                      <Icons.Calendar className="w-3.5 h-3.5" />
-                      {p.cron_expression || 'No cron'}
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {p.realtime_sync === 1 && (
+                      <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded text-[10px] font-bold flex items-center gap-1">
+                        <Icons.Eye className="w-3 h-3" /> Watch
+                      </span>
+                    )}
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-slate-500/10 text-slate-500 border border-slate-500/20'}`}>
+                      {p.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </div>
-                  <p className={`text-[11px] mb-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                    {humanizeCron(p.cron_expression || '', language || 'en')}
-                  </p>
-
-                  <div className={`flex items-center gap-2 pt-4 border-t relative z-10 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-                    <button
-                      onClick={() => runStream(p)}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition"
-                    >
-                      <Icons.Play className="w-3.5 h-3.5" /> {tr.runNow}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteProfile(p.id)}
-                      className={`px-3 py-2 border rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${isDark ? 'border-slate-700 text-red-400 hover:bg-red-500/10' : 'border-slate-300 text-red-600 hover:bg-red-50'}`}
-                    >
-                      <Icons.Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+
+                <div className={`flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                  <span className="flex items-center gap-1.5">
+                    <Icons.Calendar className="w-3.5 h-3.5" />
+                    {p.cron_expression || 'No cron'}
+                  </span>
+                </div>
+                <p className={`text-[11px] mb-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  {humanizeCron(p.cron_expression || '', language || 'en')}
+                </p>
+
+                <div className={`flex items-center gap-2 pt-4 border-t relative z-10 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                  <button
+                    onClick={() => runStream(p)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition"
+                  >
+                    <Icons.Play className="w-3.5 h-3.5" /> {tr.runNow}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteProfile(p.id)}
+                    className={`px-3 py-2 border rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${isDark ? 'border-slate-700 text-red-400 hover:bg-red-500/10' : 'border-slate-300 text-red-600 hover:bg-red-50'}`}
+                  >
+                    <Icons.Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderRemotes = () => (
+    <div className={card}>
+      <div className="flex items-center justify-between mb-6">
+        <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+          <Icons.Cloud className="w-5 h-5 text-indigo-500" />
+          {tr.remotesTitle}
+        </h3>
+        <button
+          type="button"
+          onClick={fetchRemotes}
+          className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border transition ${
+            isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+          }`}
+        >
+          <Icons.RefreshCw className={`w-3.5 h-3.5 ${remotesLoading ? 'animate-spin' : ''}`} />
+          {tr.refreshRemotes}
+        </button>
       </div>
 
-      {/* Modals */}
-      {renderWizard()}
-      {renderExplorer()}
-      {renderStreamModal()}
+      {remotesConfigPath && (
+        <p className={`text-[10px] font-mono mb-4 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+          {tr.configFile}: {remotesConfigPath}
+        </p>
+      )}
 
-      <WindowModal
-        open={showRcloneConfig}
-        onClose={() => setShowRcloneConfig(false)}
-        title={tr.cloudSetup}
-        maxWidth="2xl"
-        className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden"
-      >
-            <p className={`px-4 pt-3 text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
-            <div className="flex-1 space-y-4 overflow-y-auto p-4">
-              <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                Zero-CLI mode: enter Google OAuth app information and complete consent.
-                The backend will exchange token and update `rclone.conf` automatically.
-              </p>
-              <div className="space-y-3">
-                <input
-                  value={oauthForm.remote_name}
-                  onChange={(e) => setOauthForm({ ...oauthForm, remote_name: e.target.value })}
-                  placeholder={tr.oauthRemoteName}
-                  className={input}
-                />
-                <input
-                  value={oauthForm.client_id}
-                  onChange={(e) => setOauthForm({ ...oauthForm, client_id: e.target.value })}
-                  placeholder={tr.oauthClientId}
-                  className={input}
-                />
-                <input
-                  type="password"
-                  value={oauthForm.client_secret}
-                  onChange={(e) => setOauthForm({ ...oauthForm, client_secret: e.target.value })}
-                  placeholder={tr.oauthClientSecret}
-                  className={input}
-                />
-                <input
-                  value={oauthForm.redirect_uri}
-                  onChange={(e) => setOauthForm({ ...oauthForm, redirect_uri: e.target.value })}
-                  placeholder={tr.oauthRedirectUri}
-                  className={input}
-                />
-                {oauthStatus && (
-                  <p className={`text-xs ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{oauthStatus}</p>
-                )}
-              </div>
-
-              <div className={`rounded-xl border p-4 space-y-3 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
-                <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                  {language === 'vi' ? 'Thiết lập thủ công qua PC' : 'Manual Setup via PC'}
-                </p>
-                <p className={`text-[11px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                  {language === 'vi'
-                    ? 'Nếu callback OAuth báo lỗi, bạn có thể chạy rclone authorize trên PC, sau đó dán token JSON vào đây để tạo remote trực tiếp.'
-                    : 'If OAuth callback fails, run rclone authorize on your PC and paste the token JSON here to create the remote directly.'}
-                </p>
-                <div className={`rounded-lg border px-3 py-2 ${isDark ? 'border-slate-800 bg-slate-900/70' : 'border-slate-200 bg-white'}`}>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                      {language === 'vi' ? 'Mẫu lệnh PC' : 'PC Command'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={copyRcloneAuthorizeCommand}
-                      disabled={copyCmdLoading}
-                      className={`text-[10px] px-2 py-1 rounded-md border font-bold transition ${
-                        isDark
-                          ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
-                          : 'border-slate-300 text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      {copyCmdLoading
-                        ? (language === 'vi' ? 'Đang copy...' : 'Copying...')
-                        : (language === 'vi' ? 'Copy lệnh' : 'Copy command')}
-                    </button>
-                  </div>
-                  <code className={`block text-[11px] font-mono break-all ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
-                    {`rclone authorize "drive" "${oauthForm.client_id.trim() || 'YOUR_CLIENT_ID'}" "${oauthForm.client_secret.trim() || 'YOUR_CLIENT_SECRET'}"`}
-                  </code>
-                </div>
-                <textarea
-                  value={manualTokenJson}
-                  onChange={(e) => setManualTokenJson(e.target.value)}
-                  placeholder='{"access_token":"...","refresh_token":"...","token_type":"Bearer","expiry":"2026-05-06T10:00:00Z"}'
-                  rows={5}
-                  className={`${input} font-mono text-[11px] resize-y`}
-                />
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={applyManualGoogleToken}
-                    disabled={manualTokenLoading}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-sm transition"
-                  >
-                    {manualTokenLoading
-                      ? (language === 'vi' ? 'Đang áp dụng...' : 'Applying...')
-                      : (language === 'vi' ? 'Áp dụng token thủ công' : 'Apply Manual Token')}
-                  </button>
-                </div>
-              </div>
-
-              <div className={`mt-2 rounded-xl border ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
-                <div className={`px-4 py-2.5 border-b flex items-center justify-between ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-                  <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    OAuth Status
-                  </p>
-                  <button
-                    type="button"
-                    onClick={fetchOAuthStatusList}
-                    className={`text-[10px] px-2 py-1 rounded-lg border font-bold transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
-                  >
-                    Refresh
-                  </button>
-                </div>
-                <div className="max-h-56 overflow-auto">
-                  {oauthStatusList.length === 0 ? (
-                    <p className={`px-4 py-3 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>No OAuth remotes connected yet.</p>
-                  ) : (
-                    <table className="w-full text-xs">
-                      <thead className={isDark ? 'text-slate-400' : 'text-slate-600'}>
-                        <tr>
-                          <th className="text-left px-4 py-2">Remote</th>
-                          <th className="text-left px-4 py-2">Connected</th>
-                          <th className="text-left px-4 py-2">Updated At</th>
-                          <th className="text-left px-4 py-2">Expiry</th>
-                        </tr>
-                      </thead>
-                      <tbody className={isDark ? 'text-slate-300' : 'text-slate-700'}>
-                        {oauthStatusList.map((item) => {
-                          const expiryState = getExpiryVisualState(item.expiry);
-                          const expiryClass =
-                            expiryState === 'expired'
-                              ? 'text-red-500 font-semibold'
-                              : expiryState === 'warning'
-                              ? 'text-amber-500 font-semibold'
-                              : '';
-                          const expiryLabel =
-                            expiryState === 'expired'
-                              ? 'Expired'
-                              : expiryState === 'warning'
-                              ? 'Expiring soon'
-                              : '';
-                          return (
-                            <tr key={item.remote_name} className={isDark ? 'border-t border-slate-800' : 'border-t border-slate-200'}>
-                              <td className="px-4 py-2 font-mono">{item.remote_name}</td>
-                              <td className="px-4 py-2">
-                                <span className="text-green-500 font-semibold">Yes</span>
-                              </td>
-                              <td className="px-4 py-2">{formatDateTime(item.updated_at)}</td>
-                              <td className={`px-4 py-2 ${expiryClass}`}>
-                                {formatDateTime(item.expiry)}
-                                {expiryLabel ? <span className="ml-2 text-[10px]">({expiryLabel})</span> : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+      {remotes.length === 0 ? (
+        <div className={`p-10 text-center border-2 border-dashed rounded-xl space-y-3 ${isDark ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-400'}`}>
+          <Icons.CloudOff className="w-12 h-12 mx-auto opacity-50" />
+          <p className="text-sm font-medium">{tr.noRemotes}</p>
+          <p className="text-xs">{tr.noRemotesHint}</p>
+          <button
+            type="button"
+            onClick={() => setTab('cloud_setup')}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition"
+          >
+            {tr.cloudSetup}
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {remotes.map((r) => {
+            const meta = getRemoteMeta(r.type);
+            const profileCount = profiles.filter((p) => p.remote_name === r.name).length;
+            return (
+              <div
+                key={r.name}
+                className={`p-4 rounded-xl border flex items-start gap-3 ${isDark ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}
+              >
+                <Icons.Cloud className={cn('w-5 h-5 shrink-0 mt-0.5', meta.color)} />
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{r.name}</p>
+                  <p className={cn('text-xs font-semibold', meta.color)}>{meta.label}</p>
+                  <p className={`text-[10px] font-mono mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>type: {r.type}</p>
+                  {profileCount > 0 && (
+                    <p className={`text-[10px] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {profileCount} profile{profileCount !== 1 ? 's' : ''}
+                    </p>
                   )}
                 </div>
               </div>
-            </div>
-
-            <div className={modalFooter}>
-              <button
-                onClick={() => setShowRcloneConfig(false)}
-                className={`px-4 py-2 text-xs font-bold rounded-xl border transition ${isDark ? 'border-slate-700 hover:bg-slate-800 text-slate-300' : 'border-slate-300 hover:bg-slate-100 text-slate-600'}`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={startGoogleOAuth}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition"
-              >
-                {oauthLoading ? 'Starting...' : tr.startGoogleOAuth}
-              </button>
-            </div>
-      </WindowModal>
+            );
+          })}
+        </div>
+      )}
     </div>
+  );
+
+  const renderCloudSetup = () => (
+    <div className={card}>
+      <p className={`text-[10px] font-mono mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
+      <div className="space-y-4">
+        <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+          Zero-CLI mode: enter Google OAuth app information and complete consent.
+          The backend will exchange token and update `rclone.conf` automatically.
+        </p>
+        <div className="space-y-3">
+          <input
+            value={oauthForm.remote_name}
+            onChange={(e) => setOauthForm({ ...oauthForm, remote_name: e.target.value })}
+            placeholder={tr.oauthRemoteName}
+            className={input}
+          />
+          <input
+            value={oauthForm.client_id}
+            onChange={(e) => setOauthForm({ ...oauthForm, client_id: e.target.value })}
+            placeholder={tr.oauthClientId}
+            className={input}
+          />
+          <input
+            type="password"
+            value={oauthForm.client_secret}
+            onChange={(e) => setOauthForm({ ...oauthForm, client_secret: e.target.value })}
+            placeholder={tr.oauthClientSecret}
+            className={input}
+          />
+          <input
+            value={oauthForm.redirect_uri}
+            onChange={(e) => setOauthForm({ ...oauthForm, redirect_uri: e.target.value })}
+            placeholder={tr.oauthRedirectUri}
+            className={input}
+          />
+          {oauthStatus && (
+            <p className={`text-xs ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{oauthStatus}</p>
+          )}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={startGoogleOAuth}
+              disabled={oauthLoading}
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-2"
+            >
+              {oauthLoading ? <Icons.Loader2 className="w-4 h-4 animate-spin" /> : <Icons.Link className="w-4 h-4" />}
+              {oauthLoading ? 'Starting...' : tr.startGoogleOAuth}
+            </button>
+          </div>
+        </div>
+
+        <div className={`rounded-xl border p-4 space-y-3 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+            {language === 'vi' ? 'Thiết lập thủ công qua PC' : 'Manual Setup via PC'}
+          </p>
+          <p className={`text-[11px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+            {language === 'vi'
+              ? 'Nếu callback OAuth báo lỗi, bạn có thể chạy rclone authorize trên PC, sau đó dán token JSON vào đây để tạo remote trực tiếp.'
+              : 'If OAuth callback fails, run rclone authorize on your PC and paste the token JSON here to create the remote directly.'}
+          </p>
+          <div className={`rounded-lg border px-3 py-2 ${isDark ? 'border-slate-800 bg-slate-900/70' : 'border-slate-200 bg-white'}`}>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                {language === 'vi' ? 'Mẫu lệnh PC' : 'PC Command'}
+              </span>
+              <button
+                type="button"
+                onClick={copyRcloneAuthorizeCommand}
+                disabled={copyCmdLoading}
+                className={`text-[10px] px-2 py-1 rounded-md border font-bold transition ${
+                  isDark
+                    ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                    : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {copyCmdLoading
+                  ? (language === 'vi' ? 'Đang copy...' : 'Copying...')
+                  : (language === 'vi' ? 'Copy lệnh' : 'Copy command')}
+              </button>
+            </div>
+            <code className={`block text-[11px] font-mono break-all ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+              {`rclone authorize "drive" "${oauthForm.client_id.trim() || 'YOUR_CLIENT_ID'}" "${oauthForm.client_secret.trim() || 'YOUR_CLIENT_SECRET'}"`}
+            </code>
+          </div>
+          <textarea
+            value={manualTokenJson}
+            onChange={(e) => setManualTokenJson(e.target.value)}
+            placeholder='{"access_token":"...","refresh_token":"...","token_type":"Bearer","expiry":"2026-05-06T10:00:00Z"}'
+            rows={5}
+            className={`${input} font-mono text-[11px] resize-y`}
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={applyManualGoogleToken}
+              disabled={manualTokenLoading}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-sm transition"
+            >
+              {manualTokenLoading
+                ? (language === 'vi' ? 'Đang áp dụng...' : 'Applying...')
+                : (language === 'vi' ? 'Áp dụng token thủ công' : 'Apply Manual Token')}
+            </button>
+          </div>
+        </div>
+
+        <div className={`rounded-xl border ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
+          <div className={`px-4 py-2.5 border-b flex items-center justify-between ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+            <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+              OAuth Status
+            </p>
+            <button
+              type="button"
+              onClick={fetchOAuthStatusList}
+              className={`text-[10px] px-2 py-1 rounded-lg border font-bold transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
+            >
+              Refresh
+            </button>
+          </div>
+          <div className="max-h-56 overflow-auto">
+            {oauthStatusList.length === 0 ? (
+              <p className={`px-4 py-3 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>No OAuth remotes connected yet.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className={isDark ? 'text-slate-400' : 'text-slate-600'}>
+                  <tr>
+                    <th className="text-left px-4 py-2">Remote</th>
+                    <th className="text-left px-4 py-2">Connected</th>
+                    <th className="text-left px-4 py-2">Updated At</th>
+                    <th className="text-left px-4 py-2">Expiry</th>
+                  </tr>
+                </thead>
+                <tbody className={isDark ? 'text-slate-300' : 'text-slate-700'}>
+                  {oauthStatusList.map((item) => {
+                    const expiryState = getExpiryVisualState(item.expiry);
+                    const expiryClass =
+                      expiryState === 'expired'
+                        ? 'text-red-500 font-semibold'
+                        : expiryState === 'warning'
+                        ? 'text-amber-500 font-semibold'
+                        : '';
+                    const expiryLabel =
+                      expiryState === 'expired'
+                        ? 'Expired'
+                        : expiryState === 'warning'
+                        ? 'Expiring soon'
+                        : '';
+                    return (
+                      <tr key={item.remote_name} className={isDark ? 'border-t border-slate-800' : 'border-t border-slate-200'}>
+                        <td className="px-4 py-2 font-mono">{item.remote_name}</td>
+                        <td className="px-4 py-2">
+                          <span className="text-green-500 font-semibold">Yes</span>
+                        </td>
+                        <td className="px-4 py-2">{formatDateTime(item.updated_at)}</td>
+                        <td className={`px-4 py-2 ${expiryClass}`}>
+                          {formatDateTime(item.expiry)}
+                          {expiryLabel ? <span className="ml-2 text-[10px]">({expiryLabel})</span> : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ---- Main render ----
+  return (
+    <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
+      <div className={cn('flex h-full min-h-0 select-none', isDark ? 'text-slate-100' : 'text-slate-900')}>
+        <BackupManagerSidebar
+          tab={tab}
+          onTab={setTab}
+          isDark={isDark}
+          labels={sidebarLabels}
+          title={tr.title}
+          subtitle={tr.subtitle}
+          oauthConnected={oauthStatusList.length > 0}
+          counts={{ profiles: profiles.length || undefined, remotes: remotes.length || undefined }}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
+            <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1.5">
+                <h2 className={cn('text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tabMeta[tab].title}</h2>
+                <p className={cn('text-xs max-w-2xl', isDark ? 'text-slate-400' : 'text-slate-500')}>{tabMeta[tab].desc}</p>
+              </div>
+              {tab === 'profiles' && (
+                <button
+                  type="button"
+                  onClick={openCreateWizard}
+                  className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm transition"
+                >
+                  <Icons.Plus className="w-4 h-4" />
+                  {tr.newProfile}
+                </button>
+              )}
+            </header>
+
+            {msg && (
+              <div
+                className={cn(
+                  'mb-4 p-3 border rounded-xl text-xs flex items-center gap-2',
+                  msg.isError
+                    ? 'bg-red-500/10 border-red-500/30 text-red-500'
+                    : 'bg-green-500/10 border-green-500/30 text-green-500',
+                )}
+              >
+                {msg.isError ? <Icons.AlertTriangle className="w-4 h-4 shrink-0" /> : <Icons.CheckCircle className="w-4 h-4 shrink-0" />}
+                <span className="flex-1">{msg.text}</span>
+                <button type="button" onClick={() => setMsg(null)} className="opacity-60 hover:opacity-100">
+                  <Icons.X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {tab === 'profiles' && renderProfiles()}
+            {tab === 'remotes' && renderRemotes()}
+            {tab === 'cloud_setup' && renderCloudSetup()}
+          </main>
+        </div>
+      </div>
+
+      {renderWizard()}
+      {renderExplorer()}
+      {renderStreamModal()}
     </ModuleViewport>
   );
 }
