@@ -16,6 +16,7 @@ interface Props {
   onOpen?: (pkg: Package) => void;
   canOpenModule: (pkg: Package) => boolean;
   loading: boolean;
+  actionsDisabled?: boolean;
 }
 
 export default function CatalogList({
@@ -30,6 +31,7 @@ export default function CatalogList({
   onOpen,
   canOpenModule,
   loading,
+  actionsDisabled: actionsDisabledProp = false,
 }: Props) {
   if (loading && packages.length === 0) {
     return (
@@ -51,7 +53,7 @@ export default function CatalogList({
     );
   }
 
-  const actionsDisabled = installingId !== null || uninstallingId !== null;
+  const actionsDisabled = actionsDisabledProp || installingId !== null || uninstallingId !== null;
 
   return (
     <div className="space-y-2 p-4">

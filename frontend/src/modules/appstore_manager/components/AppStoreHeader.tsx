@@ -8,6 +8,9 @@ interface Props {
   onRefresh: () => void;
   onCommunity: () => void;
   onUploadZip: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onUpdateAll?: () => void;
+  updateCount?: number;
+  batchUpdating?: boolean;
   loading: boolean;
   isDark: boolean;
   tr: AppStoreTranslations;
@@ -20,6 +23,9 @@ export default function AppStoreHeader({
   onRefresh,
   onCommunity,
   onUploadZip,
+  onUpdateAll,
+  updateCount = 0,
+  batchUpdating = false,
   loading,
   isDark,
   tr,
@@ -61,6 +67,26 @@ export default function AppStoreHeader({
           <Icons.RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
           {tr.refresh}
         </button>
+
+        {updateCount > 0 && onUpdateAll && (
+          <button
+            type="button"
+            onClick={onUpdateAll}
+            disabled={batchUpdating || loading}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-white',
+              'bg-amber-500 hover:bg-amber-400',
+              (batchUpdating || loading) && 'opacity-60',
+            )}
+          >
+            {batchUpdating ? (
+              <Icons.Loader className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Icons.Download className="h-3.5 w-3.5" />
+            )}
+            {batchUpdating ? tr.btnUpdatingAll : `${tr.btnUpdateAll} (${updateCount})`}
+          </button>
+        )}
 
         <button
           type="button"
