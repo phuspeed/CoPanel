@@ -110,6 +110,9 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
           loading: 'Loading folders...',
           empty: 'No subfolders',
           parent: 'Parent folder',
+          createFolder: 'New folder',
+          newFolderPlaceholder: 'my-project',
+          createFolderBtn: 'Create',
           path: 'Folder path',
           deployNote: 'Deploy runs in the background via Task Center (pull + up).',
           nameRequired: 'Project name is required.',
@@ -157,6 +160,9 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
           loading: 'Đang tải thư mục...',
           empty: 'Không có thư mục con',
           parent: 'Thư mục cha',
+          createFolder: 'Thư mục mới',
+          newFolderPlaceholder: 'ten-project',
+          createFolderBtn: 'Tạo',
           path: 'Đường dẫn',
           deployNote: 'Triển khai chạy nền qua Task Center (pull + up).',
           nameRequired: 'Vui lòng nhập tên project.',
@@ -434,6 +440,10 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                   loading: tr.loading,
                   empty: tr.empty,
                   parent: tr.parent,
+                  createFolder: tr.createFolder,
+                  newFolderPlaceholder: tr.newFolderPlaceholder,
+                  createFolderBtn: tr.createFolderBtn,
+                  cancel: tr.cancel,
                 }}
               />
             )}

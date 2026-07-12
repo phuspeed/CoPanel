@@ -18,13 +18,29 @@ interface Props {
     loading: string;
     empty: string;
     parent: string;
+    createFolder: string;
+    newFolderPlaceholder: string;
+    createFolderBtn: string;
+    cancel: string;
   };
+}
+
+function joinPath(parent: string, name: string): string {
+  const base = parent.replace(/[\\/]+$/, '') || '/';
+  const clean = name.trim().replace(/[\\/]+/g, '');
+  if (!clean) return base;
+  if (base === '/') return `/${clean}`;
+  return `${base}/${clean}`;
 }
 
 export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }: Props) {
   const [currentPath, setCurrentPath] = useState(selectedPath || '/');
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('copanel_token') : null;
 
@@ -67,6 +83,36 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
     return parts.join('/') || '/';
   })();
 
+  const handleCreateFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setCreating(true);
+    setCreateError(null);
+    const target = joinPath(currentPath, name);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch('/api/file_manager/create-dir', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: target }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create folder');
+      }
+      setCreateOpen(false);
+      setNewFolderName('');
+      await fetchDir(currentPath);
+      setCurrentPath(target);
+      onSelect(target);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div
       className={cn(
@@ -80,18 +126,89 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
           isDark ? 'border-slate-800 text-slate-400' : 'border-slate-100 text-slate-500',
         )}
       >
-        <span className="truncate" title={currentPath}>
+        <span className="truncate flex-1 min-w-0" title={currentPath}>
           {currentPath}
         </span>
-        <button
-          type="button"
-          onClick={() => fetchDir(currentPath)}
-          className={cn('shrink-0 p-1 rounded', isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100')}
-          title={labels.browse}
-        >
-          <Icons.RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setCreateOpen((v) => !v);
+              setCreateError(null);
+              setNewFolderName('');
+            }}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold transition',
+              createOpen
+                ? 'bg-blue-600 text-white'
+                : isDark
+                  ? 'hover:bg-slate-800 text-slate-300'
+                  : 'hover:bg-slate-100 text-slate-600',
+            )}
+            title={labels.createFolder}
+          >
+            <Icons.FolderPlus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{labels.createFolder}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => fetchDir(currentPath)}
+            className={cn('p-1 rounded', isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100')}
+            title={labels.browse}
+          >
+            <Icons.RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
+          </button>
+        </div>
       </div>
+
+      {createOpen && (
+        <div className={cn('px-3 py-2 border-b space-y-2', isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-100 bg-slate-50')}>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateFolder();
+                if (e.key === 'Escape') {
+                  setCreateOpen(false);
+                  setNewFolderName('');
+                  setCreateError(null);
+                }
+              }}
+              placeholder={labels.newFolderPlaceholder}
+              autoFocus
+              className={cn(
+                'flex-1 min-w-0 rounded-lg border px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/30',
+                isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-900',
+              )}
+            />
+            <button
+              type="button"
+              disabled={creating || !newFolderName.trim()}
+              onClick={() => void handleCreateFolder()}
+              className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5"
+            >
+              {creating ? <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" /> : labels.createFolderBtn}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateOpen(false);
+                setNewFolderName('');
+                setCreateError(null);
+              }}
+              className={cn(
+                'shrink-0 rounded-lg border px-2 py-1.5 text-[10px] font-bold',
+                isDark ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500',
+              )}
+            >
+              {labels.cancel}
+            </button>
+          </div>
+          {createError && <p className="text-[10px] text-red-400">{createError}</p>}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto text-xs">
         {currentPath !== '/' && (
