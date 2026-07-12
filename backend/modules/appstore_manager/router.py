@@ -8,7 +8,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 
 from core.auth import require_admin
-from .logic import AppStoreManager, get_copanel_home, derive_pkg_id_from_upload_name
+from .logic import AppStoreManager, get_copanel_home, derive_pkg_id_from_upload_name, BATCH_UPDATE_TASK_ID
 
 router = APIRouter()
 
@@ -53,7 +53,51 @@ def install_package(req: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/extensions")
+@router.post("/install-batch")
+def install_packages_batch(req: dict) -> Dict[str, Any]:
+    """Downloads and installs multiple packages with a single frontend build at the end."""
+    packages = req.get("packages")
+    if not isinstance(packages, list) or not packages:
+        raise HTTPException(status_code=400, detail="packages array is required.")
+
+    normalized = []
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            continue
+        pkg_id = pkg.get("id")
+        download_url = pkg.get("download_url")
+        if not pkg_id or not download_url:
+            continue
+        normalized.append({
+            "id": pkg_id,
+            "download_url": download_url,
+            "version": pkg.get("version", "1.0.0"),
+            "system_packages": pkg.get("system_packages", []),
+            "pip_packages": pkg.get("pip_packages", []),
+            "frontend_install": str(pkg.get("frontend_install") or "rebuild"),
+            "requires_copanel_restart": bool(pkg.get("requires_copanel_restart", False)),
+        })
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Each package requires id and download_url.")
+
+    try:
+        res = AppStoreManager.install_packages_batch(normalized)
+        if res.get("status") == "error":
+            raise HTTPException(status_code=400, detail=res["message"])
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/batch-task-id")
+def get_batch_task_id() -> Dict[str, str]:
+    """Return the build-status task id used for batch updates."""
+    return {"task_id": BATCH_UPDATE_TASK_ID}
+
+
 def list_extensions() -> Dict[str, Any]:
     """List installed AppStore frontend extensions (runtime modules)."""
     try:

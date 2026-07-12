@@ -17,6 +17,7 @@ import CommunityConfigModal from './components/CommunityConfigModal';
 import { getAppStoreTranslations } from './i18n';
 import type { Package, PackageCategory, StoreNav } from './types';
 import {
+  BATCH_UPDATE_TASK_ID,
   categoryForPackage,
   filterPackagesByNav,
   formatApiDetail,
@@ -34,6 +35,7 @@ export default function AppStoreDashboard() {
   const [loading, setLoading] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
+  const [batchUpdating, setBatchUpdating] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [activePkgId, setActivePkgId] = useState<string | null>(null);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
@@ -284,6 +286,98 @@ export default function AppStoreDashboard() {
     }
   };
 
+  const handleUpdateAll = async () => {
+    const updates = catalog.filter((p) => p.update_status === 'update_available' || p.has_update);
+    if (updates.length === 0) return;
+
+    const confirmMsg = tr.updateAllConfirm(updates.length);
+    if (!window.confirm(confirmMsg)) return;
+
+    setBatchUpdating(true);
+    setActivePkgId(BATCH_UPDATE_TASK_ID);
+    setBuildLogs(['Starting batch update — single frontend build at end...']);
+    setBuildStatus('running');
+    setBuildProgress(5);
+    setShowBuildLogs(false);
+    setRestartRequired(false);
+    setRestartReason(null);
+    setMsg(tr.btnUpdatingAll);
+
+    try {
+      const res = await fetch('/api/appstore_manager/install-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          packages: updates.map((pkg) => ({
+            id: pkg.id,
+            download_url: pkg.download_url,
+            version: pkg.version,
+            system_packages: pkg.system_packages,
+            pip_packages: pkg.pip_packages,
+            frontend_install: pkg.frontend_install || 'rebuild',
+            requires_copanel_restart: !!pkg.requires_copanel_restart,
+          })),
+        }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        const interval = setInterval(async () => {
+          try {
+            const r = await fetch(`/api/appstore_manager/build-status/${BATCH_UPDATE_TASK_ID}`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            if (r.ok) {
+              const b = await r.json();
+              if (b.logs) setBuildLogs(b.logs);
+              if (typeof b.progress === 'number') setBuildProgress(b.progress);
+              if (b.status !== 'success' && b.status !== 'failed') return;
+
+              setBuildStatus(b.status);
+              if (b.status === 'success') {
+                fetchCatalog();
+                if (b.restart_scheduled) {
+                  setRestartUi('waiting');
+                  setMsg(tr.restartAutoInProgress(`${updates.length} modules`));
+                  const back = await waitForCopanelHealth();
+                  if (back) {
+                    setMsg(tr.restartScheduled);
+                    window.setTimeout(() => window.location.reload(), 800);
+                  } else {
+                    setRestartUi('idle');
+                    setRestartRequired(true);
+                    setRestartReason(b.restart_reason ?? 'hot_reload_failed');
+                    setMsg(tr.restartTimedOut);
+                  }
+                } else if (b.restart_required) {
+                  setRestartRequired(true);
+                  setRestartReason(b.restart_reason ?? null);
+                  setMsg(tr.installSuccessNeedsRestart(`${updates.length} modules`));
+                } else {
+                  setMsg(tr.updateAllSuccess(updates.length));
+                  setTimeout(() => window.location.reload(), 1200);
+                }
+              } else {
+                setMsg(tr.updateAllError(b.error || 'Build failed.'));
+              }
+              clearInterval(interval);
+              setBatchUpdating(false);
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }, 1500);
+      } else {
+        setMsg(tr.updateAllError(formatApiDetail(d.detail) || 'Request failed.'));
+        setBuildStatus('failed');
+        setBatchUpdating(false);
+      }
+    } catch {
+      setMsg(tr.commError);
+      setBuildStatus('failed');
+      setBatchUpdating(false);
+    }
+  };
+
   const handleUninstall = async (pkg: Package) => {
     setUninstallingId(pkg.id);
     setMsg(`Uninstalling ${pkg.name}...`);
@@ -423,6 +517,9 @@ export default function AppStoreDashboard() {
           onRefresh={fetchCatalog}
           onCommunity={() => setIsConfigOpen(true)}
           onUploadZip={handleUploadZip}
+          onUpdateAll={() => void handleUpdateAll()}
+          updateCount={updateCount}
+          batchUpdating={batchUpdating}
           loading={loading}
           isDark={isDark}
           tr={tr}
@@ -465,6 +562,7 @@ export default function AppStoreDashboard() {
             onOpen={handleOpenModule}
             canOpenModule={canOpenModule}
             loading={loading}
+            actionsDisabled={batchUpdating}
           />
         </div>
       </div>

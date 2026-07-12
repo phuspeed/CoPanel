@@ -1,5 +1,8 @@
 import type { PackageCategory } from './types';
 
+/** Build-status task id for batch update jobs (matches backend BATCH_UPDATE_TASK_ID). */
+export const BATCH_UPDATE_TASK_ID = '__batch_update__';
+
 export function formatApiDetail(detail: unknown): string {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {

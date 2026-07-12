@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 CATALOG_URL = "https://raw.githubusercontent.com/phuspeed/CoPanel-AppStore/main/packages.json"
 CATALOG_API_URL = "https://api.github.com/repos/phuspeed/CoPanel-AppStore/contents/packages.json"
 BUILD_TASKS = {}
+BATCH_UPDATE_TASK_ID = "__batch_update__"
 logger = logging.getLogger(__name__)
 
 # Desktop UI track: keep windowMode / lazy-xterm files when AppStore ZIP overwrites modules.
@@ -175,9 +176,9 @@ def _new_build_task(logs: Optional[List[str]] = None) -> Dict[str, Any]:
     }
 
 
-def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] = None) -> None:
+def _mark_restart_required(task_key: str, reason: str, *, log_line: Optional[str] = None) -> None:
     global BUILD_TASKS
-    task = BUILD_TASKS.get(pkg_id)
+    task = BUILD_TASKS.get(task_key)
     if not task:
         return
     task["restart_required"] = True
@@ -185,10 +186,10 @@ def _mark_restart_required(pkg_id: str, reason: str, *, log_line: Optional[str] 
     task["logs"].append(log_line or _RESTART_LOG_HINT)
 
 
-def _schedule_auto_restart(pkg_id: str, reason: str, *, log_line: Optional[str] = None) -> None:
+def _schedule_auto_restart(task_key: str, reason: str, *, log_line: Optional[str] = None) -> None:
     """Schedule systemd restart; UI polls health — no manual restart button."""
     global BUILD_TASKS
-    task = BUILD_TASKS.get(pkg_id)
+    task = BUILD_TASKS.get(task_key)
     if not task:
         return
     task["restart_scheduled"] = True
@@ -255,38 +256,40 @@ def _finalize_module_install(
     frontend_install_mode: str = "rebuild",
     requires_copanel_restart: bool = False,
     is_new_backend: bool = False,
+    task_key: Optional[str] = None,
 ) -> None:
     """Post-install: extension/rebuild UI hints; hot-reload backend or restart when needed."""
     global BUILD_TASKS
 
+    task_id = task_key or pkg_id
     extension_mode = frontend_install_mode == "extension"
 
     if frontend_updated:
         if extension_mode:
-            BUILD_TASKS[pkg_id]["logs"].append(
-                "✅ Extension installed — refresh the browser to load the module."
+            BUILD_TASKS[task_id]["logs"].append(
+                f"✅ «{pkg_id}» extension installed — refresh the browser to load the module."
             )
         else:
-            BUILD_TASKS[pkg_id]["logs"].append(
-                "✅ Frontend rebuilt — refresh the browser to see UI changes."
+            BUILD_TASKS[task_id]["logs"].append(
+                f"✅ «{pkg_id}» frontend updated — refresh the browser to see UI changes."
             )
     elif backend_updated:
-        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipped frontend install.")
+        BUILD_TASKS[task_id]["logs"].append(f"ℹ️ «{pkg_id}» — no frontend in package, skipped frontend install.")
 
     if not backend_updated:
         if frontend_updated:
             if extension_mode:
-                BUILD_TASKS[pkg_id]["logs"].append(
-                    "ℹ️ Extension-only update — no CoPanel service restart needed."
+                BUILD_TASKS[task_id]["logs"].append(
+                    f"ℹ️ «{pkg_id}» extension-only update — no CoPanel service restart needed."
                 )
             else:
-                BUILD_TASKS[pkg_id]["logs"].append("ℹ️ Frontend-only update; backend unchanged.")
+                BUILD_TASKS[task_id]["logs"].append(f"ℹ️ «{pkg_id}» frontend-only update; backend unchanged.")
         return
 
     # Self-update: installer cannot hot-reload itself safely.
     if pkg_id in COPANEL_RESTART_RECOMMENDED:
         _mark_restart_required(
-            pkg_id,
+            task_id,
             "core_module",
             log_line=f"⚠️ «{pkg_id}» updated — restart copanel to load the new installer.",
         )
@@ -294,19 +297,19 @@ def _finalize_module_install(
 
     if is_new_backend:
         _schedule_auto_restart(
-            pkg_id,
+            task_id,
             "new_backend",
             log_line=f"⚠️ New backend module «{pkg_id}» — scheduling copanel restart to register API routes.",
         )
         return
 
     if not _core_hot_reload_available():
-        BUILD_TASKS[pkg_id]["logs"].append(
+        BUILD_TASKS[task_id]["logs"].append(
             "⚠️ CoPanel core is outdated (missing core/module_reload.py). "
             "Run on the server: cd /opt/copanel && git pull origin main"
         )
         _schedule_auto_restart(
-            pkg_id,
+            task_id,
             "core_outdated",
             log_line="⏳ Scheduling copanel service restart (loads module from disk)…",
         )
@@ -320,32 +323,32 @@ def _finalize_module_install(
         ok, msg = False, str(exc)
 
     if ok and _module_api_routes_active(pkg_id):
-        BUILD_TASKS[pkg_id]["logs"].append(
+        BUILD_TASKS[task_id]["logs"].append(
             f"✅ Backend API reloaded for «{pkg_id}» — no CoPanel restart needed."
         )
         if extension_mode and frontend_updated:
-            BUILD_TASKS[pkg_id]["logs"].append(
+            BUILD_TASKS[task_id]["logs"].append(
                 "ℹ️ Refresh the browser to load the new extension UI."
             )
         return
 
     if ok:
-        BUILD_TASKS[pkg_id]["logs"].append(
+        BUILD_TASKS[task_id]["logs"].append(
             f"⚠️ «{pkg_id}» hot-reload OK but required API routes are missing (stale process?)."
         )
     else:
-        BUILD_TASKS[pkg_id]["logs"].append(f"⚠️ Could not hot-reload backend: {msg}")
+        BUILD_TASKS[task_id]["logs"].append(f"⚠️ Could not hot-reload backend for «{pkg_id}»: {msg}")
 
     if requires_copanel_restart:
         _mark_restart_required(
-            pkg_id,
+            task_id,
             "module_flag",
             log_line=f"⚠️ «{pkg_id}» needs a copanel service restart to take effect.",
         )
         return
 
     _schedule_auto_restart(
-        pkg_id,
+        task_id,
         "hot_reload_failed",
         log_line="⏳ Scheduling copanel service restart — required to register backend API routes.",
     )
@@ -1369,6 +1372,202 @@ def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
     return {"id": dep_id, "ok": False, "message": f"Install command ran but package '{target_pkg}' is still missing."}
 
 
+def _collect_package_deps(
+    pkg_id: str,
+    system_packages: Optional[list],
+    pip_packages: Optional[list],
+) -> tuple:
+    """Return (system_deps, pip_specs) for a catalog package."""
+    deps: List[dict] = []
+    if isinstance(system_packages, list) and system_packages:
+        for sp in system_packages:
+            if isinstance(sp, str):
+                mapping = APT_YUM_MAPPING.get(sp.lower(), {"apt": sp.lower(), "yum": sp.lower()})
+                deps.append({"id": sp, "apt": mapping.get("apt", sp), "yum": mapping.get("yum", sp)})
+    else:
+        dep = DEPENDENCY_PACKAGES.get(pkg_id)
+        if dep:
+            deps.append(dep)
+
+    pip_specs: List[str] = []
+    if isinstance(pip_packages, list) and pip_packages:
+        pip_specs = [p for p in pip_packages if isinstance(p, str) and p.strip()]
+    elif pkg_id in PIP_PACKAGES_BY_MODULE:
+        pip_specs = list(PIP_PACKAGES_BY_MODULE[pkg_id])
+    return deps, pip_specs
+
+
+def _resolve_install_paths(project_root: Path) -> tuple:
+    """Return (dst_backend_parent, frontend_cwd) — dst paths are built per pkg_id."""
+    if Path("/opt/copanel").exists():
+        return Path("/opt/copanel/backend/modules"), Path("/opt/copanel/frontend")
+    return project_root / "backend" / "modules", project_root / "frontend"
+
+
+def _install_package_files(
+    pkg_id: str,
+    download_url: str,
+    version: str,
+    *,
+    system_packages: Optional[list] = None,
+    pip_packages: Optional[list] = None,
+    requires_copanel_restart: bool = False,
+    frontend_install: str = "rebuild",
+    task_key: str,
+    install_deps: bool = True,
+    run_frontend_build: bool = True,
+) -> Dict[str, Any]:
+    """
+    Download, extract, and install one package.
+    When *run_frontend_build* is False (batch mode), frontend sources are copied but npm build is deferred.
+    """
+    global BUILD_TASKS
+    task = BUILD_TASKS[task_key]
+    is_windows = platform.system() == "Windows"
+    result: Dict[str, Any] = {
+        "ok": False,
+        "pkg_id": pkg_id,
+        "version": version,
+        "backend_updated": False,
+        "frontend_updated": False,
+        "install_mode": "none",
+        "is_new_backend": False,
+        "requires_copanel_restart": requires_copanel_restart,
+        "needs_rebuild": False,
+        "build_return_code": 0,
+    }
+
+    if install_deps:
+        deps, pip_specs = _collect_package_deps(pkg_id, system_packages, pip_packages)
+        if deps:
+            task["logs"].append(f"«{pkg_id}» — checking {len(deps)} system dependencies...")
+            dep_results = _install_system_dependencies(deps, is_windows)
+            for r in dep_results:
+                task["logs"].append(r.get("message", "Dependency step completed."))
+            if any(not r.get("ok") for r in dep_results):
+                task["logs"].append(f"❌ «{pkg_id}» — system dependency installation failed.")
+                return result
+
+        if pip_specs:
+            task["logs"].append(f"«{pkg_id}» — installing {len(pip_specs)} Python package(s)...")
+            pip_results = _install_pip_packages(pip_specs, is_windows)
+            for r in pip_results:
+                task["logs"].append(r.get("message", "pip step completed."))
+            if any(not r.get("ok") for r in pip_results):
+                task["logs"].append(f"❌ «{pkg_id}» — Python dependency installation failed.")
+                return result
+
+    project_root = get_copanel_home()
+    tmp_dir = project_root / "tmp"
+    tmp_dir.mkdir(exist_ok=True)
+    tmp_zip = tmp_dir / f"{pkg_id}.zip"
+    extracted_dir = tmp_dir / f"extracted_{pkg_id}"
+    modules_parent, frontend_cwd = _resolve_install_paths(project_root)
+    dst_backend = modules_parent / pkg_id
+    dst_frontend = frontend_cwd / "src" / "modules" / pkg_id
+
+    try:
+        task["logs"].append(f"«{pkg_id}» — downloading from {download_url}...")
+        req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as response, open(tmp_zip, "wb") as out_file:
+            out_file.write(response.read())
+        task["logs"].append(f"«{pkg_id}» — download complete.")
+
+        if extracted_dir.exists():
+            shutil.rmtree(extracted_dir)
+        with zipfile.ZipFile(tmp_zip, "r") as zip_ref:
+            zip_ref.extractall(extracted_dir)
+        task["logs"].append(f"«{pkg_id}» — extraction complete.")
+
+        src_backend = extracted_dir / "backend"
+        src_frontend = extracted_dir / "frontend"
+        src_extension = extracted_dir / "extension"
+        backend_updated = src_backend.exists()
+
+        try:
+            install_mode = _normalize_frontend_install(frontend_install, extracted_dir)
+        except ValueError as ve:
+            task["logs"].append(f"❌ «{pkg_id}» — {ve}")
+            return result
+
+        task["logs"].append(f"«{pkg_id}» — frontend install mode: {install_mode}")
+
+        if src_backend.exists():
+            is_new_backend = not (dst_backend / "router.py").is_file()
+            task["logs"].append(f"«{pkg_id}» — installing backend to {dst_backend}...")
+            shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
+            _purge_module_pycache(dst_backend)
+            task["backend_status"] = "success"
+        else:
+            is_new_backend = False
+            task["backend_status"] = "skipped"
+
+        return_code = 0
+        frontend_updated = False
+
+        if install_mode == "extension":
+            task["logs"].append(f"«{pkg_id}» — installing pre-built extension...")
+            try:
+                _install_frontend_extension(pkg_id, src_extension, frontend_cwd, task["logs"])
+                if src_frontend.exists():
+                    task["logs"].append(f"«{pkg_id}» — keeping frontend/ source for debug.")
+                    _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
+                task["frontend_status"] = "success"
+                frontend_updated = True
+            except Exception as ext_err:
+                task["frontend_status"] = "failed"
+                task["logs"].append(f"❌ «{pkg_id}» — extension install failed: {ext_err}")
+                return result
+        elif install_mode == "rebuild":
+            if src_frontend.exists():
+                task["logs"].append(f"«{pkg_id}» — installing frontend to {dst_frontend}...")
+                _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
+                frontend_updated = True
+                if run_frontend_build:
+                    task["logs"].append(f"«{pkg_id}» — starting frontend build...")
+                    task["frontend_status"] = "building"
+                    return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                    for line in build_lines:
+                        task["logs"].append(line)
+                    task["frontend_status"] = "success" if return_code == 0 else "failed"
+                else:
+                    task["logs"].append(f"«{pkg_id}» — frontend copied (build deferred to batch).")
+                    task["frontend_status"] = "pending"
+                    result["needs_rebuild"] = True
+            else:
+                task["logs"].append(f"«{pkg_id}» — no frontend in package, skipping npm build.")
+                task["frontend_status"] = "skipped"
+        else:
+            task["logs"].append(f"«{pkg_id}» — frontend_install=none, skipping frontend.")
+            task["frontend_status"] = "skipped"
+
+        if return_code != 0:
+            result["build_return_code"] = return_code
+            task["logs"].append(f"❌ «{pkg_id}» — npm run build failed with exit code {return_code}")
+            hint = _build_failure_hint(return_code, task["logs"])
+            if hint:
+                task["logs"].append(hint)
+            return result
+
+        result.update({
+            "ok": True,
+            "backend_updated": backend_updated,
+            "frontend_updated": frontend_updated,
+            "install_mode": install_mode,
+            "is_new_backend": is_new_backend,
+            "build_return_code": return_code,
+        })
+        return result
+    except Exception as exc:
+        task["logs"].append(f"❌ «{pkg_id}» — error: {exc}")
+        return result
+    finally:
+        if tmp_zip.exists():
+            tmp_zip.unlink()
+        if extracted_dir.exists():
+            shutil.rmtree(extracted_dir)
+
+
 class AppStoreManager:
     @staticmethod
     def load_config() -> dict:
@@ -1539,217 +1738,227 @@ class AppStoreManager:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
         BUILD_TASKS[pkg_id] = _new_build_task()
-        
+
         def run_install():
-            is_windows = platform.system() == "Windows"
-            
-            # Auto-install Linux package dependencies in parallel, then enforce
-            # completion before finalizing module install.
-            deps = []
-            if isinstance(system_packages, list) and system_packages:
-                for sp in system_packages:
-                    if isinstance(sp, str):
-                        mapping = APT_YUM_MAPPING.get(sp.lower(), {"apt": sp.lower(), "yum": sp.lower()})
-                        deps.append({"id": sp, "apt": mapping.get("apt", sp), "yum": mapping.get("yum", sp)})
-            else:
-                dep = DEPENDENCY_PACKAGES.get(pkg_id)
-                if dep:
-                    deps.append(dep)
-
-            dep_results: list = []
-            if deps:
-                BUILD_TASKS[pkg_id]["logs"].append(f"Checking {len(deps)} system dependencies...")
-                BUILD_TASKS[pkg_id]["progress"] = 5
-                dep_results = _install_system_dependencies(deps, is_windows)
-                for r in dep_results:
-                    BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "Dependency step completed."))
-                dep_failures = [r for r in dep_results if not r.get("ok")]
-                if dep_failures:
-                    BUILD_TASKS[pkg_id]["status"] = "failed"
-                    BUILD_TASKS[pkg_id]["error"] = "System dependency installation failed."
-                    BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more required system packages failed.")
-                    BUILD_TASKS[pkg_id]["progress"] = 100
-                    return
-
-            pip_specs: List[str] = []
-            if isinstance(pip_packages, list) and pip_packages:
-                pip_specs = [p for p in pip_packages if isinstance(p, str) and p.strip()]
-            elif pkg_id in PIP_PACKAGES_BY_MODULE:
-                pip_specs = list(PIP_PACKAGES_BY_MODULE[pkg_id])
-
-            if pip_specs:
-                BUILD_TASKS[pkg_id]["logs"].append(f"Installing {len(pip_specs)} Python package(s)...")
-                BUILD_TASKS[pkg_id]["progress"] = 8
-                pip_results = _install_pip_packages(pip_specs, is_windows)
-                for r in pip_results:
-                    BUILD_TASKS[pkg_id]["logs"].append(r.get("message", "pip step completed."))
-                pip_failures = [r for r in pip_results if not r.get("ok")]
-                if pip_failures:
-                    BUILD_TASKS[pkg_id]["status"] = "failed"
-                    BUILD_TASKS[pkg_id]["error"] = "Python dependency installation failed."
-                    BUILD_TASKS[pkg_id]["logs"].append("❌ Installation aborted: one or more pip packages failed.")
-                    BUILD_TASKS[pkg_id]["progress"] = 100
-                    return
-
-            project_root = get_copanel_home()
-            tmp_dir = project_root / "tmp"
-            tmp_dir.mkdir(exist_ok=True)
-            
-            tmp_zip = tmp_dir / f"{pkg_id}.zip"
-            extracted_dir = tmp_dir / f"extracted_{pkg_id}"
-            
-            try:
-                BUILD_TASKS[pkg_id]["logs"].append(f"Downloading from {download_url}...")
-                BUILD_TASKS[pkg_id]["progress"] = 10
-                req = urllib.request.Request(
-                    download_url, 
-                    headers={'User-Agent': 'Mozilla/5.0'}
-                )
-                with urllib.request.urlopen(req, timeout=30) as response, open(tmp_zip, 'wb') as out_file:
-                    out_file.write(response.read())
-                
-                BUILD_TASKS[pkg_id]["logs"].append("Download complete.")
-                BUILD_TASKS[pkg_id]["progress"] = 30
-                
-                if extracted_dir.exists():
-                    shutil.rmtree(extracted_dir)
-                
-                with zipfile.ZipFile(tmp_zip, 'r') as zip_ref:
-                    zip_ref.extractall(extracted_dir)
-                    
-                BUILD_TASKS[pkg_id]["logs"].append("Extraction complete.")
-                BUILD_TASKS[pkg_id]["progress"] = 45
-                
-                src_backend = extracted_dir / "backend"
-                src_frontend = extracted_dir / "frontend"
-                src_extension = extracted_dir / "extension"
-                backend_updated = src_backend.exists()
-
+            task = BUILD_TASKS[pkg_id]
+            task["progress"] = 5
+            result = _install_package_files(
+                pkg_id,
+                download_url,
+                version,
+                system_packages=system_packages,
+                pip_packages=pip_packages,
+                requires_copanel_restart=requires_copanel_restart,
+                frontend_install=frontend_install,
+                task_key=pkg_id,
+                install_deps=True,
+                run_frontend_build=True,
+            )
+            if result.get("ok"):
+                task["status"] = "success"
+                task["progress"] = 100
+                task["logs"].append("🎉 Installation completed successfully!")
                 try:
-                    install_mode = _normalize_frontend_install(frontend_install, extracted_dir)
-                except ValueError as ve:
-                    BUILD_TASKS[pkg_id]["status"] = "failed"
-                    BUILD_TASKS[pkg_id]["error"] = str(ve)
-                    BUILD_TASKS[pkg_id]["logs"].append(f"❌ {ve}")
-                    BUILD_TASKS[pkg_id]["progress"] = 100
-                    return
-
-                BUILD_TASKS[pkg_id]["logs"].append(f"Frontend install mode: {install_mode}")
-                
-                if Path("/opt/copanel").exists():
-                    dst_backend = Path(f"/opt/copanel/backend/modules/{pkg_id}")
-                    dst_frontend = Path(f"/opt/copanel/frontend/src/modules/{pkg_id}")
-                    frontend_cwd = Path("/opt/copanel/frontend")
-                else:
-                    dst_backend = project_root / "backend" / "modules" / pkg_id
-                    dst_frontend = project_root / "frontend" / "src" / "modules" / pkg_id
-                    frontend_cwd = project_root / "frontend"
-                
-                if src_backend.exists():
-                    is_new_backend = not (dst_backend / "router.py").is_file()
-                    BUILD_TASKS[pkg_id]["logs"].append(f"Installing backend module to {dst_backend}...")
-                    shutil.copytree(src_backend, dst_backend, dirs_exist_ok=True)
-                    _purge_module_pycache(dst_backend)
-                    BUILD_TASKS[pkg_id]["backend_status"] = "success"
-                else:
-                    is_new_backend = False
-                    BUILD_TASKS[pkg_id]["backend_status"] = "skipped"
-
-                return_code = 0
-                frontend_updated = False
-
-                if install_mode == "extension":
-                    BUILD_TASKS[pkg_id]["logs"].append("Installing pre-built extension (fast path)...")
-                    BUILD_TASKS[pkg_id]["progress"] = 60
-                    try:
-                        _install_frontend_extension(
-                            pkg_id,
-                            src_extension,
-                            frontend_cwd,
-                            BUILD_TASKS[pkg_id]["logs"],
-                        )
-                        if src_frontend.exists():
-                            BUILD_TASKS[pkg_id]["logs"].append(
-                                "ℹ️ Keeping frontend/ source in ZIP for debug — runtime uses extension/."
-                            )
-                            _install_frontend_module_tree(
-                                src_frontend,
-                                dst_frontend,
-                                pkg_id,
-                                BUILD_TASKS[pkg_id]["logs"],
-                            )
-                        BUILD_TASKS[pkg_id]["frontend_status"] = "success"
-                        frontend_updated = True
-                    except Exception as ext_err:
-                        BUILD_TASKS[pkg_id]["frontend_status"] = "failed"
-                        raise ext_err
-                elif install_mode == "rebuild":
-                    if src_frontend.exists():
-                        BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
-                        _install_frontend_module_tree(
-                            src_frontend,
-                            dst_frontend,
-                            pkg_id,
-                            BUILD_TASKS[pkg_id]["logs"],
-                        )
-                        frontend_updated = True
-                        BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore → staging)...")
-                        BUILD_TASKS[pkg_id]["progress"] = 60
-                        BUILD_TASKS[pkg_id]["frontend_status"] = "building"
-                        return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
-                        for line in build_lines:
-                            BUILD_TASKS[pkg_id]["logs"].append(line)
-                        BUILD_TASKS[pkg_id]["frontend_status"] = "success" if return_code == 0 else "failed"
-                    else:
-                        BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend in package — skipping npm build.")
-                        BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
-                else:
-                    BUILD_TASKS[pkg_id]["logs"].append("ℹ️ frontend_install=none — skipping frontend.")
-                    BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
-
-                if return_code == 0:
-                    BUILD_TASKS[pkg_id]["status"] = "success"
-                    BUILD_TASKS[pkg_id]["progress"] = 100
-                    BUILD_TASKS[pkg_id]["logs"].append("🎉 Installation completed successfully!")
-                    try:
-                        save_local_version(pkg_id, version)
-                    except Exception:
-                        pass
-                    _finalize_module_install(
-                        pkg_id,
-                        backend_updated=backend_updated,
-                        frontend_updated=frontend_updated,
-                        frontend_install_mode=install_mode,
-                        requires_copanel_restart=requires_copanel_restart,
-                        is_new_backend=is_new_backend,
+                    save_local_version(pkg_id, version)
+                except Exception:
+                    pass
+                _finalize_module_install(
+                    pkg_id,
+                    backend_updated=result["backend_updated"],
+                    frontend_updated=result["frontend_updated"],
+                    frontend_install_mode=result["install_mode"],
+                    requires_copanel_restart=requires_copanel_restart,
+                    is_new_backend=result["is_new_backend"],
+                )
+            else:
+                task["status"] = "failed"
+                task["error"] = (
+                    f"npm run build failed with exit code {result.get('build_return_code')}"
+                    if result.get("build_return_code")
+                    else "Package installation failed."
+                )
+                if result.get("build_return_code"):
+                    task["logs"].append(f"❌ npm run build failed with exit code {result['build_return_code']}")
+                elif not any("❌" in line for line in task["logs"]):
+                    task["logs"].append("❌ Installation failed.")
+                if any("error TS" in line for line in task["logs"]):
+                    task["logs"].append(
+                        "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
                     )
-                else:
-                    BUILD_TASKS[pkg_id]["status"] = "failed"
-                    BUILD_TASKS[pkg_id]["error"] = f"npm run build failed with exit code {return_code}"
-                    BUILD_TASKS[pkg_id]["logs"].append(f"❌ npm run build failed with exit code {return_code}")
-                    hint = _build_failure_hint(return_code, BUILD_TASKS[pkg_id]["logs"])
-                    if hint:
-                        BUILD_TASKS[pkg_id]["logs"].append(hint)
-                    elif any("error TS" in line for line in BUILD_TASKS[pkg_id]["logs"]):
-                        BUILD_TASKS[pkg_id]["logs"].append(
-                            "💡 If errors reference another module (e.g. download_manager), update that module from AppStore first, then retry."
-                        )
-                    BUILD_TASKS[pkg_id]["progress"] = 100
-                    
-            except Exception as e:
-                BUILD_TASKS[pkg_id]["status"] = "failed"
-                BUILD_TASKS[pkg_id]["error"] = str(e)
-                BUILD_TASKS[pkg_id]["logs"].append(f"❌ Error: {str(e)}")
-                BUILD_TASKS[pkg_id]["progress"] = 100
-            finally:
-                if tmp_zip.exists(): tmp_zip.unlink()
-                if extracted_dir.exists(): shutil.rmtree(extracted_dir)
-                
+                task["progress"] = 100
+
         thread = threading.Thread(target=run_install)
         thread.daemon = True
         thread.start()
-        
+
         return {"status": "success", "message": f"Package {pkg_id} installation started."}
+
+    @staticmethod
+    def install_packages_batch(packages: List[dict]) -> dict:
+        """
+        Update multiple packages in one job: download/extract/install each module,
+        install shared dependencies once, then run a single npm build at the end.
+        """
+        global BUILD_TASKS
+        if not packages:
+            return {"status": "error", "message": "No packages to update."}
+
+        valid = [p for p in packages if isinstance(p, dict) and p.get("id") and p.get("download_url")]
+        if not valid:
+            return {"status": "error", "message": "Each package requires id and download_url."}
+
+        BUILD_TASKS[BATCH_UPDATE_TASK_ID] = _new_build_task(
+            [f"Starting batch update of {len(valid)} module(s) — single frontend build at end..."]
+        )
+
+        def run_batch():
+            task = BUILD_TASKS[BATCH_UPDATE_TASK_ID]
+            is_windows = platform.system() == "Windows"
+            total = len(valid)
+
+            # Batch system + pip dependencies (deduplicated)
+            all_deps: Dict[str, dict] = {}
+            all_pip: List[str] = []
+            pip_seen: set = set()
+            for pkg in valid:
+                deps, pip_specs = _collect_package_deps(
+                    pkg["id"], pkg.get("system_packages"), pkg.get("pip_packages")
+                )
+                for dep in deps:
+                    all_deps[dep["id"]] = dep
+                for spec in pip_specs:
+                    name = spec.split("==")[0].split("[")[0]
+                    if name not in pip_seen:
+                        pip_seen.add(name)
+                        all_pip.append(spec)
+
+            if all_deps:
+                task["logs"].append(f"Installing {len(all_deps)} system dependencies (batch)...")
+                task["progress"] = 3
+                dep_results = _install_system_dependencies(list(all_deps.values()), is_windows)
+                for r in dep_results:
+                    task["logs"].append(r.get("message", "Dependency step completed."))
+                if any(not r.get("ok") for r in dep_results):
+                    task["status"] = "failed"
+                    task["error"] = "System dependency installation failed."
+                    task["logs"].append("❌ Batch update aborted: system package install failed.")
+                    task["progress"] = 100
+                    return
+
+            if all_pip:
+                task["logs"].append(f"Installing {len(all_pip)} Python package(s) (batch)...")
+                task["progress"] = 6
+                pip_results = _install_pip_packages(all_pip, is_windows)
+                for r in pip_results:
+                    task["logs"].append(r.get("message", "pip step completed."))
+                if any(not r.get("ok") for r in pip_results):
+                    task["status"] = "failed"
+                    task["error"] = "Python dependency installation failed."
+                    task["logs"].append("❌ Batch update aborted: pip install failed.")
+                    task["progress"] = 100
+                    return
+
+            project_root = get_copanel_home()
+            _, frontend_cwd = _resolve_install_paths(project_root)
+
+            install_results: List[Dict[str, Any]] = []
+            needs_rebuild = False
+            failed_ids: List[str] = []
+
+            for idx, pkg in enumerate(valid):
+                pkg_id = pkg["id"]
+                task["logs"].append(f"── [{idx + 1}/{total}] {pkg_id} ──")
+                base = 10 + int((idx / max(total, 1)) * 55)
+                task["progress"] = base
+
+                result = _install_package_files(
+                    pkg_id,
+                    pkg["download_url"],
+                    str(pkg.get("version") or "1.0.0"),
+                    system_packages=pkg.get("system_packages"),
+                    pip_packages=pkg.get("pip_packages"),
+                    requires_copanel_restart=bool(pkg.get("requires_copanel_restart", False)),
+                    frontend_install=str(pkg.get("frontend_install") or "rebuild"),
+                    task_key=BATCH_UPDATE_TASK_ID,
+                    install_deps=False,
+                    run_frontend_build=False,
+                )
+                if result.get("ok"):
+                    install_results.append(result)
+                    if result.get("needs_rebuild"):
+                        needs_rebuild = True
+                    task["logs"].append(f"✓ «{pkg_id}» files installed.")
+                else:
+                    failed_ids.append(pkg_id)
+
+            build_return_code = 0
+            if needs_rebuild:
+                task["logs"].append(
+                    f"All {len(install_results)} module(s) copied — running single frontend build..."
+                )
+                task["progress"] = 72
+                task["frontend_status"] = "building"
+                build_return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                for line in build_lines:
+                    task["logs"].append(line)
+                task["frontend_status"] = "success" if build_return_code == 0 else "failed"
+            elif install_results:
+                task["logs"].append("ℹ️ No rebuild needed (extensions only or backend-only updates).")
+                task["frontend_status"] = "skipped"
+
+            if build_return_code != 0:
+                task["status"] = "failed"
+                task["error"] = f"npm run build failed with exit code {build_return_code}"
+                task["logs"].append(f"❌ Batch frontend build failed with exit code {build_return_code}")
+                hint = _build_failure_hint(build_return_code, task["logs"])
+                if hint:
+                    task["logs"].append(hint)
+                task["progress"] = 100
+                return
+
+            for result in install_results:
+                try:
+                    save_local_version(result["pkg_id"], result["version"])
+                except Exception:
+                    pass
+                _finalize_module_install(
+                    result["pkg_id"],
+                    backend_updated=result["backend_updated"],
+                    frontend_updated=result["frontend_updated"],
+                    frontend_install_mode=result["install_mode"],
+                    requires_copanel_restart=result["requires_copanel_restart"],
+                    is_new_backend=result["is_new_backend"],
+                    task_key=BATCH_UPDATE_TASK_ID,
+                )
+
+            if failed_ids and install_results:
+                task["status"] = "failed"
+                task["error"] = f"Partial batch failure: {', '.join(failed_ids)}"
+                task["logs"].append(
+                    f"⚠️ Batch finished with errors — failed: {', '.join(failed_ids)}; "
+                    f"succeeded: {len(install_results)} module(s), 1 frontend build."
+                )
+            elif failed_ids:
+                task["status"] = "failed"
+                task["error"] = "All packages in batch failed."
+                task["logs"].append("❌ Batch update failed — no modules were updated.")
+            else:
+                task["status"] = "success"
+                build_note = " (1 frontend build)" if needs_rebuild else ""
+                task["logs"].append(
+                    f"🎉 Batch update completed — {len(install_results)} module(s) updated{build_note}."
+                )
+            task["progress"] = 100
+
+        thread = threading.Thread(target=run_batch, daemon=True)
+        thread.daemon = True
+        thread.start()
+
+        return {
+            "status": "success",
+            "message": f"Batch update of {len(valid)} package(s) started.",
+            "task_id": BATCH_UPDATE_TASK_ID,
+        }
 
     @staticmethod
     def list_installed_extensions() -> dict:
