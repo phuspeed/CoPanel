@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
+import WebManagerSidebar, { type WebManagerTab } from './components/WebManagerSidebar';
 import * as Icons from 'lucide-react';
 
 interface SiteItem {
@@ -20,7 +21,7 @@ interface SiteItem {
 }
 
 export default function WebManagerDashboard() {
-  const [activeTab, setActiveTab] = useState<'sites' | 'services' | 'databases'>('sites');
+  const [activeTab, setActiveTab] = useState<WebManagerTab>('sites');
 
   // Tab 1: Sites States
   const [sites, setSites] = useState<SiteItem[]>([]);
@@ -818,88 +819,67 @@ export default function WebManagerDashboard() {
     setSaveStatus(null);
   };
 
+  const tabMeta: Record<WebManagerTab, { title: string; desc: string }> = {
+    sites: { title: tr.tabSites, desc: tr.desc },
+    services: { title: tr.wsTitle, desc: tr.wsDesc },
+    databases: { title: tr.dbTitle, desc: tr.dbDesc },
+  };
+
+  const openCreateSiteModal = () => {
+    setDomain('');
+    setRoot('/var/www/');
+    setPort(80);
+    setProxyPort('');
+    setSiteEngine('nginx');
+    setShowCreateModal(true);
+  };
+
   return (
-    <ModuleViewport constrained>
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none">
-      {/* Premium Dashboard Banner */}
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300 ${
-        isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-      }`}>
-        <div className="space-y-2 max-w-2xl text-center md:text-left">
-          <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center justify-center md:justify-start gap-2 ${
-            isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
-          }`}>
-            <Icons.Globe className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            {tr.title}
-            <span className={`text-xs font-mono px-2 py-0.5 rounded border tracking-normal ${isDark ? 'text-blue-300 bg-blue-900/30 border-blue-800' : 'text-blue-600 bg-blue-50 border-blue-200'}`}>
-              v1.1.2
-            </span>
-          </h2>
-          <p className={`text-xs md:text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
-          </p>
-        </div>
+    <ModuleViewport className="flex min-h-0 flex-col">
+      <div className={`flex h-full min-h-0 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+        <WebManagerSidebar
+          activeTab={activeTab}
+          onTab={setActiveTab}
+          isDark={isDark}
+          labels={{
+            sites: tr.tabSites,
+            services: tr.tabServices,
+            databases: tr.tabDbs,
+          }}
+          title={tr.title}
+          subtitle={tr.desc}
+          counts={{
+            sites: sites.length,
+            databases: databases.length,
+          }}
+        />
 
-        {/* Action Buttons: Add Site */}
-        {activeTab === 'sites' && (
-          <button
-            onClick={() => {
-              setDomain('');
-              setRoot('/var/www/');
-              setPort(80);
-              setProxyPort('');
-              setSiteEngine('nginx');
-              setShowCreateModal(true);
-            }}
-            className={`w-full md:w-auto flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-bold text-xs text-white transition-all shadow-md ${
-              isDark ? 'bg-blue-600 hover:bg-blue-500 hover:shadow-blue-500/20' : 'bg-blue-600 hover:bg-blue-500'
-            }`}
-          >
-            <Icons.Plus className="w-4 h-4" />
-            {tr.createBtn}
-          </button>
-        )}
-      </div>
+        <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
+          <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1.5 min-w-0">
+              <h2 className={`text-lg font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+                {tabMeta[activeTab].title}
+              </h2>
+              <p className={`text-xs leading-relaxed max-w-2xl ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                {tabMeta[activeTab].desc}
+              </p>
+            </div>
+            {activeTab === 'sites' && (
+              <button
+                type="button"
+                onClick={openCreateSiteModal}
+                className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs text-white transition-all shadow-sm ${
+                  isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-blue-600 hover:bg-blue-500'
+                }`}
+              >
+                <Icons.Plus className="w-4 h-4" />
+                {tr.createBtn}
+              </button>
+            )}
+          </header>
 
-      {/* Multi-Tab Switcher */}
-      <div className="flex border-b border-slate-200/60 dark:border-slate-800/60 gap-1 overflow-x-auto select-none">
-        <button
-          onClick={() => setActiveTab('sites')}
-          className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'sites'
-              ? 'border-blue-500 text-blue-500 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-        >
-          <Icons.Globe className="w-4 h-4" /> {tr.tabSites}
-        </button>
-        <button
-          onClick={() => setActiveTab('services')}
-          className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'services'
-              ? 'border-blue-500 text-blue-500 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-        >
-          <Icons.Server className="w-4 h-4" /> {tr.tabServices}
-        </button>
-        <button
-          onClick={() => setActiveTab('databases')}
-          className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'databases'
-              ? 'border-blue-500 text-blue-500 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-        >
-          <Icons.Database className="w-4 h-4" /> {tr.tabDbs}
-        </button>
-      </div>
-
-      {/* Tab Content Rendering */}
       {activeTab === 'sites' && (
-        <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-5 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
+        <div className="space-y-5">
           {error && (
             <div className={`p-4 border rounded-xl text-xs flex items-center gap-2 animate-fade-in ${
               isDark ? 'bg-red-950/20 border-red-800/40 text-red-400' : 'bg-red-50 border-red-200 text-red-600'
@@ -1071,16 +1051,7 @@ export default function WebManagerDashboard() {
       )}
 
       {activeTab === 'services' && (
-        <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
-          isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
-        }`}>
-          <div className="space-y-2">
-            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-              <Icons.Server className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.wsTitle}
-            </h3>
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.wsDesc}</p>
-          </div>
-
+        <div className="space-y-6">
           {stackMsg && (
             <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${
               stackMsg.isError
@@ -1262,13 +1233,10 @@ export default function WebManagerDashboard() {
           <div className={`md:col-span-2 border rounded-2xl p-5 space-y-4 transition-all ${
             isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <div>
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.Database className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-                {language === 'vi' ? 'Công cụ Quản lý Database Admin' : 'Database Admin Tools'}
-              </h3>
-              <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
-            </div>
+            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+              <Icons.Database className={`w-5 h-5 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+              {language === 'vi' ? 'Công cụ Quản lý Database Admin' : 'Database Admin Tools'}
+            </h3>
 
             {adminerMsg && (
               <div className={`p-3 border rounded-xl text-xs flex items-center gap-2 ${adminerMsg.isError ? (isDark ? 'bg-red-950/20 border-red-800/40 text-red-400' : 'bg-red-50 border-red-200 text-red-600') : (isDark ? 'bg-green-950/20 border-green-800/40 text-green-400' : 'bg-green-50 border-green-200 text-green-700')}`}>
@@ -1377,17 +1345,13 @@ export default function WebManagerDashboard() {
           </div>
 
           {/* Databases Panel */}
-          <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
+          <div className={`border p-5 md:p-6 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
             isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <div className="space-y-2">
-              <h3 className={`text-sm font-bold flex items-center justify-between ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <span className="flex items-center gap-2">
-                  <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.dbTitle}
-                </span>
-              </h3>
-              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.dbDesc}</p>
-            </div>
+            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+              <Icons.Database className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              {language === 'vi' ? 'Danh sách Database' : 'Databases'}
+            </h3>
 
             <form onSubmit={handleCreateDatabase} className={`border p-5 rounded-xl space-y-4 max-w-xl transition duration-200 ${
               isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
@@ -1485,17 +1449,13 @@ export default function WebManagerDashboard() {
           </div>
 
           {/* Database Users Panel */}
-          <div className={`border p-5 md:p-8 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
+          <div className={`border p-5 md:p-6 rounded-2xl backdrop-blur-sm space-y-6 transition-all duration-300 shadow-sm ${
             isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white border-slate-200'
           }`}>
-            <div className="space-y-2">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
-                <Icons.User className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} /> {tr.usersTitle}
-              </h3>
-              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Create user credentials and link them directly to a specific SQL Database.
-              </p>
-            </div>
+            <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+              <Icons.User className={`w-5 h-5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              {tr.usersTitle}
+            </h3>
 
             <form onSubmit={handleCreateDbUser} className={`border p-5 rounded-xl space-y-4 max-w-xl transition duration-200 ${
               isDark ? 'bg-slate-950/40 border-slate-800/60' : 'bg-slate-50/40 border-slate-100'
@@ -1606,6 +1566,8 @@ export default function WebManagerDashboard() {
           </div>
         </div>
       )}
+        </main>
+      </div>
 
       <WindowModal
         open={!!viewingSite}
@@ -1942,7 +1904,6 @@ export default function WebManagerDashboard() {
             </div>
           </div>
       </WindowModal>
-    </div>
     </ModuleViewport>
   );
 }
