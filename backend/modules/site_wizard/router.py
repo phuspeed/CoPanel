@@ -15,34 +15,66 @@ from core.auth import require_module
 from core.jobs import jobs
 from core import notifications
 
-from .logic import WizardRequest, run_wizard
+from .logic import WizardRequest, get_preflight_status, run_wizard
+from .templates import TEMPLATES, resolve_wizard_defaults
 
 router = APIRouter()
 
 
 class WizardCreateRequest(BaseModel):
     domain: str = Field(..., min_length=3, max_length=253)
-    document_root: str
+    document_root: Optional[str] = None
+    template_id: Optional[str] = "static"
     php_version: Optional[str] = None
     php_modules: List[str] = []
     proxy_port: Optional[int] = None
-    create_database: bool = False
+    create_database: Optional[bool] = None
     database_name: Optional[str] = None
     database_user: Optional[str] = None
     database_password: Optional[str] = None
-    issue_ssl: bool = False
+    issue_ssl: Optional[bool] = None
     ssl_email: Optional[str] = None
+
+
+@router.get("/preflight")
+def preflight(user: Dict[str, Any] = Depends(require_module("site_wizard"))) -> Dict[str, Any]:
+    """Stack readiness for 1-click install UI."""
+    return ok(get_preflight_status())
 
 
 @router.post("/run")
 def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(require_module("site_wizard"))) -> Dict[str, Any]:
     """Kick off a Site Wizard provisioning job."""
-    if req.issue_ssl and not req.ssl_email:
+    resolved = resolve_wizard_defaults(
+        req.template_id,
+        domain=req.domain,
+        document_root=req.document_root or "/var/www",
+        php_version=req.php_version,
+        php_modules=req.php_modules,
+        proxy_port=req.proxy_port,
+        create_database=req.create_database,
+        issue_ssl=req.issue_ssl,
+        ssl_email=req.ssl_email,
+    )
+    if resolved["issue_ssl"] and not resolved["ssl_email"]:
         raise ApiError("VALIDATION_ERROR", "ssl_email is required when issue_ssl is true.", http_status=422)
     if req.create_database and req.database_password and len(req.database_password) < 8:
         raise ApiError("VALIDATION_ERROR", "Database password must be at least 8 characters.", http_status=422)
 
-    payload = WizardRequest(**req.dict())
+    payload = WizardRequest(
+        domain=req.domain.strip().lower(),
+        document_root=resolved["document_root"],
+        template_id=resolved["template_id"],
+        php_version=resolved["php_version"],
+        php_modules=resolved["php_modules"],
+        proxy_port=resolved["proxy_port"],
+        create_database=resolved["create_database"],
+        database_name=req.database_name,
+        database_user=req.database_user,
+        database_password=req.database_password,
+        issue_ssl=resolved["issue_ssl"],
+        ssl_email=resolved["ssl_email"],
+    )
 
     async def _handler(job, request: WizardRequest):
         try:
@@ -59,10 +91,10 @@ def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(requir
 
     job = jobs.submit(
         kind="site_wizard.run",
-        title=f"Provision site {req.domain}",
+        title=f"Provision {resolved['template_id']}: {req.domain}",
         module="site_wizard",
         actor=user.get("username"),
-        payload=req.dict(exclude={"database_password"}),
+        payload={**req.dict(exclude={"database_password"}), **resolved},
         handler=_handler,
         args=(payload,),
     )
@@ -73,10 +105,10 @@ def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(requir
         target=req.domain,
         actor=user.get("username"),
         actor_id=user.get("id"),
-        meta={"job_id": job.id},
+        meta={"job_id": job.id, "template_id": resolved["template_id"]},
     )
     notifications.notify(
-        f"Provisioning site {req.domain}",
+        f"Provisioning {resolved['template_id']} on {req.domain}",
         level="info",
         module="site_wizard",
         actor=user.get("username"),
@@ -87,41 +119,5 @@ def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(requir
 
 @router.get("/templates")
 def list_templates(user: Dict[str, Any] = Depends(require_module("site_wizard"))) -> Dict[str, Any]:
-    """Return suggested templates a user can pick from in the wizard UI."""
-    templates = [
-        {
-            "id": "static",
-            "name": "Static site",
-            "description": "Plain HTML/CSS/JS hosted by Nginx.",
-            "php_version": None,
-            "create_database": False,
-            "issue_ssl": True,
-        },
-        {
-            "id": "wordpress",
-            "name": "WordPress",
-            "description": "PHP-FPM site with a fresh MySQL database.",
-            "php_version": "8.2",
-            "php_modules": ["mysqli", "curl", "mbstring", "gd", "zip", "xml", "intl"],
-            "create_database": True,
-            "issue_ssl": True,
-        },
-        {
-            "id": "laravel",
-            "name": "Laravel app",
-            "description": "PHP-FPM with composer-friendly defaults.",
-            "php_version": "8.3",
-            "php_modules": ["mysqli", "curl", "mbstring", "bcmath", "intl", "zip", "xml"],
-            "create_database": True,
-            "issue_ssl": True,
-        },
-        {
-            "id": "node_proxy",
-            "name": "Node / Reverse proxy",
-            "description": "Front your Node/Bun/Go app on a port via Nginx.",
-            "proxy_port": 3000,
-            "create_database": False,
-            "issue_ssl": True,
-        },
-    ]
-    return ok(templates)
+    """Return suggested templates for 1-click and custom wizard UI."""
+    return ok(TEMPLATES)

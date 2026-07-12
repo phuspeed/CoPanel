@@ -21,11 +21,18 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import string
+import subprocess
+import tarfile
 import time
+import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from .templates import get_template, resolve_wizard_defaults
 
 
 SAFE_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9.-]+$")
@@ -36,6 +43,7 @@ DOMAIN_LABEL_RE = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 class WizardRequest:
     domain: str
     document_root: str
+    template_id: Optional[str] = "static"
     php_version: Optional[str] = None
     php_modules: List[str] = field(default_factory=list)
     proxy_port: Optional[int] = None
@@ -101,22 +109,197 @@ def _safe_call(label: str, fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         return {"status": "error", "message": f"{label} failed: {exc}"}
 
 
-def _http_verify(domain: str, timeout: float = 4.0) -> Dict[str, Any]:
+def _http_verify(domain: str, timeout: float = 4.0, use_https: bool = False) -> Dict[str, Any]:
     """Best-effort HTTP HEAD check to confirm the site responds."""
     try:
         ip = socket.gethostbyname(domain)
     except OSError as exc:
         return {"reachable": False, "error": f"DNS lookup failed: {exc}"}
+    port = 443 if use_https else 80
     try:
-        with socket.create_connection((ip, 80), timeout=timeout) as sock:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
             sock.sendall(
                 f"HEAD / HTTP/1.1\r\nHost: {domain}\r\nConnection: close\r\nUser-Agent: copanel-site-wizard\r\n\r\n".encode()
             )
             data = sock.recv(4096)
             first_line = data.split(b"\r\n", 1)[0].decode("latin-1", errors="ignore")
-            return {"reachable": True, "ip": ip, "status_line": first_line}
+            return {"reachable": True, "ip": ip, "port": port, "status_line": first_line, "https": use_https}
     except OSError as exc:
-        return {"reachable": False, "ip": ip, "error": str(exc)}
+        return {"reachable": False, "ip": ip, "port": port, "error": str(exc), "https": use_https}
+
+
+def get_preflight_status() -> Dict[str, Any]:
+    """Report stack readiness for the wizard UI."""
+    from modules.web_manager import logic as wm_logic
+
+    nginx_ok = bool(shutil.which("nginx") or Path("/usr/sbin/nginx").is_file())
+    mysql_ok = bool(shutil.which("mysql") or shutil.which("mariadb") or Path("/usr/bin/mysql").is_file())
+    php_meta = wm_logic.get_php_versions_meta()
+    php_versions = php_meta.get("versions") or []
+    php_active = php_meta.get("active") or ""
+    fpm_rows = wm_logic.list_php_fpm_versions()
+    return {
+        "nginx": {"installed": nginx_ok, "ready": nginx_ok},
+        "mysql": {"installed": mysql_ok, "ready": mysql_ok},
+        "php": {
+            "installed_versions": php_versions,
+            "active": php_active,
+            "fpm": fpm_rows,
+            "ready": bool(php_versions or fpm_rows),
+        },
+        "ready_for_lemp": nginx_ok and mysql_ok and bool(php_versions or fpm_rows),
+        "ready_for_static": nginx_ok,
+    }
+
+
+def _ensure_stack(job, template_id: Optional[str], php_version: Optional[str]) -> None:
+    """Install missing stack packages when template needs LEMP/LAMP."""
+    tpl = get_template(template_id or "static") or {}
+    preset = tpl.get("stack_preset")
+    if preset not in ("lemp", "lamp"):
+        return
+    from modules.web_manager import logic as wm_logic
+
+    pre = get_preflight_status()
+    if preset == "lemp" and pre.get("ready_for_lemp"):
+        job.log("Stack preflight OK (LEMP)")
+        return
+    ver = (php_version or tpl.get("php_version") or "8.2").strip()
+    job.log(f"Ensuring LEMP stack (PHP {ver})")
+    pm = wm_logic.pkg_manager()
+    if not pre["nginx"]["ready"] and pm == "apt-get":
+        subprocess.run(["sudo", "apt-get", "install", "-y", "nginx"], check=False, capture_output=True, text=True)
+    elif not pre["nginx"]["ready"] and pm == "yum":
+        subprocess.run(["sudo", "yum", "install", "-y", "nginx"], check=False, capture_output=True, text=True)
+    if ver not in (pre["php"].get("installed_versions") or []):
+        res = wm_logic.install_php_version(ver)
+        if res.get("status") == "error":
+            job.log(f"PHP install note: {res.get('message')}")
+    if not pre["mysql"]["ready"] and pm == "apt-get":
+        subprocess.run(["sudo", "apt-get", "install", "-y", "mariadb-server"], check=False, capture_output=True, text=True)
+    elif not pre["mysql"]["ready"] and pm == "yum":
+        subprocess.run(["sudo", "yum", "install", "-y", "mariadb-server"], check=False, capture_output=True, text=True)
+
+
+def _write_static_placeholder(doc_root: str, domain: str) -> None:
+    index = Path(doc_root) / "index.html"
+    if index.is_file():
+        return
+    index.write_text(
+        f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{domain}</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem;color:#1e293b}}
+h1{{color:#2563eb}}.badge{{display:inline-block;background:#dbeafe;color:#1d4ed8;padding:.25rem .75rem;border-radius:999px;font-size:.75rem}}</style>
+</head>
+<body>
+<h1>Site Wizard</h1>
+<p class="badge">Provisioned by CoPanel</p>
+<p>Your site <strong>{domain}</strong> is live. Replace this file with your content.</p>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+
+def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
+    root = Path(doc_root)
+    if (root / "wp-config.php").is_file() or (root / "index.php").is_file():
+        return {"status": "success", "message": "WordPress already present", "skipped": True}
+    tmp_tar = Path("/tmp/copanel-wp-latest.tar.gz")
+    url = "https://wordpress.org/latest.tar.gz"
+    urllib.request.urlretrieve(url, tmp_tar)
+    with tarfile.open(tmp_tar, "r:gz") as tar:
+        tar.extractall(path="/tmp")
+    wp_src = Path("/tmp/wordpress")
+    if not wp_src.is_dir():
+        raise RuntimeError("WordPress archive extraction failed")
+    for item in wp_src.iterdir():
+        dest = root / item.name
+        if dest.exists():
+            continue
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+    wp_config = root / "wp-config.php"
+    sample = root / "wp-config-sample.php"
+    if not wp_config.is_file() and sample.is_file():
+        salt = secrets.token_hex(32)
+        cfg = sample.read_text(encoding="utf-8", errors="ignore")
+        cfg = cfg.replace("database_name_here", database["name"])
+        cfg = cfg.replace("username_here", database["user"])
+        cfg = cfg.replace("password_here", database["password"])
+        cfg = cfg.replace("localhost", database.get("host", "localhost"))
+        if "AUTH_KEY" in cfg:
+            for key in (
+                "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
+                "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
+            ):
+                cfg = re.sub(
+                    rf"define\(\s*'{key}'\s*,\s*'put your unique phrase here'\s*\);",
+                    f"define('{key}', '{secrets.token_hex(32)}');",
+                    cfg,
+                    count=1,
+                )
+        wp_config.write_text(cfg, encoding="utf-8")
+    try:
+        tmp_tar.unlink(missing_ok=True)
+        shutil.rmtree(wp_src, ignore_errors=True)
+    except Exception:
+        pass
+    return {"status": "success", "message": "WordPress core installed", "admin_url": f"https://{domain}/wp-admin/install.php"}
+
+
+def _install_laravel_skeleton(doc_root: str, domain: str) -> Dict[str, Any]:
+    public = Path(doc_root)
+    if public.name != "public":
+        public = public / "public"
+    public.mkdir(parents=True, exist_ok=True)
+    index = public / "index.php"
+    if index.is_file():
+        return {"status": "success", "message": "Laravel public/ already exists", "skipped": True}
+    index.write_text(
+        f"""<?php
+// CoPanel Site Wizard — deploy your Laravel app into {doc_root}
+// Run: composer create-project laravel/laravel . && point nginx root to public/
+http_response_code(200);
+header('Content-Type: text/html; charset=utf-8');
+echo '<h1>Laravel ready on {domain}</h1><p>Upload or clone your Laravel project, then set document root to <code>public/</code>.</p>';
+""",
+        encoding="utf-8",
+    )
+    return {"status": "success", "message": "Laravel public/ skeleton created"}
+
+
+def _deploy_template_app(
+    template_id: str,
+    doc_root: str,
+    domain: str,
+    database: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    tid = template_id or "static"
+    if tid == "static":
+        _write_static_placeholder(doc_root, domain)
+        return {"template": tid, "deployed": "static_placeholder"}
+    if tid == "wordpress":
+        if not database:
+            raise RuntimeError("WordPress requires a database")
+        wp = _install_wordpress_core(doc_root, domain, database)
+        return {"template": tid, "deployed": "wordpress_core", **wp}
+    if tid == "laravel":
+        sk = _install_laravel_skeleton(doc_root, domain)
+        return {"template": tid, "deployed": "laravel_skeleton", **sk}
+    if tid == "node_proxy":
+        readme = Path(doc_root) / "README-COPANEL.txt"
+        if not readme.is_file():
+            readme.write_text(
+                f"Reverse proxy site for {domain}.\nStart your app on the configured proxy port, then reload Nginx.\n",
+                encoding="utf-8",
+            )
+        return {"template": tid, "deployed": "proxy_readme"}
+    return {"template": tid, "deployed": "none"}
 
 
 async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
@@ -125,21 +308,45 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
     from modules.database_manager.logic import DBManager
     from modules.ssl_manager.logic import SSLManager
 
+    defaults = resolve_wizard_defaults(
+        req.template_id,
+        domain=req.domain,
+        document_root=req.document_root,
+        php_version=req.php_version,
+        php_modules=req.php_modules,
+        proxy_port=req.proxy_port,
+        create_database=req.create_database,
+        issue_ssl=req.issue_ssl,
+        ssl_email=req.ssl_email,
+    )
+    template_id = defaults["template_id"]
+    req.document_root = defaults["document_root"]
+    req.php_version = defaults["php_version"]
+    req.php_modules = defaults["php_modules"] or []
+    req.proxy_port = defaults["proxy_port"]
+    req.create_database = defaults["create_database"]
+    req.issue_ssl = defaults["issue_ssl"]
+    req.ssl_email = defaults["ssl_email"]
+
     domain = _validate_domain(req.domain)
     doc_root = _validate_doc_root(req.document_root)
-    job.update(progress=2, message=f"Provisioning {domain}")
-    job.log(f"Validated inputs for {domain}")
+    job.update(progress=2, message=f"Provisioning {domain} ({template_id})")
+    job.log(f"Validated inputs for {domain} [template={template_id}]")
 
     result = WizardResult(domain=domain, document_root=doc_root, site_filename=f"{domain}.conf")
 
-    job.update(progress=10, message="Creating document root")
+    job.update(progress=8, message="Checking web stack")
+    _ensure_stack(job, template_id, req.php_version)
+    job.log("Stack check complete")
+
+    job.update(progress=12, message="Creating document root")
     try:
         os.makedirs(doc_root, exist_ok=True)
     except Exception as exc:
         raise RuntimeError(f"Failed to create document root: {exc}")
     job.log(f"Document root ready: {doc_root}")
 
-    job.update(progress=25, message="Creating Nginx vhost")
+    job.update(progress=28, message="Creating Nginx vhost")
     create_payload = web_router.CreateSiteRequest(
         domain=domain,
         root=doc_root,
@@ -154,7 +361,7 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
     job.log("Nginx vhost created and activated")
 
     if req.create_database:
-        job.update(progress=45, message="Provisioning database")
+        job.update(progress=48, message="Provisioning database")
         db_name = req.database_name or _slug(domain)
         db_user = req.database_user or db_name[:14]
         db_pass = req.database_password or _generate_password()
@@ -177,8 +384,12 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         }
         job.log(f"Database user created: {db_user}")
 
+    job.update(progress=58, message="Deploying application")
+    deploy_info = _deploy_template_app(template_id, doc_root, domain, result.database)
+    job.log(json.dumps(deploy_info))
+
     if req.issue_ssl:
-        job.update(progress=70, message="Issuing SSL certificate")
+        job.update(progress=75, message="Issuing SSL certificate")
         if not req.ssl_email:
             raise RuntimeError("SSL email is required when issue_ssl is true.")
         ssl_res = _safe_call(
@@ -191,22 +402,27 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         job.log("SSL certificate issued and applied")
 
     job.update(progress=92, message="Verifying site availability")
-    result.verification = _http_verify(domain)
+    result.verification = _http_verify(domain, use_https=bool(result.ssl))
     job.log(json.dumps(result.verification))
 
     job.update(progress=100, message="Site provisioned")
+    tpl = get_template(template_id) or {}
     result.summary = (
-        f"Site {domain} provisioned: nginx OK"
+        f"{tpl.get('name', template_id)} on {domain}: nginx OK"
+        + (", app deployed" if deploy_info.get("deployed") else "")
         + (", db OK" if result.database else "")
         + (", ssl OK" if result.ssl else "")
     )
     return {
+        "template_id": template_id,
         "domain": result.domain,
         "document_root": result.document_root,
         "site_filename": result.site_filename,
         "database": result.database,
         "ssl": result.ssl,
         "verification": result.verification,
+        "deployment": deploy_info,
         "summary": result.summary,
+        "site_url": f"https://{domain}" if result.ssl else f"http://{domain}",
         "completed_at": time.time(),
     }
