@@ -227,7 +227,7 @@ Legend:
 | `site_wizard` | **A** | ✓ | Desktop sidebar + 1-click install (WordPress/LEMP) |
 | `firewall` | **A** | ✓ | Wave B config |
 | `web_manager` | **A** | ✓ | `WindowModal` site create + config; PHP Manager embedded tab |
-| `backup_manager` | **A** | ✓ | `WindowModal` wizard/stream/explorer/oauth |
+| `backup_manager` | **A** | ✓ | Desktop sidebar shell (Profiles / Remotes / Cloud Setup); `WindowModal` wizard/stream/explorer |
 | `system_monitor` | **A** | ✓ | `WindowModal` signal + process detail |
 | `terminal` | **A** | ✓ | |
 | `system_monitor` | **A** | ✓ | modals backlog |
