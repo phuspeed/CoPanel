@@ -39,7 +39,7 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
   const [folderInput, setFolderInput] = useState('/home/');
   const [busy, setBusy] = useState(false);
 
-  const t = {
+  const tr = {
     en: {
       title: 'User accounts & roles',
       desc: 'Create, modify, or remove panel user accounts. Set isolated home directories and module permissions.',
