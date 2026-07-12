@@ -18,18 +18,28 @@ html.dark body {
   @apply bg-slate-950 text-slate-50;
 }
 
-/* Light Theme Overrides */
+/* ================================================================== */
+/* Light theme — remap dark-first Tailwind utilities                  */
+/* ================================================================== */
+
 html:not(.dark) {
   --tw-bg-opacity: 1;
   --tw-text-opacity: 1;
   --tw-border-opacity: 1;
+
+  /* Semantic tokens for light-mode text on remapped surfaces */
+  --cp-light-text-primary: #0f172a;
+  --cp-light-text-muted: #475569;
+  --cp-light-text-subtle: #64748b;
+  --cp-light-text-on-accent: #ffffff;
 }
 
 html:not(.dark) body {
   background-color: #f8fafc;
-  color: #0f172a;
+  color: var(--cp-light-text-primary);
 }
 
+/* --- Surfaces: dark slate backgrounds → light neutrals --- */
 html:not(.dark) .bg-slate-950,
 html:not(.dark) .bg-slate-900,
 html:not(.dark) .bg-slate-900\/50,
@@ -50,6 +60,11 @@ html:not(.dark) .bg-slate-700 {
   background-color: #e2e8f0 !important;
 }
 
+html:not(.dark) .bg-slate-900\/20 {
+  background-color: rgba(241, 245, 249, 0.4) !important;
+}
+
+/* --- Borders --- */
 html:not(.dark) .border-slate-800,
 html:not(.dark) .border-slate-800\/60,
 html:not(.dark) .border-slate-800\/80,
@@ -64,22 +79,113 @@ html:not(.dark) .border-slate-600\/30 {
   border-color: #cbd5e1 !important;
 }
 
+/* --- Text: remap light-on-dark slate text utilities globally --- */
 html:not(.dark) .text-slate-50,
 html:not(.dark) .text-slate-100,
 html:not(.dark) .text-slate-200,
-html:not(.dark) .text-slate-300,
-html:not(.dark) .text-white {
-  color: #0f172a !important;
+html:not(.dark) .text-slate-300 {
+  color: var(--cp-light-text-primary) !important;
 }
 
 html:not(.dark) .text-slate-400 {
-  color: #475569 !important;
+  color: var(--cp-light-text-muted) !important;
 }
 
 html:not(.dark) .text-slate-500 {
-  color: #64748b !important;
+  color: var(--cp-light-text-subtle) !important;
 }
 
+/* --- Text on remapped slate surfaces (dark-first components) --- */
+html:not(.dark) :is(
+  .bg-slate-950,
+  .bg-slate-900,
+  .bg-slate-900\/50,
+  .bg-slate-900\/40,
+  .bg-slate-950\/40,
+  .bg-slate-950\/60,
+  .bg-slate-800,
+  .bg-slate-800\/30,
+  .bg-slate-800\/40,
+  .bg-slate-800\/60,
+  .bg-slate-700,
+  .bg-slate-900\/20
+) :is(.text-white, .text-slate-50, .text-slate-100, .text-slate-200, .text-slate-300),
+html:not(.dark) :is(
+  .bg-slate-950,
+  .bg-slate-900,
+  .bg-slate-900\/50,
+  .bg-slate-900\/40,
+  .bg-slate-950\/40,
+  .bg-slate-950\/60,
+  .bg-slate-800,
+  .bg-slate-800\/30,
+  .bg-slate-800\/40,
+  .bg-slate-800\/60,
+  .bg-slate-700,
+  .bg-slate-900\/20
+):is(.text-white, .text-slate-50, .text-slate-100, .text-slate-200, .text-slate-300) {
+  color: var(--cp-light-text-primary) !important;
+}
+
+/* --- Text on colored / accent surfaces — keep high contrast --- */
+html:not(.dark) :is(
+  [class*='bg-blue-'],
+  [class*='bg-indigo-'],
+  [class*='bg-emerald-'],
+  [class*='bg-teal-'],
+  [class*='bg-green-'],
+  [class*='bg-violet-'],
+  [class*='bg-purple-'],
+  [class*='bg-fuchsia-'],
+  [class*='bg-rose-'],
+  [class*='bg-red-'],
+  [class*='bg-amber-'],
+  [class*='bg-orange-'],
+  [class*='bg-yellow-'],
+  [class*='bg-cyan-'],
+  [class*='bg-sky-'],
+  [class*='bg-pink-']
+) :is(.text-white, .text-slate-50, .text-slate-100, .text-slate-200, .text-slate-300),
+html:not(.dark) :is(
+  [class*='bg-blue-'],
+  [class*='bg-indigo-'],
+  [class*='bg-emerald-'],
+  [class*='bg-teal-'],
+  [class*='bg-green-'],
+  [class*='bg-violet-'],
+  [class*='bg-purple-'],
+  [class*='bg-fuchsia-'],
+  [class*='bg-rose-'],
+  [class*='bg-red-'],
+  [class*='bg-amber-'],
+  [class*='bg-orange-'],
+  [class*='bg-yellow-'],
+  [class*='bg-cyan-'],
+  [class*='bg-sky-'],
+  [class*='bg-pink-']
+):is(.text-white, .text-slate-50, .text-slate-100, .text-slate-200, .text-slate-300) {
+  color: var(--cp-light-text-on-accent) !important;
+}
+
+/* Gradient tiles (app launcher, store cards) */
+html:not(.dark) :is(.bg-gradient-to-br, .bg-gradient-to-r, .bg-gradient-to-b, .bg-gradient-to-t, .bg-gradient-to-l) :is(
+  .text-white,
+  .text-slate-50,
+  .text-slate-100,
+  .text-slate-200,
+  .text-slate-300
+),
+html:not(.dark) :is(.bg-gradient-to-br, .bg-gradient-to-r, .bg-gradient-to-b, .bg-gradient-to-t, .bg-gradient-to-l):is(
+  .text-white,
+  .text-slate-50,
+  .text-slate-100,
+  .text-slate-200,
+  .text-slate-300
+) {
+  color: var(--cp-light-text-on-accent) !important;
+}
+
+/* --- Dividers & hovers --- */
 html:not(.dark) .divide-slate-800\/40 > * + * {
   border-color: #f1f5f9 !important;
 }
@@ -92,10 +198,7 @@ html:not(.dark) .hover\:bg-slate-800:hover {
   background-color: #f1f5f9 !important;
 }
 
-html:not(.dark) .bg-slate-900\/20 {
-  background-color: rgba(241, 245, 249, 0.4) !important;
-}
-
+/* --- Gradient text fallbacks --- */
 html:not(.dark) .from-blue-400 {
   color: #2563eb !important;
   background-image: none !important;
