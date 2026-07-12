@@ -125,6 +125,78 @@ class ComposeManager:
     def pull(self, path: str) -> Dict[str, Any]:
         return self._run_compose(path, ["pull"], timeout=300)
 
+    def _compose_output_text(self, result: Dict[str, Any]) -> str:
+        return f"{result.get('output') or ''}{result.get('error') or ''}"
+
+    def _pull_suggests_build(self, pull: Dict[str, Any]) -> bool:
+        text = self._compose_output_text(pull).lower()
+        return any(
+            marker in text
+            for marker in (
+                "must be built from source",
+                "compose build",
+                "pull access denied",
+                "repository does not exist",
+            )
+        )
+
+    def services_need_build(self, path: str) -> bool:
+        try:
+            result = self._run_compose(path, ["config", "--format", "json"])
+            if result.get("status") == "success":
+                try:
+                    import json
+
+                    cfg = json.loads(result.get("output") or "{}")
+                    for svc in (cfg.get("services") or {}).values():
+                        if isinstance(svc, dict) and svc.get("build") is not None:
+                            return True
+                except Exception:
+                    pass
+        except DockerManagerError:
+            pass
+        folder = Path(path)
+        compose_file = self._resolve_compose_file(folder)
+        if compose_file and compose_file.is_file():
+            return "build:" in compose_file.read_text(encoding="utf-8")
+        return False
+
+    def deploy_stack(self, path: str, detach: bool = True) -> Dict[str, Any]:
+        """Pull registry images, build local Dockerfiles when needed, then up -d."""
+        logs: List[str] = []
+        pull = self.pull(path)
+        logs.append(self._compose_output_text(pull))
+        need_build = self.services_need_build(path) or (
+            pull.get("status") != "success" and self._pull_suggests_build(pull)
+        )
+        if need_build:
+            build = self.build(path, no_cache=False)
+            logs.append(self._compose_output_text(build))
+            if build.get("status") != "success":
+                return {
+                    "status": "error",
+                    "error": build.get("error") or "compose build failed",
+                    "output": "\n".join(logs),
+                    "built": False,
+                }
+        elif pull.get("status") not in ("success", None):
+            return {
+                "status": "error",
+                "error": pull.get("error") or "compose pull failed",
+                "output": "\n".join(logs),
+                "built": False,
+            }
+        up = self.up(path, detach=detach)
+        logs.append(self._compose_output_text(up))
+        if up.get("status") != "success":
+            return {
+                "status": "error",
+                "error": up.get("error") or "compose up failed",
+                "output": "\n".join(logs),
+                "built": need_build,
+            }
+        return {"status": "success", "output": "\n".join(logs), "built": need_build}
+
     def build(self, path: str, no_cache: bool = False) -> Dict[str, Any]:
         args = ["build"]
         if no_cache:

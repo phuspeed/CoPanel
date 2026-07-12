@@ -127,6 +127,31 @@ class DockerManagerServiceTests(unittest.TestCase):
             self.assertTrue(result["validated"])
             self.assertIn("redis:7", (stack / "docker-compose.yml").read_text(encoding="utf-8"))
 
+    def test_deploy_stack_builds_when_pull_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            managed = Path(tmp) / "managed"
+            stack = managed / "app"
+            stack.mkdir(parents=True)
+            (stack / "docker-compose.yml").write_text(
+                "services:\n  app:\n    image: boxysvg-app\n    build: .\n",
+                encoding="utf-8",
+            )
+            manager = ComposeManager(managed_root=str(managed))
+            self.assertTrue(manager.services_need_build(str(stack)))
+            pull_fail = {
+                "status": "error",
+                "error": "pull access denied for boxysvg-app, repository does not exist",
+                "output": "must be built from source by running docker compose build",
+            }
+            self.assertTrue(manager._pull_suggests_build(pull_fail))
+
+            with patch.object(manager, "pull", return_value=pull_fail), patch.object(
+                manager, "build", return_value={"status": "success", "output": "built"}
+            ), patch.object(manager, "up", return_value={"status": "success", "output": "started"}):
+                result = manager.deploy_stack(str(stack))
+            self.assertEqual(result["status"], "success")
+            self.assertTrue(result["built"])
+
     @patch("modules.docker_manager.logic.DockerService._run")
     def test_exec_requires_command(self, _mock_run):
         service = DockerService()

@@ -33,6 +33,21 @@ docker_service = DockerService(allow_mock=should_allow_mock())
 compose_manager = ComposeManager()
 
 
+async def _compose_deploy_job_handler(job, path: str) -> Dict[str, Any]:
+    """Pull registry images, build local images when compose requires it, then up -d."""
+    job.update(progress=5, message=f"Preparing deploy for {path}")
+    if compose_manager.services_need_build(path):
+        job.log("Compose file defines local build — will run docker compose build if pull fails.")
+    job.update(progress=15, message="Pull / build / up")
+    result = compose_manager.deploy_stack(path, detach=True)
+    job.log(result.get("output") or result.get("error") or "")
+    if result.get("status") != "success":
+        raise RuntimeError(result.get("error") or "compose deploy failed")
+    suffix = " (built from source)" if result.get("built") else ""
+    job.update(progress=100, message=f"Stack deployed{suffix}")
+    return {"path": path, "output": result.get("output"), "built": result.get("built")}
+
+
 def _raise_http(error: Exception) -> None:
     if isinstance(error, DockerManagerError):
         status_code = 400
@@ -470,27 +485,13 @@ async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any
         )
         job_id: Optional[str] = None
         if req.deploy:
-            async def _handler(job, path: str):
-                job.update(progress=5, message=f"Pulling images for {path}")
-                pull = compose_manager.pull(path)
-                job.log(pull.get("output", "") or pull.get("error", ""))
-                if pull.get("status") not in ("success", None):
-                    raise RuntimeError(pull.get("error") or "compose pull failed")
-                job.update(progress=55, message="Bringing stack up")
-                result = compose_manager.up(path, detach=True)
-                job.log(result.get("output", "") or result.get("error", ""))
-                if result.get("status") != "success":
-                    raise RuntimeError(result.get("error") or "compose up failed")
-                job.update(progress=100, message="Stack deployed")
-                return {"path": path, "output": result.get("output")}
-
             job = job_manager.submit(
                 kind="docker_manager.compose_deploy",
                 title=f"Deploy project {project['project_name']}",
                 module="docker_manager",
                 actor=(user or {}).get("username"),
                 payload={"path": project["path"], "project_name": project["project_name"]},
-                handler=_handler,
+                handler=_compose_deploy_job_handler,
                 args=(project["path"],),
             )
             job_id = job.id
@@ -509,26 +510,7 @@ async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any
 
 @router.post("/compose/deploy")
 async def compose_deploy_job(req: ComposeUpRequest, user: Optional[Dict[str, Any]] = Depends(optional_user)) -> Dict[str, Any]:
-    """Run ``compose pull -> up -d`` as a background job.
-
-    The job streams progress to the Task Center; the route returns
-    immediately with the job id. Useful for stacks where build/pull can
-    take several minutes.
-    """
-
-    async def _handler(job, path: str):
-        job.update(progress=5, message=f"Pulling images for {path}")
-        pull = compose_manager.pull(path)
-        job.log(pull.get("output", "") or pull.get("error", ""))
-        if pull.get("status") not in ("success", None):
-            raise RuntimeError(pull.get("error") or "compose pull failed")
-        job.update(progress=55, message="Bringing stack up")
-        result = compose_manager.up(path, detach=True)
-        job.log(result.get("output", "") or result.get("error", ""))
-        if result.get("status") != "success":
-            raise RuntimeError(result.get("error") or "compose up failed")
-        job.update(progress=100, message="Stack deployed")
-        return {"path": path, "output": result.get("output")}
+    """Run compose deploy (pull, build local images if needed, up -d) as a background job."""
 
     job = job_manager.submit(
         kind="docker_manager.compose_deploy",
@@ -536,7 +518,7 @@ async def compose_deploy_job(req: ComposeUpRequest, user: Optional[Dict[str, Any
         module="docker_manager",
         actor=(user or {}).get("username"),
         payload={"path": req.path},
-        handler=_handler,
+        handler=_compose_deploy_job_handler,
         args=(req.path,),
     )
     record_audit(
