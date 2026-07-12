@@ -18,6 +18,9 @@ from .schemas import (
     ContainerActionRequest,
     ContainerExecRequest,
     ContainerRenameRequest,
+    ProjectCreateRequest,
+    ProjectInspectRequest,
+    ProjectValidateContentRequest,
     StackComposeUpdateRequest,
     StackInitRequest,
 )
@@ -373,6 +376,85 @@ async def read_stack_compose(stack_id: str) -> Dict[str, Any]:
 async def update_stack_compose(stack_id: str, req: StackComposeUpdateRequest) -> Dict[str, Any]:
     try:
         return {"status": "success", "data": compose_manager.update_compose_content(stack_id, req.compose_content)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.get("/projects/defaults")
+async def project_defaults() -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "data": {
+            "managed_root": str(compose_manager.managed_root),
+        },
+    }
+
+
+@router.post("/projects/inspect")
+async def project_inspect(req: ProjectInspectRequest) -> Dict[str, Any]:
+    try:
+        return {"status": "success", "data": compose_manager.inspect_folder(req.path)}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/projects/validate-content")
+async def project_validate_content(req: ProjectValidateContentRequest) -> Dict[str, Any]:
+    try:
+        result = compose_manager.validate_compose_content(req.compose_content)
+        return {"status": "success" if result["status"] == "success" else "error", "data": result}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/projects/create")
+async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any]] = Depends(optional_user)) -> Dict[str, Any]:
+    try:
+        template_payload = req.template.model_dump() if req.template else None
+        project = compose_manager.create_project(
+            project_name=req.project_name,
+            folder_mode=req.folder_mode,
+            source=req.source,
+            folder_path=req.folder_path,
+            compose_content=req.compose_content,
+            template=template_payload,
+            overwrite_compose=req.overwrite_compose,
+        )
+        job_id: Optional[str] = None
+        if req.deploy:
+            async def _handler(job, path: str):
+                job.update(progress=5, message=f"Pulling images for {path}")
+                pull = compose_manager.pull(path)
+                job.log(pull.get("output", "") or pull.get("error", ""))
+                if pull.get("status") not in ("success", None):
+                    raise RuntimeError(pull.get("error") or "compose pull failed")
+                job.update(progress=55, message="Bringing stack up")
+                result = compose_manager.up(path, detach=True)
+                job.log(result.get("output", "") or result.get("error", ""))
+                if result.get("status") != "success":
+                    raise RuntimeError(result.get("error") or "compose up failed")
+                job.update(progress=100, message="Stack deployed")
+                return {"path": path, "output": result.get("output")}
+
+            job = job_manager.submit(
+                kind="docker_manager.compose_deploy",
+                title=f"Deploy project {project['project_name']}",
+                module="docker_manager",
+                actor=(user or {}).get("username"),
+                payload={"path": project["path"], "project_name": project["project_name"]},
+                handler=_handler,
+                args=(project["path"],),
+            )
+            job_id = job.id
+            record_audit(
+                "docker.project_create",
+                module="docker_manager",
+                target=project["path"],
+                actor=(user or {}).get("username"),
+                actor_id=(user or {}).get("id"),
+                meta={"job_id": job.id, "project_name": project["project_name"], "source": req.source},
+            )
+        return {"status": "success", "data": project, "job_id": job_id}
     except Exception as exc:
         _raise_http(exc)
 

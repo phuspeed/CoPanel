@@ -7,6 +7,7 @@ import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
 import DockerManagerSidebar, { type DockerTab } from './components/DockerManagerSidebar';
+import CreateProjectModal from './components/CreateProjectModal';
 import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
@@ -107,6 +108,7 @@ export default function DockerManagerDashboard() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string | null>(null);
   const [composeListOpen, setComposeListOpen] = useState(true);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
 
   const tr = useMemo(
     () =>
@@ -130,6 +132,7 @@ export default function DockerManagerDashboard() {
           tabVolumesTitle: 'Docker Volumes',
           tabVolumesDesc: 'Inspect and remove unused volumes.',
           refresh: 'Refresh',
+          createProject: 'New Project',
           scanTitle: 'Discover Compose Files',
           scanDesc: 'Find local folders with compose stacks ready to be deployed.',
           scanPlaceholder: 'e.g. /home/Docker',
@@ -195,6 +198,7 @@ export default function DockerManagerDashboard() {
           tabVolumesTitle: 'Docker Volume',
           tabVolumesDesc: 'Xem và xóa volume không dùng.',
           refresh: 'Làm mới',
+          createProject: 'Tạo Project',
           scanTitle: 'Tìm tệp Compose',
           scanDesc: 'Tìm thư mục chứa compose stack sẵn sàng triển khai.',
           scanPlaceholder: 'Ví dụ: /home/Docker',
@@ -1019,18 +1023,31 @@ export default function DockerManagerDashboard() {
                 <h2 className={cn('text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tabMeta[tab].title}</h2>
                 <p className={cn('text-xs max-w-2xl', isDark ? 'text-slate-400' : 'text-slate-500')}>{tabMeta[tab].desc}</p>
               </div>
-              <button
-                type="button"
-                onClick={refreshTab}
-                className={cn(
-                  'shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition',
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200',
+              <div className="flex shrink-0 items-center gap-2">
+                {tab === 'containers' && (
+                  <button
+                    type="button"
+                    onClick={() => setCreateProjectOpen(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition"
+                    title={tr.createProject}
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                    {tr.createProject}
+                  </button>
                 )}
-                title={tr.refresh}
-              >
-                <Icons.RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-                {tr.refresh}
-              </button>
+                <button
+                  type="button"
+                  onClick={refreshTab}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition',
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200',
+                  )}
+                  title={tr.refresh}
+                >
+                  <Icons.RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+                  {tr.refresh}
+                </button>
+              </div>
             </header>
 
             {tab === 'containers' && renderContainers()}
@@ -1041,6 +1058,17 @@ export default function DockerManagerDashboard() {
           </main>
         </div>
       </div>
+
+      <CreateProjectModal
+        open={createProjectOpen}
+        onClose={() => setCreateProjectOpen(false)}
+        onCreated={() => {
+          fetchContainers();
+          fetchComposeFiles();
+        }}
+        isDark={isDark}
+        language={language || 'en'}
+      />
 
       <WindowModal
         open={!!viewingLogs}
