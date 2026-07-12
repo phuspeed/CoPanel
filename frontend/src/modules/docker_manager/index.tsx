@@ -1,11 +1,13 @@
 /**
- * Docker Manager - Advanced Dashboard Component
- * Premium container and Compose management dashboard.
+ * Docker Manager — Desktop sidebar shell with containers, compose, images, networks, volumes.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
+import DockerManagerSidebar, { type DockerTab } from './components/DockerManagerSidebar';
+import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
 interface ContainerItem {
@@ -22,12 +24,31 @@ interface ComposeFile {
   full_path: string;
 }
 
+interface ImageItem {
+  repository: string;
+  tag: string;
+  id: string;
+  size: string;
+}
+
+interface NetworkItem {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+}
+
+interface VolumeItem {
+  name: string;
+  driver: string;
+  mountpoint: string;
+}
+
 interface LogLine {
   timestamp: string | null;
   message: string;
 }
 
-/** Docker `logs --timestamps`: ISO8601 prefix then message */
 const DOCKER_LOG_TS_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(.*)$/;
 
 function parseDockerLogs(raw: string): LogLine[] {
@@ -60,100 +81,193 @@ function formatLogTimestamp(iso: string, language: 'en' | 'vi'): string {
 }
 
 export default function DockerManagerDashboard() {
+  const { theme, language } = useAppShellContext();
+  const isDark = theme === 'dark';
+  const windowed = useIsWindowedModule();
+
+  const [tab, setTab] = useState<DockerTab>('containers');
   const [containers, setContainers] = useState<ContainerItem[]>([]);
   const [composeFiles, setComposeFiles] = useState<ComposeFile[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [composeLoading, setComposeLoading] = useState<boolean>(false);
-  const [customPath, setCustomPath] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [networks, setNetworks] = useState<NetworkItem[]>([]);
+  const [volumes, setVolumes] = useState<VolumeItem[]>([]);
 
-  const [runningCount, setRunningCount] = useState<number>(0);
-  const [totalCount, setTotalCount] = useState<number>(0);
+  const [loading, setLoading] = useState(false);
+  const [composeLoading, setComposeLoading] = useState(false);
+  const [imagesLoading, setImagesLoading] = useState(false);
+  const [networksLoading, setNetworksLoading] = useState(false);
+  const [volumesLoading, setVolumesLoading] = useState(false);
+
+  const [customPath, setCustomPath] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [runningCount, setRunningCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   const [viewingLogs, setViewingLogs] = useState<{ id: string; name: string; content: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<string | null>(null);
   const [composeListOpen, setComposeListOpen] = useState(true);
 
-  const { theme, language } = useAppShellContext();
-  const isDark = theme === 'dark';
+  const tr = useMemo(
+    () =>
+      ({
+        en: {
+          title: 'Docker Manager',
+          subtitle: 'Containers, Compose & resources',
+          containers: 'Containers',
+          compose: 'Compose',
+          images: 'Images',
+          networks: 'Networks',
+          volumes: 'Volumes',
+          tabContainersTitle: 'Running Containers',
+          tabContainersDesc: 'Start, stop, restart containers and inspect live logs.',
+          tabComposeTitle: 'Compose Stacks',
+          tabComposeDesc: 'Discover compose files and deploy stacks from local folders.',
+          tabImagesTitle: 'Docker Images',
+          tabImagesDesc: 'View and manage images stored on this host.',
+          tabNetworksTitle: 'Docker Networks',
+          tabNetworksDesc: 'Inspect and remove user-defined networks.',
+          tabVolumesTitle: 'Docker Volumes',
+          tabVolumesDesc: 'Inspect and remove unused volumes.',
+          refresh: 'Refresh',
+          scanTitle: 'Discover Compose Files',
+          scanDesc: 'Find local folders with compose stacks ready to be deployed.',
+          scanPlaceholder: 'e.g. /home/Docker',
+          scanBtn: 'Scan',
+          noCompose: 'No compose files found. Enter a custom path above and click Scan.',
+          buildDeploy: 'Build & Deploy',
+          outputStarting: 'Starting build stack...',
+          outputSuccess: 'Stack deployed successfully.',
+          outputFailed: 'Failed to bring up compose stack.',
+          outputCommFailed: 'Failed to communicate with the backend.',
+          totalContainers: 'Total Containers',
+          activeContainers: 'Active Containers',
+          loadingConts: 'Loading Docker containers...',
+          colName: 'Container Name & ID',
+          colImage: 'Image Name',
+          colStatus: 'Status',
+          colPorts: 'Ports Mapping',
+          colActions: 'Actions',
+          noContainers: 'No Docker containers on this system.',
+          deleteConfirm: 'Are you sure you want to completely remove this container?',
+          removeImageConfirm: 'Remove this image?',
+          removeNetworkConfirm: 'Remove this network?',
+          removeVolumeConfirm: 'Remove this volume?',
+          viewLogsTitle: 'Logs for',
+          logTime: 'Time',
+          logMessage: 'Message',
+          closeBtn: 'Close',
+          loadingLogs: 'Loading logs...',
+          composeColFile: 'Compose file',
+          composeColPath: 'Directory',
+          composeColAction: 'Action',
+          composeHide: 'Hide list',
+          composeShow: 'Show list',
+          composeCollapsed: '{count} compose file(s) — click "Show list" to view.',
+          colRepo: 'Repository',
+          colTag: 'Tag',
+          colSize: 'Size',
+          colDriver: 'Driver',
+          colScope: 'Scope',
+          colMount: 'Mount point',
+          noImages: 'No images found.',
+          noNetworks: 'No networks found.',
+          noVolumes: 'No volumes found.',
+          loading: 'Loading...',
+          remove: 'Remove',
+        },
+        vi: {
+          title: 'Docker Manager',
+          subtitle: 'Container, Compose & tài nguyên',
+          containers: 'Container',
+          compose: 'Compose',
+          images: 'Image',
+          networks: 'Mạng',
+          volumes: 'Volume',
+          tabContainersTitle: 'Container đang chạy',
+          tabContainersDesc: 'Khởi động, dừng, khởi động lại container và xem log trực tiếp.',
+          tabComposeTitle: 'Compose Stack',
+          tabComposeDesc: 'Tìm tệp compose và triển khai stack từ thư mục cục bộ.',
+          tabImagesTitle: 'Docker Image',
+          tabImagesDesc: 'Xem và quản lý image trên máy chủ.',
+          tabNetworksTitle: 'Docker Network',
+          tabNetworksDesc: 'Xem và xóa mạng do người dùng tạo.',
+          tabVolumesTitle: 'Docker Volume',
+          tabVolumesDesc: 'Xem và xóa volume không dùng.',
+          refresh: 'Làm mới',
+          scanTitle: 'Tìm tệp Compose',
+          scanDesc: 'Tìm thư mục chứa compose stack sẵn sàng triển khai.',
+          scanPlaceholder: 'Ví dụ: /home/Docker',
+          scanBtn: 'Quét',
+          noCompose: 'Không tìm thấy tệp compose. Nhập đường dẫn và bấm Quét.',
+          buildDeploy: 'Xây dựng & Triển khai',
+          outputStarting: 'Đang khởi chạy build stack...',
+          outputSuccess: 'Triển khai stack thành công.',
+          outputFailed: 'Không thể khởi chạy compose stack.',
+          outputCommFailed: 'Không thể kết nối với máy chủ.',
+          totalContainers: 'Tổng Container',
+          activeContainers: 'Container đang chạy',
+          loadingConts: 'Đang tải danh sách container...',
+          colName: 'Tên & ID Container',
+          colImage: 'Tên Image',
+          colStatus: 'Trạng thái',
+          colPorts: 'Bản đồ cổng',
+          colActions: 'Hành động',
+          noContainers: 'Không có container Docker trên hệ thống.',
+          deleteConfirm: 'Bạn có chắc muốn xóa hoàn toàn container này?',
+          removeImageConfirm: 'Xóa image này?',
+          removeNetworkConfirm: 'Xóa mạng này?',
+          removeVolumeConfirm: 'Xóa volume này?',
+          viewLogsTitle: 'Logs cho',
+          logTime: 'Thời gian',
+          logMessage: 'Nội dung',
+          closeBtn: 'Đóng',
+          loadingLogs: 'Đang tải log...',
+          composeColFile: 'Tệp Compose',
+          composeColPath: 'Thư mục',
+          composeColAction: 'Hành động',
+          composeHide: 'Ẩn danh sách',
+          composeShow: 'Hiện danh sách',
+          composeCollapsed: '{count} tệp compose — bấm "Hiện danh sách" để xem.',
+          colRepo: 'Repository',
+          colTag: 'Tag',
+          colSize: 'Kích thước',
+          colDriver: 'Driver',
+          colScope: 'Phạm vi',
+          colMount: 'Điểm mount',
+          noImages: 'Không tìm thấy image.',
+          noNetworks: 'Không tìm thấy mạng.',
+          noVolumes: 'Không tìm thấy volume.',
+          loading: 'Đang tải...',
+          remove: 'Xóa',
+        },
+      })[language || 'en'],
+    [language],
+  );
 
-  const t = {
-    en: {
-      title: 'Docker Control Center',
-      desc: 'Control running containers, build stacks, and inspect live service logs directly from the web panel.',
-      scanTitle: 'Discover Compose Files',
-      scanDesc: 'Find local folders with compose stacks ready to be deployed.',
-      scanPlaceholder: 'e.g. /home/Docker',
-      scanBtn: 'Scan',
-      noCompose: 'No ready compose file folders discovered yet. Enter a custom path above and click Scan!',
-      buildDeploy: 'Build & Deploy',
-      outputStarting: 'Starting build stack...',
-      outputSuccess: 'Stack deployed successfully.',
-      outputFailed: 'Failed to bring up compose stack.',
-      outputCommFailed: 'Failed to communicate with the backend.',
-      totalContainers: 'Total Containers',
-      activeContainers: 'Active Containers',
-      loadingConts: 'Loading Docker containers...',
-      colName: 'Container Name & ID',
-      colImage: 'Image Name',
-      colStatus: 'Status',
-      colPorts: 'Ports Mapping',
-      colActions: 'Actions',
-      noContainers: 'No Docker containers active on this system.',
-      deleteConfirm: 'Are you sure you want to completely remove this container?',
-      viewLogsTitle: 'Logs for',
-      logTime: 'Time',
-      logMessage: 'Message',
-      closeBtn: 'Close',
-      loadingLogs: 'Loading logs...',
-      composeColFile: 'Compose file',
-      composeColPath: 'Directory',
-      composeColAction: 'Action',
-      composeHide: 'Hide list',
-      composeShow: 'Show list',
-      composeCollapsed: '{count} compose file(s) — click "Show list" to view.',
-    },
-    vi: {
-      title: 'Trung tâm Docker',
-      desc: 'Quản lý các container đang chạy, triển khai các ngăn xếp Compose và theo dõi log hệ thống trực tiếp từ bảng điều khiển.',
-      scanTitle: 'Tìm kiếm tệp Compose',
-      scanDesc: 'Tìm các thư mục cục bộ chứa compose stack sẵn sàng để triển khai.',
-      scanPlaceholder: 'Ví dụ: /home/Docker',
-      scanBtn: 'Quét',
-      noCompose: 'Không tìm thấy tệp compose nào. Vui lòng nhập đường dẫn tùy chỉnh và bấm Quét!',
-      buildDeploy: 'Xây dựng & Triển khai',
-      outputStarting: 'Đang khởi chạy build stack...',
-      outputSuccess: 'Triển khai stack thành công.',
-      outputFailed: 'Không thể khởi chạy compose stack.',
-      outputCommFailed: 'Không thể kết nối với máy chủ.',
-      totalContainers: 'Tổng số Container',
-      activeContainers: 'Container Đang Chạy',
-      loadingConts: 'Đang tải danh sách container...',
-      colName: 'Tên & ID Container',
-      colImage: 'Tên Image',
-      colStatus: 'Trạng thái',
-      colPorts: 'Bản đồ cổng (Ports)',
-      colActions: 'Hành động',
-      noContainers: 'Không tìm thấy container Docker nào đang chạy trên hệ thống.',
-      deleteConfirm: 'Bạn có chắc chắn muốn xóa hoàn toàn container này không?',
-      viewLogsTitle: 'Logs cho',
-      logTime: 'Thời gian',
-      logMessage: 'Nội dung',
-      closeBtn: 'Đóng',
-      loadingLogs: 'Đang tải log...',
-      composeColFile: 'Tệp Compose',
-      composeColPath: 'Thư mục',
-      composeColAction: 'Hành động',
-      composeHide: 'Ẩn danh sách',
-      composeShow: 'Hiện danh sách',
-      composeCollapsed: '{count} tệp compose — bấm "Hiện danh sách" để xem.',
-    }
-  };
+  const labels = useMemo(
+    () => ({
+      containers: tr.containers,
+      compose: tr.compose,
+      images: tr.images,
+      networks: tr.networks,
+      volumes: tr.volumes,
+    }),
+    [tr],
+  );
 
-  const tr = t[language || 'en'];
+  const tabMeta = useMemo(
+    () => ({
+      containers: { title: tr.tabContainersTitle, desc: tr.tabContainersDesc },
+      compose: { title: tr.tabComposeTitle, desc: tr.tabComposeDesc },
+      images: { title: tr.tabImagesTitle, desc: tr.tabImagesDesc },
+      networks: { title: tr.tabNetworksTitle, desc: tr.tabNetworksDesc },
+      volumes: { title: tr.tabVolumesTitle, desc: tr.tabVolumesDesc },
+    }),
+    [tr],
+  );
 
-  const fetchContainers = async () => {
+  const fetchContainers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -165,7 +279,6 @@ export default function DockerManagerDashboard() {
       const data = await response.json();
       const list = data.containers || [];
       setContainers(list);
-
       const running = list.filter((c: ContainerItem) => c.status.toLowerCase().includes('running')).length;
       setRunningCount(running);
       setTotalCount(list.length);
@@ -174,12 +287,14 @@ export default function DockerManagerDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchComposeFiles = async (p?: string) => {
+  const fetchComposeFiles = useCallback(async (p?: string) => {
     setComposeLoading(true);
     try {
-      const url = p ? `/api/docker_manager/scan-compose?custom_path=${encodeURIComponent(p)}` : '/api/docker_manager/scan-compose';
+      const url = p
+        ? `/api/docker_manager/scan-compose?custom_path=${encodeURIComponent(p)}`
+        : '/api/docker_manager/scan-compose';
       const r = await fetch(url);
       if (r.ok) {
         const d = await r.json();
@@ -187,16 +302,75 @@ export default function DockerManagerDashboard() {
         setComposeListOpen(true);
       }
     } catch {
-      // Ignore scanning fetch failures
+      // ignore
     } finally {
       setComposeLoading(false);
     }
-  };
+  }, []);
+
+  const fetchImages = useCallback(async () => {
+    setImagesLoading(true);
+    try {
+      const r = await fetch('/api/docker_manager/images');
+      if (r.ok) {
+        const d = await r.json();
+        setImages(d.data || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setImagesLoading(false);
+    }
+  }, []);
+
+  const fetchNetworks = useCallback(async () => {
+    setNetworksLoading(true);
+    try {
+      const r = await fetch('/api/docker_manager/networks');
+      if (r.ok) {
+        const d = await r.json();
+        setNetworks(d.data || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setNetworksLoading(false);
+    }
+  }, []);
+
+  const fetchVolumes = useCallback(async () => {
+    setVolumesLoading(true);
+    try {
+      const r = await fetch('/api/docker_manager/volumes');
+      if (r.ok) {
+        const d = await r.json();
+        setVolumes(d.data || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setVolumesLoading(false);
+    }
+  }, []);
+
+  const refreshTab = useCallback(() => {
+    if (tab === 'containers') fetchContainers();
+    else if (tab === 'compose') fetchComposeFiles(customPath || undefined);
+    else if (tab === 'images') fetchImages();
+    else if (tab === 'networks') fetchNetworks();
+    else if (tab === 'volumes') fetchVolumes();
+  }, [tab, customPath, fetchContainers, fetchComposeFiles, fetchImages, fetchNetworks, fetchVolumes]);
 
   useEffect(() => {
     fetchContainers();
     fetchComposeFiles();
-  }, [language]);
+  }, [language, fetchContainers, fetchComposeFiles]);
+
+  useEffect(() => {
+    if (tab === 'images' && images.length === 0) fetchImages();
+    if (tab === 'networks' && networks.length === 0) fetchNetworks();
+    if (tab === 'volumes' && volumes.length === 0) fetchVolumes();
+  }, [tab, images.length, networks.length, volumes.length, fetchImages, fetchNetworks, fetchVolumes]);
 
   const handleStartContainer = async (container_id: string) => {
     try {
@@ -301,7 +475,7 @@ export default function DockerManagerDashboard() {
       const res = await fetch('/api/docker_manager/up-compose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
+        body: JSON.stringify({ path }),
       });
       const data = await res.json();
       if (data.status === 'success') {
@@ -315,173 +489,112 @@ export default function DockerManagerDashboard() {
     }
   };
 
-  return (
-    <ModuleViewport constrained>
-    <div className={`p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-      <div className={`relative overflow-hidden border p-6 md:p-8 rounded-2xl backdrop-blur-md shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-6 transition-all duration-300 ${
-        isDark ? 'bg-gradient-to-br from-blue-600/10 via-slate-900 to-slate-950 border-slate-800' : 'bg-gradient-to-br from-blue-50/40 via-white to-slate-50 border-slate-200'
-      }`}>
-        <div className="space-y-2">
-          <h1 className={`text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2 ${
-            isDark ? 'bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-800 bg-clip-text text-transparent'
-          }`}>
-            <Icons.Box className={`w-7 h-7 md:w-8 md:h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            {tr.title}
-          </h1>
-          <p className={`text-xs md:text-sm leading-relaxed max-w-xl ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            {tr.desc}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => { fetchContainers(); fetchComposeFiles(); }}
-            className={`flex items-center p-3 rounded-xl transition border shadow-lg ${
-              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200'
-            }`}
-            title="Refresh"
+  const handleRemoveImage = async (imageRef: string) => {
+    if (!confirm(tr.removeImageConfirm)) return;
+    try {
+      const res = await fetch(`/api/docker_manager/images/remove?image_ref=${encodeURIComponent(imageRef)}`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to remove image');
+      fetchImages();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error');
+    }
+  };
+
+  const handleRemoveNetwork = async (name: string) => {
+    if (!confirm(tr.removeNetworkConfirm)) return;
+    try {
+      const res = await fetch(`/api/docker_manager/networks/remove?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to remove network');
+      fetchNetworks();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error');
+    }
+  };
+
+  const handleRemoveVolume = async (name: string) => {
+    if (!confirm(tr.removeVolumeConfirm)) return;
+    try {
+      const res = await fetch(`/api/docker_manager/volumes/remove?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to remove volume');
+      fetchVolumes();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error');
+    }
+  };
+
+  const isRefreshing =
+    (tab === 'containers' && loading) ||
+    (tab === 'compose' && composeLoading) ||
+    (tab === 'images' && imagesLoading) ||
+    (tab === 'networks' && networksLoading) ||
+    (tab === 'volumes' && volumesLoading);
+
+  const card = cn(
+    'border rounded-2xl overflow-hidden backdrop-blur-md transition-all',
+    isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm',
+  );
+
+  const renderContainers = () => (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div
+          className={cn(
+            'border rounded-2xl p-5 flex items-center justify-between',
+            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200',
+          )}
+        >
+          <div>
+            <p className={cn('text-[10px] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
+              {tr.totalContainers}
+            </p>
+            <p className={cn('text-3xl font-extrabold', isDark ? 'text-white' : 'text-slate-800')}>{totalCount}</p>
+          </div>
+          <div
+            className={cn(
+              'w-12 h-12 border rounded-xl flex items-center justify-center',
+              isDark ? 'bg-blue-900/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600',
+            )}
           >
-            <Icons.RefreshCw className={`w-5 h-5 ${loading || composeLoading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
-
-      <div className={`border p-6 rounded-2xl backdrop-blur-md space-y-5 transition-all ${
-        isDark ? 'bg-gradient-to-r from-indigo-950/20 via-slate-900/40 to-slate-950/20 border-indigo-900/40' : 'bg-gradient-to-r from-indigo-50/40 via-slate-50/30 to-white border-slate-200 shadow-sm'
-      }`}>
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="space-y-1 min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-indigo-200' : 'text-indigo-700'}`}>
-                <Icons.Zap className="w-4 h-4 text-indigo-400 animate-pulse" />
-                {tr.scanTitle} ({composeFiles.length})
-              </h3>
-              {composeFiles.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setComposeListOpen((open) => !open)}
-                  className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all ${
-                    isDark
-                      ? 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-indigo-500/40'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300'
-                  }`}
-                  title={composeListOpen ? tr.composeHide : tr.composeShow}
-                >
-                  {composeListOpen ? <Icons.ChevronUp className="w-3.5 h-3.5" /> : <Icons.ChevronDown className="w-3.5 h-3.5" />}
-                  {composeListOpen ? tr.composeHide : tr.composeShow}
-                </button>
-              )}
-            </div>
-            <p className={`text-[11px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.scanDesc}</p>
-          </div>
-          <div className={`flex items-center gap-2 p-1.5 rounded-xl border w-full md:w-auto ${isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <input
-              type="text"
-              value={customPath}
-              onChange={(e) => setCustomPath(e.target.value)}
-              placeholder={tr.scanPlaceholder}
-              className={`bg-transparent text-xs focus:outline-none px-2 w-full md:w-56 font-mono ${isDark ? 'text-slate-200' : 'text-slate-800'}`}
-            />
-            <button
-              onClick={() => fetchComposeFiles(customPath)}
-              disabled={composeLoading}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[11px] px-3.5 py-1.5 rounded-xl transition-all shadow-lg flex items-center gap-1 shrink-0"
-            >
-              <Icons.Search className="w-3.5 h-3.5" />
-              {tr.scanBtn}
-            </button>
+            <Icons.Layers className="w-6 h-6" />
           </div>
         </div>
-
-        {composeFiles.length > 0 ? (
-          composeListOpen ? (
-            <div className={`rounded-xl border overflow-hidden ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-white shadow-sm'}`}>
-              <div className="max-h-56 overflow-y-auto overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className={`sticky top-0 z-10 text-[10px] uppercase tracking-wider font-bold ${isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
-                    <tr className={`border-b ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
-                      <th className="px-3 py-2 w-36">{tr.composeColFile}</th>
-                      <th className="px-3 py-2">{tr.composeColPath}</th>
-                      <th className="px-3 py-2 text-right w-40">{tr.composeColAction}</th>
-                    </tr>
-                  </thead>
-                  <tbody className={`divide-y text-xs ${isDark ? 'divide-slate-800/60' : 'divide-slate-100'}`}>
-                    {composeFiles.map((file, idx) => (
-                      <tr
-                        key={`${file.path}-${idx}`}
-                        className={`transition-colors ${isDark ? 'hover:bg-slate-900/50' : 'hover:bg-slate-50/80'}`}
-                      >
-                        <td className="px-3 py-2 align-middle">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Icons.FileCode className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
-                            <span className={`font-bold truncate ${isDark ? 'text-slate-200' : 'text-slate-800'}`} title={file.filename}>
-                              {file.filename}
-                            </span>
-                          </div>
-                        </td>
-                        <td className={`px-3 py-2 align-middle font-mono text-[11px] break-all ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                          {file.path}
-                        </td>
-                        <td className="px-3 py-2 align-middle text-right">
-                          <button
-                            onClick={() => handleBuildCompose(file.path)}
-                            className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg transition-all shadow-md whitespace-nowrap"
-                          >
-                            <Icons.Play className="w-3 h-3" />
-                            {tr.buildDeploy}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <div className={`text-[11px] border px-3 py-2 rounded-lg ${isDark ? 'text-slate-500 border-slate-800/60' : 'text-slate-400 border-slate-200'}`}>
-              {tr.composeCollapsed.replace('{count}', String(composeFiles.length))}
-            </div>
-          )
-        ) : (
-          <div className={`text-xs border p-4 rounded-xl ${isDark ? 'text-slate-500 border-slate-800/40' : 'text-slate-400 border-slate-200'}`}>
-            {tr.noCompose}
-          </div>
-        )}
-
-        {actionOutput && (
-          <div className={`p-3.5 border rounded-xl font-mono text-xs max-h-40 overflow-auto whitespace-pre-wrap mt-2 flex items-center justify-between ${
-            isDark ? 'bg-slate-950 border-indigo-900/30 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-600'
-          }`}>
-            <span>{actionOutput}</span>
-            <button onClick={() => setActionOutput(null)} className="text-slate-500 hover:text-slate-300 font-bold px-1 select-none">✕</button>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 select-none">
-        <div className={`border rounded-2xl p-6 flex items-center justify-between backdrop-blur-sm transition-all duration-300 ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
+        <div
+          className={cn(
+            'border rounded-2xl p-5 flex items-center justify-between',
+            isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200',
+          )}
+        >
           <div>
-            <p className={`text-xs mb-2 uppercase font-bold tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.totalContainers}</p>
-            <p className={`text-4xl font-extrabold ${isDark ? 'text-white' : 'text-slate-800'}`}>{totalCount}</p>
+            <p className={cn('text-[10px] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
+              {tr.activeContainers}
+            </p>
+            <p className={cn('text-3xl font-extrabold', isDark ? 'text-white' : 'text-slate-800')}>{runningCount}</p>
           </div>
-          <div className={`w-16 h-16 border rounded-2xl flex items-center justify-center transition ${isDark ? 'bg-blue-900/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-            <Icons.Layers className="w-8 h-8" />
-          </div>
-        </div>
-
-        <div className={`border rounded-2xl p-6 flex items-center justify-between backdrop-blur-sm transition-all duration-300 ${isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
-          <div>
-            <p className={`text-xs mb-2 uppercase font-bold tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.activeContainers}</p>
-            <p className={`text-4xl font-extrabold ${isDark ? 'text-white' : 'text-slate-800'}`}>{runningCount}</p>
-          </div>
-          <div className={`w-16 h-16 border rounded-2xl flex items-center justify-center transition ${isDark ? 'bg-green-900/10 border-green-500/20 text-green-400' : 'bg-green-50 border-green-100 text-green-600'}`}>
-            <Icons.Play className="w-8 h-8" />
+          <div
+            className={cn(
+              'w-12 h-12 border rounded-xl flex items-center justify-center',
+              isDark ? 'bg-green-900/10 border-green-500/20 text-green-400' : 'bg-green-50 border-green-100 text-green-600',
+            )}
+          >
+            <Icons.Play className="w-6 h-6" />
           </div>
         </div>
       </div>
 
       {loading && containers.length === 0 ? (
-        <div className={`flex flex-col items-center justify-center h-64 border rounded-2xl ${isDark ? 'border-slate-800/60 bg-slate-900/30' : 'border-slate-200 bg-white'}`}>
-          <Icons.Loader className="w-8 h-8 animate-spin text-blue-500 mb-2" />
+        <div
+          className={cn(
+            'flex flex-col items-center justify-center h-48 border rounded-2xl',
+            isDark ? 'border-slate-800/60 bg-slate-900/30' : 'border-slate-200 bg-white',
+          )}
+        >
+          <Icons.Loader className="w-7 h-7 animate-spin text-blue-500 mb-2" />
           <p className="text-slate-400 text-xs">{tr.loadingConts}</p>
         </div>
       ) : error ? (
@@ -490,22 +603,27 @@ export default function DockerManagerDashboard() {
           <span>Error: {error}</span>
         </div>
       ) : (
-        <div className={`border rounded-2xl overflow-hidden backdrop-blur-md shadow-xl transition-all ${isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200'}`}>
+        <div className={card}>
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse select-none">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className={`border-b text-xs uppercase tracking-wider ${isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
-                  <th className="p-4 font-bold">{tr.colName}</th>
-                  <th className="p-4 font-bold">{tr.colImage}</th>
-                  <th className="p-4 font-bold">{tr.colStatus}</th>
-                  <th className="p-4 font-bold">{tr.colPorts}</th>
-                  <th className="p-4 font-bold text-center w-40">{tr.colActions}</th>
+                <tr
+                  className={cn(
+                    'border-b text-xs uppercase tracking-wider',
+                    isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600',
+                  )}
+                >
+                  <th className="p-3 font-bold">{tr.colName}</th>
+                  <th className="p-3 font-bold">{tr.colImage}</th>
+                  <th className="p-3 font-bold">{tr.colStatus}</th>
+                  <th className="p-3 font-bold">{tr.colPorts}</th>
+                  <th className="p-3 font-bold text-center w-36">{tr.colActions}</th>
                 </tr>
               </thead>
-              <tbody className={`divide-y text-sm ${isDark ? 'divide-slate-800/30' : 'divide-slate-100'}`}>
+              <tbody className={cn('divide-y text-sm', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>
                 {containers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-12 text-center text-xs text-slate-400">
+                    <td colSpan={5} className="p-10 text-center text-xs text-slate-400">
                       {tr.noContainers}
                     </td>
                   </tr>
@@ -513,61 +631,83 @@ export default function DockerManagerDashboard() {
                 {containers.map((item, idx) => {
                   const isRunning = item.status.toLowerCase().includes('running');
                   return (
-                    <tr key={idx} className={`transition duration-200 ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}`}>
-                      <td className="p-4">
-                        <div className={`font-bold text-xs ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{item.name}</div>
-                        <div className={`text-[10px] font-mono select-all mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{item.id}</div>
+                    <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+                      <td className="p-3">
+                        <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
+                        <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                          {item.id}
+                        </div>
                       </td>
-                      <td className={`p-4 font-mono text-xs truncate max-w-xs ${isDark ? 'text-slate-300' : 'text-slate-600'}`} title={item.image}>
+                      <td className={cn('p-3 font-mono text-xs truncate max-w-[10rem]', isDark ? 'text-slate-300' : 'text-slate-600')} title={item.image}>
                         {item.image}
                       </td>
-                      <td className="p-4">
-                        <span className={`px-3 py-1 text-xs font-semibold rounded-full select-none border transition-all ${
-                          isRunning
-                            ? 'bg-green-500/10 border-green-500/20 text-green-500'
-                            : isDark ? 'bg-slate-800/60 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
-                        }`}>
+                      <td className="p-3">
+                        <span
+                          className={cn(
+                            'px-2.5 py-0.5 text-xs font-semibold rounded-full border',
+                            isRunning
+                              ? 'bg-green-500/10 border-green-500/20 text-green-500'
+                              : isDark
+                                ? 'bg-slate-800/60 border-slate-700 text-slate-400'
+                                : 'bg-slate-100 border-slate-200 text-slate-600',
+                          )}
+                        >
                           {item.status}
                         </span>
                       </td>
-                      <td className={`p-4 font-mono text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{item.ports || '—'}</td>
-                      <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
                           {isRunning ? (
                             <button
                               onClick={() => handleStopContainer(item.id)}
-                              className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600'}`}
-                              title="Stop Container"
+                              className={cn(
+                                'p-1.5 rounded-lg border transition',
+                                isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
+                              )}
+                              title="Stop"
                             >
                               <Icons.Square className="w-3.5 h-3.5 fill-current" />
                             </button>
                           ) : (
                             <button
                               onClick={() => handleStartContainer(item.id)}
-                              className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600'}`}
-                              title="Start Container"
+                              className={cn(
+                                'p-1.5 rounded-lg border transition',
+                                isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
+                              )}
+                              title="Start"
                             >
                               <Icons.Play className="w-3.5 h-3.5 fill-current" />
                             </button>
                           )}
                           <button
                             onClick={() => handleRestartContainer(item.id)}
-                            className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600'}`}
-                            title="Restart Container"
+                            className={cn(
+                              'p-1.5 rounded-lg border transition',
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
+                            )}
+                            title="Restart"
                           >
                             <Icons.RefreshCcw className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleViewLogs(item)}
-                            className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600'}`}
-                            title="View Logs"
+                            className={cn(
+                              'p-1.5 rounded-lg border transition',
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600',
+                            )}
+                            title="Logs"
                           >
                             <Icons.FileText className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleRemoveContainer(item.id)}
-                            className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600'}`}
-                            title="Remove Container"
+                            className={cn(
+                              'p-1.5 rounded-lg border transition',
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                            )}
+                            title="Remove"
                           >
                             <Icons.Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -581,6 +721,326 @@ export default function DockerManagerDashboard() {
           </div>
         </div>
       )}
+    </div>
+  );
+
+  const renderCompose = () => (
+    <div className="space-y-5">
+      <div
+        className={cn(
+          'border p-5 rounded-2xl space-y-4',
+          isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200',
+        )}
+      >
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="space-y-1 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className={cn('text-sm font-bold flex items-center gap-2', isDark ? 'text-indigo-200' : 'text-indigo-700')}>
+                <Icons.Zap className="w-4 h-4 text-indigo-400" />
+                {tr.scanTitle} ({composeFiles.length})
+              </h3>
+              {composeFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setComposeListOpen((open) => !open)}
+                  className={cn(
+                    'inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition',
+                    isDark ? 'border-slate-700 bg-slate-900/60 text-slate-300' : 'border-slate-200 bg-white text-slate-600',
+                  )}
+                >
+                  {composeListOpen ? <Icons.ChevronUp className="w-3.5 h-3.5" /> : <Icons.ChevronDown className="w-3.5 h-3.5" />}
+                  {composeListOpen ? tr.composeHide : tr.composeShow}
+                </button>
+              )}
+            </div>
+            <p className={cn('text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{tr.scanDesc}</p>
+          </div>
+          <div
+            className={cn(
+              'flex items-center gap-2 p-1.5 rounded-xl border w-full sm:w-auto',
+              isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200',
+            )}
+          >
+            <input
+              type="text"
+              value={customPath}
+              onChange={(e) => setCustomPath(e.target.value)}
+              placeholder={tr.scanPlaceholder}
+              className={cn('bg-transparent text-xs focus:outline-none px-2 w-full sm:w-52 font-mono', isDark ? 'text-slate-200' : 'text-slate-800')}
+            />
+            <button
+              onClick={() => fetchComposeFiles(customPath)}
+              disabled={composeLoading}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl transition flex items-center gap-1 shrink-0"
+            >
+              <Icons.Search className="w-3.5 h-3.5" />
+              {tr.scanBtn}
+            </button>
+          </div>
+        </div>
+
+        {composeFiles.length > 0 ? (
+          composeListOpen ? (
+            <div className={cn('rounded-xl border overflow-hidden', isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-white')}>
+              <div className="max-h-64 overflow-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead
+                    className={cn(
+                      'sticky top-0 z-10 text-[10px] uppercase tracking-wider font-bold',
+                      isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500',
+                    )}
+                  >
+                    <tr className={cn('border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
+                      <th className="px-3 py-2 w-32">{tr.composeColFile}</th>
+                      <th className="px-3 py-2">{tr.composeColPath}</th>
+                      <th className="px-3 py-2 text-right w-36">{tr.composeColAction}</th>
+                    </tr>
+                  </thead>
+                  <tbody className={cn('divide-y text-xs', isDark ? 'divide-slate-800/60' : 'divide-slate-100')}>
+                    {composeFiles.map((file, idx) => (
+                      <tr key={`${file.path}-${idx}`} className={cn('transition', isDark ? 'hover:bg-slate-900/50' : 'hover:bg-slate-50/80')}>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icons.FileCode className={cn('w-3.5 h-3.5 shrink-0', isDark ? 'text-indigo-400' : 'text-indigo-600')} />
+                            <span className={cn('font-bold truncate', isDark ? 'text-slate-200' : 'text-slate-800')} title={file.filename}>
+                              {file.filename}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={cn('px-3 py-2 font-mono text-[11px] break-all', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                          {file.path}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => handleBuildCompose(file.path)}
+                            className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg transition whitespace-nowrap"
+                          >
+                            <Icons.Play className="w-3 h-3" />
+                            {tr.buildDeploy}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className={cn('text-[11px] border px-3 py-2 rounded-lg', isDark ? 'text-slate-500 border-slate-800/60' : 'text-slate-400 border-slate-200')}>
+              {tr.composeCollapsed.replace('{count}', String(composeFiles.length))}
+            </div>
+          )
+        ) : (
+          <div className={cn('text-xs border p-4 rounded-xl', isDark ? 'text-slate-500 border-slate-800/40' : 'text-slate-400 border-slate-200')}>
+            {tr.noCompose}
+          </div>
+        )}
+
+        {actionOutput && (
+          <div
+            className={cn(
+              'p-3 border rounded-xl font-mono text-xs max-h-36 overflow-auto whitespace-pre-wrap flex items-center justify-between',
+              isDark ? 'bg-slate-950 border-indigo-900/30 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-600',
+            )}
+          >
+            <span>{actionOutput}</span>
+            <button onClick={() => setActionOutput(null)} className="text-slate-500 hover:text-slate-300 font-bold px-1">
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderSimpleTable = (
+    loadingState: boolean,
+    headers: string[],
+    rows: ReactNode,
+  ) => (
+    <div className={card}>
+      {loadingState ? (
+        <div className="flex items-center justify-center gap-2 h-40 text-xs text-slate-400">
+          <Icons.Loader2 className="w-5 h-5 animate-spin" />
+          {tr.loading}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr
+                className={cn(
+                  'border-b text-xs uppercase tracking-wider',
+                  isDark ? 'bg-slate-950/60 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600',
+                )}
+              >
+                {headers.map((h) => (
+                  <th key={h} className="p-3 font-bold">
+                    {h}
+                  </th>
+                ))}
+                <th className="p-3 font-bold text-center w-24">{tr.colActions}</th>
+              </tr>
+            </thead>
+            <tbody className={cn('divide-y', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>{rows}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderImages = () =>
+    renderSimpleTable(
+      imagesLoading && images.length === 0,
+      [tr.colRepo, tr.colTag, tr.colSize],
+      images.length === 0 ? (
+        <tr>
+          <td colSpan={4} className="p-10 text-center text-xs text-slate-400">
+            {tr.noImages}
+          </td>
+        </tr>
+      ) : (
+        images.map((img, idx) => {
+          const ref = img.repository === '<none>' ? img.id : `${img.repository}:${img.tag}`;
+          return (
+            <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+              <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-200' : 'text-slate-800')}>{img.repository}</td>
+              <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{img.tag}</td>
+              <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{img.size}</td>
+              <td className="p-3 text-center">
+                <button
+                  onClick={() => handleRemoveImage(ref)}
+                  className={cn(
+                    'p-1.5 rounded-lg border transition',
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                  )}
+                  title={tr.remove}
+                >
+                  <Icons.Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </td>
+            </tr>
+          );
+        })
+      ),
+    );
+
+  const renderNetworks = () =>
+    renderSimpleTable(
+      networksLoading && networks.length === 0,
+      [tr.colName, tr.colDriver, tr.colScope],
+      networks.length === 0 ? (
+        <tr>
+          <td colSpan={4} className="p-10 text-center text-xs text-slate-400">
+            {tr.noNetworks}
+          </td>
+        </tr>
+      ) : (
+        networks.map((net, idx) => (
+          <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+            <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-200' : 'text-slate-800')}>{net.name}</td>
+            <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{net.driver}</td>
+            <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{net.scope}</td>
+            <td className="p-3 text-center">
+              {net.name !== 'bridge' && net.name !== 'host' && net.name !== 'none' && (
+                <button
+                  onClick={() => handleRemoveNetwork(net.name)}
+                  className={cn(
+                    'p-1.5 rounded-lg border transition',
+                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                  )}
+                  title={tr.remove}
+                >
+                  <Icons.Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </td>
+          </tr>
+        ))
+      ),
+    );
+
+  const renderVolumes = () =>
+    renderSimpleTable(
+      volumesLoading && volumes.length === 0,
+      [tr.colName, tr.colDriver, tr.colMount],
+      volumes.length === 0 ? (
+        <tr>
+          <td colSpan={4} className="p-10 text-center text-xs text-slate-400">
+            {tr.noVolumes}
+          </td>
+        </tr>
+      ) : (
+        volumes.map((vol, idx) => (
+          <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+            <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-200' : 'text-slate-800')}>{vol.name}</td>
+            <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{vol.driver}</td>
+            <td className={cn('p-3 font-mono text-[11px] break-all', isDark ? 'text-slate-400' : 'text-slate-500')}>{vol.mountpoint}</td>
+            <td className="p-3 text-center">
+              <button
+                onClick={() => handleRemoveVolume(vol.name)}
+                className={cn(
+                  'p-1.5 rounded-lg border transition',
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                )}
+                title={tr.remove}
+              >
+                <Icons.Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </td>
+          </tr>
+        ))
+      ),
+    );
+
+  return (
+    <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
+      <div className={cn('flex h-full min-h-0 select-none', isDark ? 'text-slate-100' : 'text-slate-900')}>
+        <DockerManagerSidebar
+          tab={tab}
+          onTab={setTab}
+          isDark={isDark}
+          labels={labels}
+          title={tr.title}
+          subtitle={tr.subtitle}
+          counts={{
+            containers: totalCount || undefined,
+            compose: composeFiles.length || undefined,
+            images: images.length || undefined,
+            networks: networks.length || undefined,
+            volumes: volumes.length || undefined,
+          }}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
+            <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <h2 className={cn('text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tabMeta[tab].title}</h2>
+                <p className={cn('text-xs max-w-2xl', isDark ? 'text-slate-400' : 'text-slate-500')}>{tabMeta[tab].desc}</p>
+              </div>
+              <button
+                type="button"
+                onClick={refreshTab}
+                className={cn(
+                  'shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition',
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200',
+                )}
+                title={tr.refresh}
+              >
+                <Icons.RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+                {tr.refresh}
+              </button>
+            </header>
+
+            {tab === 'containers' && renderContainers()}
+            {tab === 'compose' && renderCompose()}
+            {tab === 'images' && renderImages()}
+            {tab === 'networks' && renderNetworks()}
+            {tab === 'volumes' && renderVolumes()}
+          </main>
+        </div>
+      </div>
 
       <WindowModal
         open={!!viewingLogs}
@@ -589,53 +1049,69 @@ export default function DockerManagerDashboard() {
         maxWidth="2xl"
         className="flex max-h-[70vh] max-w-3xl flex-col"
       >
-          <div className="flex min-h-0 flex-1 flex-col space-y-4 p-4">
-            <div className={`flex-1 rounded-xl overflow-hidden flex flex-col border min-h-0 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
-              <div className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[10px] uppercase tracking-wider font-bold border-b shrink-0 ${isDark ? 'border-slate-800 text-slate-500 bg-slate-900/50' : 'border-slate-200 text-slate-400 bg-slate-100/80'}`}>
-                <span>{tr.logTime}</span>
-                <span>{tr.logMessage}</span>
-              </div>
-              <div className="flex-1 overflow-auto select-text">
-                {logsLoading ? (
-                  <div className={`flex items-center justify-center gap-2 h-full min-h-[8rem] text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-                    <Icons.Loader2 className="w-4 h-4 animate-spin" />
-                    {tr.loadingLogs}
-                  </div>
-                ) : (
-                  <div className="font-mono text-xs">
-                    {parseDockerLogs(viewingLogs?.content ?? '').map((line, i) => (
-                      <div
-                        key={i}
-                        className={`grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-1.5 border-b last:border-0 ${isDark ? 'border-slate-800/60 hover:bg-slate-900/40' : 'border-slate-100 hover:bg-white/80'}`}
-                      >
-                        <span
-                          className={`shrink-0 tabular-nums whitespace-nowrap ${line.timestamp ? (isDark ? 'text-cyan-400/90' : 'text-cyan-700') : 'text-transparent'}`}
-                          title={line.timestamp || undefined}
-                        >
-                          {line.timestamp ? formatLogTimestamp(line.timestamp, language || 'en') : '—'}
-                        </span>
-                        <span className={`whitespace-pre-wrap break-all ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                          {line.message || '\u00a0'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+        <div className="flex min-h-0 flex-1 flex-col space-y-4 p-4">
+          <div
+            className={cn(
+              'flex-1 rounded-xl overflow-hidden flex flex-col border min-h-0',
+              isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100',
+            )}
+          >
+            <div
+              className={cn(
+                'grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[10px] uppercase tracking-wider font-bold border-b shrink-0',
+                isDark ? 'border-slate-800 text-slate-500 bg-slate-900/50' : 'border-slate-200 text-slate-400 bg-slate-100/80',
+              )}
+            >
+              <span>{tr.logTime}</span>
+              <span>{tr.logMessage}</span>
             </div>
-            <div className="flex items-center justify-end flex-shrink-0">
-              <button
-                onClick={() => setViewingLogs(null)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                }`}
-              >
-                {tr.closeBtn}
-              </button>
+            <div className="flex-1 overflow-auto select-text">
+              {logsLoading ? (
+                <div className={cn('flex items-center justify-center gap-2 h-full min-h-[8rem] text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                  <Icons.Loader2 className="w-4 h-4 animate-spin" />
+                  {tr.loadingLogs}
+                </div>
+              ) : (
+                <div className="font-mono text-xs">
+                  {parseDockerLogs(viewingLogs?.content ?? '').map((line, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-1.5 border-b last:border-0',
+                        isDark ? 'border-slate-800/60 hover:bg-slate-900/40' : 'border-slate-100 hover:bg-white/80',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'shrink-0 tabular-nums whitespace-nowrap',
+                          line.timestamp ? (isDark ? 'text-cyan-400/90' : 'text-cyan-700') : 'text-transparent',
+                        )}
+                        title={line.timestamp || undefined}
+                      >
+                        {line.timestamp ? formatLogTimestamp(line.timestamp, language || 'en') : '—'}
+                      </span>
+                      <span className={cn('whitespace-pre-wrap break-all', isDark ? 'text-slate-200' : 'text-slate-800')}>
+                        {line.message || '\u00a0'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+          <div className="flex items-center justify-end flex-shrink-0">
+            <button
+              onClick={() => setViewingLogs(null)}
+              className={cn(
+                'px-4 py-2 rounded-xl text-xs font-bold transition',
+                isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600',
+              )}
+            >
+              {tr.closeBtn}
+            </button>
+          </div>
+        </div>
       </WindowModal>
-    </div>
     </ModuleViewport>
   );
 }

@@ -10,6 +10,6 @@ export default {
   description: 'Manage containers and status metrics',
   component: DockerManagerDashboard,
   windowMode: true,
-  defaultWindowSize: { width: 1000, height: 680 },
+  defaultWindowSize: { width: 1100, height: 720 },
   singleton: true,
 };
