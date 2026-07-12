@@ -357,6 +357,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
         title={logsProject ? `${tr.logs}: ${logsProject.name}` : tr.logs}
         maxWidth="2xl"
         className="max-w-2xl"
+        closeOnBackdropClick={false}
       >
         <div className="p-4 max-h-[60vh] overflow-auto">
           {logsLoading ? (

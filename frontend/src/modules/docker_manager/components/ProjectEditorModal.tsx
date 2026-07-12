@@ -155,6 +155,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
       title={project ? `${tr.title}: ${project.name}` : tr.title}
       maxWidth="2xl"
       className="max-w-2xl"
+      closeOnBackdropClick={false}
     >
       <div className="flex flex-col gap-3 p-4 max-h-[75vh]">
         <div className="flex gap-2">

@@ -15,6 +15,8 @@ interface Props {
   title?: string;
   className?: string;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  /** When false, only the X button or explicit Cancel actions close the modal. Default: true */
+  closeOnBackdropClick?: boolean;
 }
 
 const MAX_W = {
@@ -32,6 +34,7 @@ export default function WindowModal({
   title,
   className,
   maxWidth = 'lg',
+  closeOnBackdropClick = true,
 }: Props) {
   const { theme } = useAppShellContext();
   const isDark = theme === 'dark';
@@ -45,7 +48,7 @@ export default function WindowModal({
         'z-[80] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm',
         viewport?.isWindowed ? 'absolute inset-0' : 'fixed inset-0',
       )}
-      onClick={onClose}
+      onClick={closeOnBackdropClick ? onClose : undefined}
     >
       <div
         className={cn(

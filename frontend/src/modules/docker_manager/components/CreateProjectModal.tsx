@@ -344,7 +344,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
   ];
 
   return (
-    <WindowModal open={open} onClose={onClose} title={tr.title} maxWidth="2xl" className="max-w-2xl">
+    <WindowModal open={open} onClose={onClose} title={tr.title} maxWidth="2xl" className="max-w-2xl" closeOnBackdropClick={false}>
       <div className="flex flex-col gap-4 p-4 max-h-[75vh] overflow-y-auto">
         <div className="flex items-center gap-1">
           {steps.map(({ n, label }) => (

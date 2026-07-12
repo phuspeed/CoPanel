@@ -987,6 +987,7 @@ export default function DockerManagerDashboard() {
         title={viewingLogs ? `${tr.viewLogsTitle}: ${viewingLogs.name}` : tr.viewLogsTitle}
         maxWidth="2xl"
         className="flex max-h-[70vh] max-w-3xl flex-col"
+        closeOnBackdropClick={false}
       >
         <div className="flex min-h-0 flex-1 flex-col space-y-4 p-4">
           <div
