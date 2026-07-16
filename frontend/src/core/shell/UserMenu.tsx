@@ -16,6 +16,8 @@ const I18N = {
     user: 'User',
     changePassword: 'Change password',
     classicUi: 'Switch to Classic UI',
+    mobileDesktopSiteOn: 'Request desktop site',
+    mobileDesktopSiteOff: 'Use mobile layout',
     logout: 'Sign out',
     server: 'Server',
   },
@@ -26,6 +28,8 @@ const I18N = {
     user: 'Người dùng',
     changePassword: 'Đổi mật khẩu',
     classicUi: 'Chuyển giao diện Classic',
+    mobileDesktopSiteOn: 'Yêu cầu trang web cho máy tính',
+    mobileDesktopSiteOff: 'Dùng giao diện di động',
     logout: 'Đăng xuất',
     server: 'Máy chủ',
   },
@@ -47,6 +51,9 @@ interface Props {
   onChangePassword: () => void;
   onLogout?: () => void;
   onSwitchClassic: () => void;
+  mobileDesktopSite?: boolean;
+  showMobileDesktopSiteToggle?: boolean;
+  onToggleMobileDesktopSite?: () => void;
 }
 
 export default function UserMenu({
@@ -60,6 +67,9 @@ export default function UserMenu({
   onChangePassword,
   onLogout,
   onSwitchClassic,
+  mobileDesktopSite = false,
+  showMobileDesktopSiteToggle = false,
+  onToggleMobileDesktopSite,
 }: Props) {
   const tr = I18N[language === 'vi' ? 'vi' : 'en'];
   const panelRef = useRef<HTMLDivElement>(null);
@@ -171,6 +181,13 @@ export default function UserMenu({
 
       <div className="p-2">
         <MenuRow icon={Icons.KeyRound} label={tr.changePassword} onClick={onChangePassword} />
+        {showMobileDesktopSiteToggle && onToggleMobileDesktopSite && (
+          <MenuRow
+            icon={Icons.MonitorSmartphone}
+            label={mobileDesktopSite ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+            onClick={onToggleMobileDesktopSite}
+          />
+        )}
         <MenuRow icon={Icons.PanelLeft} label={tr.classicUi} onClick={onSwitchClassic} />
         {onLogout && <MenuRow icon={Icons.LogOut} label={tr.logout} onClick={onLogout} danger />}
       </div>

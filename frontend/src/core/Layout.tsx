@@ -18,6 +18,12 @@ import DesktopShell from './shell/DesktopShell';
 import Dock from './shell/Dock';
 import StartMenu from './shell/StartMenu';
 import UserMenu from './shell/UserMenu';
+import {
+  isLayoutViewportWide,
+  isMobileDesktopSiteEnabled,
+  setMobileDesktopSite,
+  shouldOfferMobileDesktopSiteToggle,
+} from './viewportDesktopSite';
 import WindowLayer from './shell/WindowLayer';
 import { moduleSupportsWindows, openModuleWindow } from './shell/openModuleWindow';
 import { DOCK_HEIGHT } from './shell/windowTypes';
@@ -81,9 +87,9 @@ export default function Layout({
     const saved = localStorage.getItem('copanel_desktop_ui');
     if (saved === '0') return false;
     if (saved === '1') return true;
-    return window.innerWidth >= 1024;
+    return isLayoutViewportWide();
   });
-  const [viewportWide, setViewportWide] = useState(() => window.innerWidth >= 1024);
+  const [viewportWide, setViewportWide] = useState(() => isLayoutViewportWide());
 
   // Modal states
   const [changePwdOpen, setChangePwdOpen] = useState(false);
@@ -137,6 +143,9 @@ export default function Layout({
       cancel: 'Cancel',
       language: 'English',
       themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark',
+      mobileDesktopSiteOn: 'Request desktop site',
+      mobileDesktopSiteOff: 'Use mobile layout',
+      desktopUi: 'Desktop UI',
       upgradeAvailable: 'Update available',
       upgradeTitle: 'Upgrade CoPanel',
       upgradeIntro:
@@ -187,6 +196,9 @@ export default function Layout({
       cancel: 'Hủy',
       language: 'Tiếng Việt',
       themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối',
+      mobileDesktopSiteOn: 'Yêu cầu trang web cho máy tính',
+      mobileDesktopSiteOff: 'Dùng giao diện di động',
+      desktopUi: 'Giao diện Desktop',
       upgradeAvailable: 'Có bản cập nhật',
       upgradeTitle: 'Nâng cấp CoPanel',
       upgradeIntro:
@@ -381,10 +393,16 @@ export default function Layout({
   }, []);
 
   useEffect(() => {
-    const onResize = () => setViewportWide(window.innerWidth >= 1024);
+    const onResize = () => setViewportWide(isLayoutViewportWide());
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  const toggleMobileDesktopSite = () => {
+    setMobileDesktopSite(!isMobileDesktopSiteEnabled());
+  };
+
+  const showMobileDesktopSiteToggle = shouldOfferMobileDesktopSiteToggle();
 
   const useDesktopShell = desktopMode && viewportWide;
   const isDashboardHome = location.pathname === '/' || location.pathname === '/dashboard';
@@ -402,10 +420,10 @@ export default function Layout({
   useDesktopKeyboard(useDesktopShell);
 
   useEffect(() => {
-    if (window.innerWidth < 1024) {
+    if (!isLayoutViewportWide()) {
       setSidebarOpen(false);
     }
-  }, [location.pathname]);
+  }, [location.pathname, viewportWide]);
 
   const handlePasswordChange = async () => {
     if (!oldPwdInput || !newPwdInput) {
@@ -761,6 +779,27 @@ export default function Layout({
                 <Icons.Globe className="w-3.5 h-3.5" />
                 {language === 'en' ? 'EN' : 'VI'}
               </button>
+              {showMobileDesktopSiteToggle && (
+                <button
+                  type="button"
+                  onClick={toggleMobileDesktopSite}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${
+                    isMobileDesktopSiteEnabled()
+                      ? isDark
+                        ? 'bg-sky-900/50 border-sky-700 text-sky-300'
+                        : 'bg-sky-50 border-sky-300 text-sky-700'
+                      : isDark
+                        ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
+                  title={isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+                >
+                  <Icons.Monitor className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline max-w-[8rem] truncate">
+                    {isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -775,11 +814,21 @@ export default function Layout({
               <ShellIconButton
                 isDark={isDark}
                 icon={<Icons.Monitor className="w-4 h-4" />}
-                title="Desktop UI"
+                title={tr.desktopUi}
                 onClick={() => {
                   setDesktopMode(true);
                   navigate('/dashboard');
                 }}
+              />
+            )}
+            {showMobileDesktopSiteToggle && (
+              <ShellIconButton
+                isDark={isDark}
+                icon={<Icons.Smartphone className="w-4 h-4" />}
+                title={isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+                onClick={toggleMobileDesktopSite}
+                badge={isMobileDesktopSiteEnabled() ? 1 : undefined}
+                badgeTone="blue"
               />
             )}
             <ShellIconButton
@@ -1143,6 +1192,9 @@ export default function Layout({
             setDesktopMode(false);
             navigate('/dashboard');
           }}
+          mobileDesktopSite={isMobileDesktopSiteEnabled()}
+          showMobileDesktopSiteToggle={showMobileDesktopSiteToggle}
+          onToggleMobileDesktopSite={toggleMobileDesktopSite}
         />
       )}
 
