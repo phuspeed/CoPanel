@@ -145,6 +145,8 @@ export default function Layout({
       themeTitle: isDark ? 'Switch to Light' : 'Switch to Dark',
       mobileDesktopSiteOn: 'Request desktop site',
       mobileDesktopSiteOff: 'Use mobile layout',
+      mobileDesktopSiteShort: 'Desktop site',
+      mobileDesktopSiteBanner: 'View full desktop layout',
       desktopUi: 'Desktop UI',
       upgradeAvailable: 'Update available',
       upgradeTitle: 'Upgrade CoPanel',
@@ -198,6 +200,8 @@ export default function Layout({
       themeTitle: isDark ? 'Chuyển sang Giao diện Sáng' : 'Chuyển sang Giao diện Tối',
       mobileDesktopSiteOn: 'Yêu cầu trang web cho máy tính',
       mobileDesktopSiteOff: 'Dùng giao diện di động',
+      mobileDesktopSiteShort: 'Máy tính',
+      mobileDesktopSiteBanner: 'Xem giao diện máy tính đầy đủ',
       desktopUi: 'Giao diện Desktop',
       upgradeAvailable: 'Có bản cập nhật',
       upgradeTitle: 'Nâng cấp CoPanel',
@@ -783,7 +787,7 @@ export default function Layout({
                 <button
                   type="button"
                   onClick={toggleMobileDesktopSite}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-xs transition duration-150 ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border font-bold text-[11px] transition duration-150 ${
                     isMobileDesktopSiteEnabled()
                       ? isDark
                         ? 'bg-sky-900/50 border-sky-700 text-sky-300'
@@ -793,10 +797,11 @@ export default function Layout({
                         : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
                   }`}
                   title={isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+                  aria-label={isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
                 >
-                  <Icons.Monitor className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline max-w-[8rem] truncate">
-                    {isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
+                  <Icons.MonitorSmartphone className="w-3.5 h-3.5 shrink-0" />
+                  <span className="max-w-[5.5rem] truncate">
+                    {isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteShort}
                   </span>
                 </button>
               )}
@@ -819,16 +824,6 @@ export default function Layout({
                   setDesktopMode(true);
                   navigate('/dashboard');
                 }}
-              />
-            )}
-            {showMobileDesktopSiteToggle && (
-              <ShellIconButton
-                isDark={isDark}
-                icon={<Icons.Smartphone className="w-4 h-4" />}
-                title={isMobileDesktopSiteEnabled() ? tr.mobileDesktopSiteOff : tr.mobileDesktopSiteOn}
-                onClick={toggleMobileDesktopSite}
-                badge={isMobileDesktopSiteEnabled() ? 1 : undefined}
-                badgeTone="blue"
               />
             )}
             <ShellIconButton
@@ -1048,6 +1043,7 @@ export default function Layout({
             'relative flex-1 overflow-auto transition-colors duration-200',
             isDark ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900',
             !useDesktopShell && 'pb-20 lg:pb-0',
+            !useDesktopShell && showMobileDesktopSiteToggle && !isMobileDesktopSiteEnabled() && 'pb-28 lg:pb-0',
             useDesktopShell && 'overflow-hidden',
           )}
           style={useDesktopShell ? { paddingBottom: DOCK_HEIGHT } : undefined}
@@ -1065,6 +1061,25 @@ export default function Layout({
           )}
           {useDesktopShell && <WindowLayer shellContext={shellContext} isDark={isDark} />}
         </main>
+
+        {/* Mobile: prominent desktop-site CTA above bottom nav */}
+        {!useDesktopShell && showMobileDesktopSiteToggle && !isMobileDesktopSiteEnabled() && (
+          <div
+            className={cn(
+              'fixed bottom-16 left-0 right-0 z-[51] lg:hidden border-t px-3 py-2',
+              isDark ? 'border-slate-800 bg-slate-900/95' : 'border-slate-200 bg-white/95',
+            )}
+          >
+            <button
+              type="button"
+              onClick={toggleMobileDesktopSite}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-3 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-sky-500"
+            >
+              <Icons.MonitorSmartphone className="h-4 w-4 shrink-0" />
+              {tr.mobileDesktopSiteBanner}
+            </button>
+          </div>
+        )}
 
         {/* Mobile Bottom Footer Menu — classic mode only */}
         {!useDesktopShell && (
