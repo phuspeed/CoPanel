@@ -1,4 +1,16 @@
 import * as Icons from 'lucide-react';
+import {
+  chromeNavBadge,
+  chromeNavIcon,
+  chromeNavItem,
+  chromeSidebar,
+  chromeSidebarHeader,
+  chromeSidebarIconBox,
+  chromeSidebarNav,
+  chromeSidebarSubtitle,
+  chromeSidebarTitle,
+  chromeAccentIcon,
+} from '../../../core/desktopChrome';
 import { cn } from '../../../lib/utils';
 import type { StoreNav } from '../types';
 import type { AppStoreTranslations } from '../i18n';
@@ -28,25 +40,20 @@ export default function AppStoreSidebar({ active, onChange, isDark, tr, updateCo
   };
 
   return (
-    <aside
-      className={cn(
-        'flex w-[200px] shrink-0 flex-col border-r',
-        isDark ? 'border-slate-800 bg-slate-900/60' : 'border-slate-200 bg-slate-50/90',
-      )}
-    >
-      <div className={cn('border-b px-4 py-4', isDark ? 'border-slate-800' : 'border-slate-200')}>
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600">
+    <aside className={chromeSidebar(isDark, 'sm')}>
+      <div className={chromeSidebarHeader(isDark)}>
+        <div className="flex items-center gap-2.5">
+          <div className={cn(chromeSidebarIconBox(isDark), 'bg-gradient-to-br from-sky-500 to-cyan-600 border-0 shadow-none')}>
             <Icons.ShoppingBag className="h-4 w-4 text-white" />
           </div>
           <div className="min-w-0">
-            <p className={cn('truncate text-sm font-bold', isDark ? 'text-slate-100' : 'text-slate-900')}>{tr.title}</p>
-            <p className={cn('truncate text-[10px]', isDark ? 'text-slate-500' : 'text-slate-500')}>{tr.subtitle}</p>
+            <p className={chromeSidebarTitle(isDark)}>{tr.title}</p>
+            <p className={chromeSidebarSubtitle(isDark)}>{tr.subtitle}</p>
           </div>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 p-2">
+      <nav className={chromeSidebarNav()} aria-label="App Store sections">
         {NAV.map(({ id, icon: Icon }) => {
           const isActive = active === id;
           const badge = id === 'updates' ? updateCount : id === 'manage' ? installedCount : 0;
@@ -55,37 +62,21 @@ export default function AppStoreSidebar({ active, onChange, isDark, tr, updateCo
               key={id}
               type="button"
               onClick={() => onChange(id)}
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors',
-                isActive
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : isDark
-                    ? 'text-slate-300 hover:bg-slate-800'
-                    : 'text-slate-700 hover:bg-white',
-              )}
+              className={chromeNavItem(isDark, isActive, 'sky')}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="flex-1 truncate">{labels[id]}</span>
-              {badge > 0 && (
-                <span
-                  className={cn(
-                    'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
-                    isActive ? 'bg-white/20 text-white' : isDark ? 'bg-blue-500/20 text-blue-300' : 'bg-blue-100 text-blue-700',
-                  )}
-                >
-                  {badge}
-                </span>
-              )}
+              <Icon className={chromeNavIcon(isDark, isActive, 'sky')} />
+              <span className="flex-1 truncate font-medium">{labels[id]}</span>
+              {badge > 0 && <span className={chromeNavBadge(isDark, isActive, 'sky')}>{badge}</span>}
             </button>
           );
         })}
       </nav>
 
-      <div className={cn('border-t px-3 py-3 text-[10px]', isDark ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-400')}>
-        <span className="inline-flex items-center gap-1 text-emerald-500">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+      <div className={cn('border-t p-3', isDark ? 'border-slate-800' : 'border-slate-200')}>
+        <p className={cn('flex items-center gap-1.5 text-[10px]', isDark ? 'text-slate-500' : 'text-slate-400')}>
+          <Icons.Cloud className={cn('h-3 w-3', chromeAccentIcon('sky'))} />
           {tr.live}
-        </span>
+        </p>
       </div>
     </aside>
   );

@@ -9,9 +9,6 @@ import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import {
   LineChart,
   Line,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,6 +18,14 @@ import {
 } from 'recharts';
 import * as Icons from 'lucide-react';
 import { cn } from '../../lib/utils';
+import {
+  chromeContentBg,
+  chromeNavIcon,
+  chromeNavItem,
+  chromePanel,
+  chromeSidebar,
+  chromeSidebarNav,
+} from '../../core/desktopChrome';
 
 interface ProcessInfo {
   pid: number;
@@ -142,18 +147,22 @@ const TEXT: Record<Language, Record<string, string>> = {
     pm2ActionFailed: 'Failed to perform {action} on PM2.',
     loadingRealtime: 'Loading real-time stats...',
     errorLabel: 'Error',
-    heroTitle: 'System Resource Monitor',
-    heroSubtitle: 'Track resource history, processes, and PM2. Superadmins can end stuck PIDs safely.',
+    heroTitle: 'System Information',
+    heroSubtitle: 'Hardware, uptime, and live resource gauges.',
     uptime: 'Uptime',
     cpuCores: 'CPU Cores',
     connections: 'Connections',
     hostname: 'Hostname',
     os: 'OS',
     arch: 'Arch',
+    model: 'Model',
+    healthy: 'Healthy',
+    systemStatus: 'Status',
     cpuModel: 'CPU',
     ramTotal: 'RAM total',
     diskTotal: 'Disk capacity',
     diskUsedFreeOf: '{used} used · {free} free · {total} total ({n} vol.)',
+    storage: 'Storage',
     resources: 'Resources',
     activeProcesses: 'Processes',
     pm2Manager: 'PM2',
@@ -226,18 +235,22 @@ const TEXT: Record<Language, Record<string, string>> = {
     pm2ActionFailed: 'Không thể thực hiện {action} trên PM2.',
     loadingRealtime: 'Đang tải thống kê thời gian thực...',
     errorLabel: 'Lỗi',
-    heroTitle: 'Giám sát tài nguyên hệ thống',
-    heroSubtitle: 'Theo dõi tài nguyên, tiến trình hệ thống và PM2.',
+    heroTitle: 'Thông tin hệ thống',
+    heroSubtitle: 'Phần cứng, uptime và đồng hồ tài nguyên thời gian thực.',
     uptime: 'Thời gian hoạt động',
     cpuCores: 'Số nhân CPU',
     connections: 'Kết nối',
     hostname: 'Tên máy',
     os: 'Hệ điều hành',
     arch: 'Kiến trúc',
+    model: 'Model',
+    healthy: 'Ổn định',
+    systemStatus: 'Trạng thái',
     cpuModel: 'CPU',
     ramTotal: 'Tổng RAM',
     diskTotal: 'Dung lượng ổ đĩa',
     diskUsedFreeOf: '{used} đã dùng · {free} trống · {total} tổng ({n} phân vùng)',
+    storage: 'Lưu trữ',
     resources: 'Tài nguyên',
     activeProcesses: 'Tiến trình',
     pm2Manager: 'PM2',
@@ -317,6 +330,51 @@ const formatBytes = (bytes: number) => {
   }
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
+
+function RingGauge({
+  percent,
+  label,
+  sub,
+  color,
+  track,
+}: {
+  percent: number;
+  label: string;
+  sub?: string;
+  color: string;
+  track: string;
+}) {
+  const p = Math.max(0, Math.min(100, percent));
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  const offset = c - (p / 100) * c;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative h-28 w-28">
+        <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+          <circle cx="50" cy="50" r={r} fill="none" stroke={track} strokeWidth="8" />
+          <circle
+            cx="50"
+            cy="50"
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={offset}
+            className="transition-[stroke-dashoffset] duration-500"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-lg font-bold tabular-nums">{p.toFixed(1)}%</span>
+        </div>
+      </div>
+      <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
+      {sub && <p className="max-w-[11rem] truncate text-center text-[10px] opacity-70">{sub}</p>}
+    </div>
+  );
+}
 
 const formatUptime = (seconds: number) => {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0m';
@@ -544,16 +602,9 @@ export default function SystemMonitorDashboard() {
   };
 
   const shellText = isDark ? 'text-slate-50' : 'text-slate-900';
-  const card = isDark ? 'bg-slate-900/90 border border-slate-800' : 'bg-white border border-slate-200 shadow-sm';
   const cardMuted = isDark ? 'bg-slate-900/50 border-slate-800/80' : 'bg-white/90 border-slate-200';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-600';
   const textHeading = isDark ? 'text-slate-200' : 'text-slate-800';
-  const tabActive = isDark
-    ? 'bg-blue-600/25 text-blue-300 font-semibold'
-    : 'bg-blue-50 text-blue-700 font-semibold';
-  const tabIdle = isDark
-    ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900';
   const btnSecondary = isDark
     ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
     : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200';
@@ -595,9 +646,6 @@ export default function SystemMonitorDashboard() {
   const cpuPercent = stats.cpu.percent || 0;
   const memPercent = stats.memory.percent || 0;
   const diskPercent = diskData.length ? Math.max(...diskData.map((p) => p.percent || 0)) : 0;
-  const busiestDisk = diskData.length
-    ? diskData.reduce((max, p) => ((p.percent || 0) > (max.percent || 0) ? p : max), diskData[0])
-    : null;
 
   const diskAgg =
     stats.disk.aggregate && stats.disk.aggregate.total > 0
@@ -605,13 +653,6 @@ export default function SystemMonitorDashboard() {
       : diskAggregateFromPartitions(diskData);
 
   const cpuDisplayName = (stats.system.cpu_model || stats.system.processor || '').trim();
-
-  const usedFill = isDark ? '#ef4444' : '#dc2626';
-  const freeFill = isDark ? '#10b981' : '#059669';
-  const memoryChartData = [
-    { name: tr.used, value: stats.memory.used, fill: usedFill },
-    { name: tr.free, value: stats.memory.free, fill: freeFill },
-  ];
 
   const filteredProcesses = (stats.top_processes || []).filter((p) => {
     const q = procFilter.trim().toLowerCase();
@@ -643,49 +684,27 @@ export default function SystemMonitorDashboard() {
 
         <header
           className={cn(
-            'shrink-0 px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3',
+            'shrink-0 px-4 py-3 border-b flex items-center justify-between gap-3',
             isDark ? 'border-slate-700' : 'border-slate-200'
           )}
         >
-          <div className="min-w-0 flex-1 space-y-1">
-            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">System</p>
-            <h1 className="text-lg font-semibold truncate">{tr.heroTitle}</h1>
-            <p className={cn('text-xs line-clamp-2', textMuted)}>{tr.heroSubtitle}</p>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-medium', cardMuted)}>
-                {tr.uptime}: {formatUptime(stats.system.uptime_seconds)}
-              </span>
-              <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-medium', cardMuted)}>
-                {tr.cpuCores}: {stats.cpu.count}
-              </span>
-              {stats.system.machine && (
-                <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-mono font-medium', cardMuted)}>
-                  {tr.arch}: {stats.system.machine}
-                </span>
-              )}
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold truncate">{tr.heroTitle}</h1>
+            <p className={cn('text-xs truncate', textMuted)}>{tr.heroSubtitle}</p>
           </div>
-          <div className={cn('shrink-0 rounded-xl border p-3 text-right min-w-[160px]', cardMuted)}>
-            <span className={cn('text-[10px] font-semibold uppercase tracking-widest', isDark ? 'text-blue-400' : 'text-blue-600')}>
+          <div className={cn('shrink-0 rounded-lg border px-3 py-1.5 text-right', isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white')}>
+            <span className={cn('text-[10px] font-semibold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
               {tr.hostname}
             </span>
-            <p className={cn('text-base font-mono font-bold truncate', isDark ? 'text-slate-100' : 'text-slate-900')}>
+            <p className={cn('text-sm font-mono font-bold truncate max-w-[10rem]', isDark ? 'text-slate-100' : 'text-slate-900')}>
               {stats.system.hostname}
             </p>
-            <span className={cn('text-xs', textMuted)}>
-              {tr.os}: {stats.system.system}
-            </span>
           </div>
         </header>
 
         <div className="flex flex-1 min-h-0">
-          <aside
-            className={cn(
-              'w-44 shrink-0 border-r flex flex-col',
-              isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'
-            )}
-          >
-            <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          <aside className={chromeSidebar(isDark, 'sm')}>
+            <nav className={chromeSidebarNav()} aria-label="System monitor sections">
               {sidebarTabs.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
@@ -694,12 +713,9 @@ export default function SystemMonitorDashboard() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveTab(item.id)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition',
-                      isActive ? tabActive : tabIdle
-                    )}
+                    className={chromeNavItem(isDark, isActive, 'sky')}
                   >
-                    <Icon className="w-4 h-4 shrink-0" />
+                    <Icon className={chromeNavIcon(isDark, isActive, 'sky')} />
                     <span className="truncate text-left text-xs font-semibold">{item.label}</span>
                   </button>
                 );
@@ -707,106 +723,129 @@ export default function SystemMonitorDashboard() {
             </nav>
           </aside>
 
-          <main className={cn('flex-1 min-h-0 overflow-y-auto p-4 space-y-5', isWindowed ? '' : 'max-w-7xl')}>
+          <main className={cn('flex-1 min-h-0 overflow-y-auto p-4 space-y-4', chromeContentBg(isDark), isWindowed ? '' : 'max-w-7xl')}>
       {activeTab === 'resources' && (
-        <div className="space-y-5 sm:space-y-8">
-          {(cpuDisplayName || stats.memory.total > 0 || diskAgg.total > 0) && (
-            <div
-              className={cn(
-                'rounded-xl border p-3 sm:p-4 space-y-2 text-[11px] sm:text-sm',
-                isDark ? 'border-slate-700/80 bg-slate-950/45' : 'border-slate-200/90 bg-white/65'
-              )}
-            >
-              {cpuDisplayName && (
-                <p className="min-w-0">
-                  <span className={cn('font-bold uppercase tracking-wide text-[10px] mr-2', textMuted)}>{tr.cpuModel}</span>
-                  <span className={cn('font-medium break-words', textHeading)}>{cpuDisplayName}</span>
+        <div className="space-y-4">
+          {/* ADM-style 2×2 overview */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className={cn(chromePanel(isDark), 'p-4 flex gap-4 items-start')}>
+              <div
+                className={cn(
+                  'flex h-16 w-16 shrink-0 items-center justify-center rounded-xl',
+                  isDark ? 'bg-slate-800' : 'bg-slate-100',
+                )}
+              >
+                <Icons.Server className={cn('h-8 w-8', isDark ? 'text-sky-400' : 'text-sky-600')} />
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5 text-sm">
+                <div>
+                  <p className={cn('text-[10px] font-bold uppercase tracking-wider', textMuted)}>{tr.model}</p>
+                  <p className={cn('font-semibold truncate', textHeading)}>{stats.system.hostname}</p>
+                </div>
+                <div className="grid grid-cols-1 gap-1 text-xs">
+                  <p>
+                    <span className={textMuted}>{tr.os}: </span>
+                    <span className="font-medium">{stats.system.system}</span>
+                  </p>
+                  {stats.system.machine && (
+                    <p>
+                      <span className={textMuted}>{tr.arch}: </span>
+                      <span className="font-mono font-medium">{stats.system.machine}</span>
+                    </p>
+                  )}
+                  {cpuDisplayName && (
+                    <p className="line-clamp-2">
+                      <span className={textMuted}>{tr.cpuModel}: </span>
+                      <span className="font-medium">{cpuDisplayName}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className={cn(chromePanel(isDark), 'p-4 flex gap-4 items-center')}>
+              <div
+                className={cn(
+                  'flex h-16 w-16 shrink-0 items-center justify-center rounded-full',
+                  isDark ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600',
+                )}
+              >
+                <Icons.CheckCircle2 className="h-9 w-9" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <p className={cn('text-[10px] font-bold uppercase tracking-wider', textMuted)}>{tr.systemStatus}</p>
+                <p className={cn('text-xl font-bold', isDark ? 'text-emerald-400' : 'text-emerald-600')}>{tr.healthy}</p>
+                <p className={cn('text-xs', textMuted)}>
+                  {tr.uptime}: {formatUptime(stats.system.uptime_seconds)}
                 </p>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <p>
-                  <span className={cn('font-bold uppercase tracking-wide text-[10px] block mb-0.5', textMuted)}>{tr.ramTotal}</span>
-                  <span className={cn('font-mono font-semibold', isDark ? 'text-slate-100' : 'text-slate-900')}>
-                    {formatBytes(stats.memory.total)}
-                  </span>
-                </p>
-                <p>
-                  <span className={cn('font-bold uppercase tracking-wide text-[10px] block mb-0.5', textMuted)}>{tr.diskTotal}</span>
-                  <span className={cn('font-mono font-semibold text-xs leading-snug', isDark ? 'text-slate-100' : 'text-slate-900')}>
-                    {trf('diskUsedFreeOf', {
-                      used: formatBytes(diskAgg.used),
-                      free: formatBytes(diskAgg.free),
-                      total: formatBytes(diskAgg.total),
-                      n: diskAgg.filesystems_count,
-                    })}
-                  </span>
+                <p className={cn('text-xs', textMuted)}>
+                  {tr.cpuCores}: {stats.cpu.count} · {tr.connections}: {stats.network.connections}
                 </p>
               </div>
             </div>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-            {[
-              { label: tr.cpuUsage, value: `${cpuPercent.toFixed(1)}%`, bar: cpuPercent, icon: Icons.Cpu, tone: 'blue' },
-              { label: tr.memoryUsage, value: `${memPercent.toFixed(1)}%`, bar: memPercent, icon: Icons.BarChart3, tone: 'red' },
-              {
-                label: tr.diskUsage,
-                value: `${diskPercent.toFixed(1)}%`,
-                bar: diskPercent,
-                sub: busiestDisk?.mountpoint || tr.noDiskData,
-                icon: Icons.HardDrive,
-                tone: 'amber',
-              },
-              {
-                label: tr.activePids,
-                value: String(stats.processes.total),
-                sub: trf('runningSleep', { running: stats.processes.running, sleeping: stats.processes.sleeping || 0 }),
-                icon: Icons.Zap,
-                tone: 'purple',
-                noBar: true,
-              },
-            ].map((m) => (
-              <div key={m.label} className={cn('p-4 sm:p-6 rounded-2xl', card)}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className={cn('text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1', textMuted)}>{m.label}</p>
-                    <p className={cn('text-2xl sm:text-3xl font-extrabold', isDark ? 'text-white' : 'text-slate-900')}>{m.value}</p>
-                    {m.sub && <p className={cn('text-[10px] sm:text-[11px] mt-1 truncate', textMuted)}>{m.sub}</p>}
+
+            <div className={cn(chromePanel(isDark), 'p-5 flex flex-wrap items-center justify-around gap-6')}>
+              <RingGauge
+                percent={cpuPercent}
+                label={tr.cpuUsage}
+                sub={cpuDisplayName || undefined}
+                color={isDark ? '#38bdf8' : '#0284c7'}
+                track={isDark ? '#1e293b' : '#e2e8f0'}
+              />
+              <RingGauge
+                percent={memPercent}
+                label={tr.memoryUsage}
+                sub={`${formatBytes(stats.memory.used)} / ${formatBytes(stats.memory.total)}`}
+                color={isDark ? '#34d399' : '#059669'}
+                track={isDark ? '#1e293b' : '#e2e8f0'}
+              />
+            </div>
+
+            <div className={cn(chromePanel(isDark), 'p-4 space-y-4')}>
+              <div>
+                <h2 className={cn('text-xs font-bold uppercase tracking-wide mb-2', textHeading)}>{tr.network}</h2>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className={textMuted}>{tr.upload}</span>
+                    <span className="font-mono font-semibold">{formatBytes(stats.network.bytes_sent)}</span>
                   </div>
-                  <div
-                    className={cn(
-                      'p-2.5 sm:p-3 rounded-xl border shrink-0',
-                      m.tone === 'blue' && (isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'),
-                      m.tone === 'red' && (isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'),
-                      m.tone === 'amber' &&
-                        (isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'),
-                      m.tone === 'purple' &&
-                        (isDark ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-purple-50 border-purple-200 text-purple-700')
-                    )}
-                  >
-                    <m.icon className="w-5 h-5 sm:w-6 sm:h-6" />
+                  <div className="flex justify-between gap-2">
+                    <span className={textMuted}>{tr.download}</span>
+                    <span className="font-mono font-semibold">{formatBytes(stats.network.bytes_recv)}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className={textMuted}>{tr.packetsTxRx}</span>
+                    <span className="font-semibold">
+                      {stats.network.packets_sent.toLocaleString()} / {stats.network.packets_recv.toLocaleString()}
+                    </span>
                   </div>
                 </div>
-                {!m.noBar && (
-                  <div className={cn('mt-3 sm:mt-4 w-full rounded-full h-1.5 overflow-hidden', isDark ? 'bg-slate-800' : 'bg-slate-200')}>
-                    <div
-                      className={cn(
-                        'h-1.5 rounded-full transition-all duration-300',
-                        m.tone === 'blue' && 'bg-blue-500',
-                        m.tone === 'red' && 'bg-red-500',
-                        m.tone === 'amber' && 'bg-amber-500'
-                      )}
-                      style={{ width: `${Math.min(100, m.bar ?? 0)}%` }}
-                    />
-                  </div>
-                )}
               </div>
-            ))}
+              <div className={cn('border-t pt-3', isDark ? 'border-slate-700' : 'border-slate-200')}>
+                <h2 className={cn('text-xs font-bold uppercase tracking-wide mb-2', textHeading)}>{tr.storage}</h2>
+                <div className="flex items-center justify-between gap-2 text-xs mb-2">
+                  <span className={cn('font-medium', isDark ? 'text-emerald-400' : 'text-emerald-600')}>{tr.healthy}</span>
+                  <span className={textMuted}>{diskPercent.toFixed(1)}%</span>
+                </div>
+                <div className={cn('w-full rounded-full h-1.5 overflow-hidden mb-2', isDark ? 'bg-slate-800' : 'bg-slate-200')}>
+                  <div className="h-1.5 rounded-full bg-amber-500 transition-all" style={{ width: `${Math.min(100, diskPercent)}%` }} />
+                </div>
+                <p className={cn('text-[11px] leading-snug', textMuted)}>
+                  {trf('diskUsedFreeOf', {
+                    used: formatBytes(diskAgg.used),
+                    free: formatBytes(diskAgg.free),
+                    total: formatBytes(diskAgg.total),
+                    n: diskAgg.filesystems_count,
+                  })}
+                </p>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            <div className={cn('p-4 sm:p-6 rounded-2xl', card)}>
-              <h2 className={cn('text-xs sm:text-sm font-bold uppercase tracking-wide mb-3 sm:mb-4', textHeading)}>{tr.resourceHistory}</h2>
-              <div className="h-[220px] sm:h-[300px] w-full min-w-0">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className={cn(chromePanel(isDark), 'p-4')}>
+              <h2 className={cn('text-xs font-bold uppercase tracking-wide mb-3', textHeading)}>{tr.resourceHistory}</h2>
+              <div className="h-[200px] w-full min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={history}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartStroke.grid} />
@@ -822,73 +861,15 @@ export default function SystemMonitorDashboard() {
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Line type="monotone" dataKey="cpu" stroke={isDark ? '#3b82f6' : '#2563eb'} dot={false} isAnimationActive={false} name="CPU" />
-                    <Line type="monotone" dataKey="memory" stroke={isDark ? '#f87171' : '#dc2626'} dot={false} isAnimationActive={false} name="RAM" />
+                    <Line type="monotone" dataKey="cpu" stroke={isDark ? '#38bdf8' : '#0284c7'} dot={false} isAnimationActive={false} name="CPU" />
+                    <Line type="monotone" dataKey="memory" stroke={isDark ? '#34d399' : '#059669'} dot={false} isAnimationActive={false} name="RAM" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className={cn('p-4 sm:p-6 rounded-2xl', card)}>
-              <h2 className={cn('text-xs sm:text-sm font-bold uppercase tracking-wide mb-3 sm:mb-4', textHeading)}>{tr.memoryDistribution}</h2>
-              <div className="h-[200px] sm:h-[240px] w-full min-w-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={memoryChartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2} dataKey="value">
-                      {memoryChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value: number) => `${(Number(value) / (1024 * 1024 * 1024)).toFixed(2)} GB`}
-                      contentStyle={{
-                        backgroundColor: chartStroke.tooltipBg,
-                        border: `1px solid ${chartStroke.tooltipBorder}`,
-                        borderRadius: '0.5rem',
-                        color: chartStroke.tooltipText,
-                        fontSize: 12,
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className={cn('mt-2 border-t pt-2 space-y-1', isDark ? 'border-slate-800/80' : 'border-slate-200')}>
-                {memoryChartData.map((item, idx) => (
-                  <div key={idx} className="flex justify-between text-[11px] sm:text-xs">
-                    <span className={textMuted}>{item.name}</span>
-                    <span className={cn('font-semibold', isDark ? 'text-slate-200' : 'text-slate-800')}>{formatBytes(item.value)}</span>
-                  </div>
-                ))}
-                <div className={cn('flex justify-between text-[11px] sm:text-xs pt-1 border-t mt-2', isDark ? 'border-slate-800/60' : 'border-slate-200')}>
-                  <span className={textMuted}>{tr.available}</span>
-                  <span className={cn('font-semibold', isDark ? 'text-slate-200' : 'text-slate-800')}>{formatBytes(stats.memory.available)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            <div className={cn('p-4 sm:p-6 rounded-2xl', card)}>
-              <h2 className={cn('text-xs sm:text-sm font-bold uppercase tracking-wide mb-3', textHeading)}>{tr.network}</h2>
-              <div className="space-y-2 text-xs sm:text-sm">
-                <div className="flex justify-between gap-2">
-                  <span className={textMuted}>{tr.upload}</span>
-                  <span className={cn('font-semibold font-mono', isDark ? 'text-slate-100' : 'text-slate-900')}>{formatBytes(stats.network.bytes_sent)}</span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className={textMuted}>{tr.download}</span>
-                  <span className={cn('font-semibold font-mono', isDark ? 'text-slate-100' : 'text-slate-900')}>{formatBytes(stats.network.bytes_recv)}</span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className={textMuted}>{tr.packetsTxRx}</span>
-                  <span className={cn('font-semibold', isDark ? 'text-slate-100' : 'text-slate-900')}>
-                    {stats.network.packets_sent.toLocaleString()} / {stats.network.packets_recv.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className={cn('p-4 sm:p-6 rounded-2xl', card)}>
-              <h2 className={cn('text-xs sm:text-sm font-bold uppercase tracking-wide mb-3', textHeading)}>{tr.topDiskUsage}</h2>
+            <div className={cn(chromePanel(isDark), 'p-4')}>
+              <h2 className={cn('text-xs font-bold uppercase tracking-wide mb-3', textHeading)}>{tr.topDiskUsage}</h2>
               <div className="space-y-3">
                 {diskData.slice(0, 5).map((partition) => (
                   <div key={`${partition.device}-${partition.mountpoint}`}>

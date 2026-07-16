@@ -1,4 +1,12 @@
 import * as Icons from 'lucide-react';
+import {
+  chromeNavIcon,
+  chromeNavItem,
+  chromeSidebar,
+  chromeSidebarHeader,
+  chromeSidebarNav,
+  chromeSidebarTitle,
+} from '../../../core/desktopChrome';
 import { cn } from '../../../lib/utils';
 import { PLACES, type FileManagerTranslations } from '../i18n';
 import type { BookmarkEntry } from '../types';
@@ -45,24 +53,19 @@ export default function FileSidebar({
   onBookmarkFolder,
 }: Props) {
   return (
-    <aside
-      className={cn(
-        'flex w-[200px] shrink-0 flex-col border-r overflow-hidden',
-        isDark ? 'border-slate-800 bg-slate-900/70' : 'border-slate-200 bg-slate-50/95',
-      )}
-    >
-      <div className={cn('border-b px-3 py-3', isDark ? 'border-slate-800' : 'border-slate-200')}>
+    <aside className={cn(chromeSidebar(isDark, 'sm'), 'overflow-hidden')}>
+      <div className={chromeSidebarHeader(isDark)}>
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-blue-600">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-cyan-600">
             <Icons.FolderOpen className="h-4 w-4 text-white" />
           </div>
-          <p className={cn('text-sm font-bold truncate', isDark ? 'text-slate-100' : 'text-slate-900')}>{tr.title}</p>
+          <p className={chromeSidebarTitle(isDark)}>{tr.title}</p>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-4">
+      <div className={cn(chromeSidebarNav(), 'space-y-4')}>
         <section>
-          <p className={cn('px-2 mb-1 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+          <p className={cn('mb-1 px-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
             {tr.places}
           </p>
           <nav className="space-y-0.5">
@@ -74,18 +77,11 @@ export default function FileSidebar({
                   key={place.id}
                   type="button"
                   onClick={() => onNavigate(place.path)}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition',
-                    active
-                      ? 'bg-blue-600 text-white'
-                      : isDark
-                        ? 'text-slate-300 hover:bg-slate-800'
-                        : 'text-slate-700 hover:bg-white',
-                  )}
+                  className={cn(chromeNavItem(isDark, active, 'sky'), 'text-xs')}
                   title={placeLabel(tr, place.id)}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{placeLabel(tr, place.id)}</span>
+                  <Icon className={chromeNavIcon(isDark, active, 'sky')} />
+                  <span className="truncate font-medium">{placeLabel(tr, place.id)}</span>
                 </button>
               );
             })}
@@ -93,7 +89,7 @@ export default function FileSidebar({
         </section>
 
         <section>
-          <div className="flex items-center justify-between gap-1 px-2 mb-1">
+          <div className="mb-1 flex items-center justify-between gap-1 px-2">
             <p className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
               {tr.bookmarks}
             </p>
@@ -126,8 +122,8 @@ export default function FileSidebar({
                     type="button"
                     onClick={() => onOpenBookmark(b)}
                     className={cn(
-                      'flex flex-1 min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition',
-                      isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-white',
+                      'flex min-w-0 flex-1 items-center gap-2 rounded-md border-l-2 border-transparent px-2.5 py-1.5 text-left text-xs font-medium transition',
+                      isDark ? 'text-slate-300 hover:bg-slate-900/70' : 'text-slate-700 hover:bg-white/90',
                     )}
                     title={b.path}
                   >
@@ -137,7 +133,7 @@ export default function FileSidebar({
                   <button
                     type="button"
                     onClick={() => onRemoveBookmark(b.path)}
-                    className={cn('opacity-0 group-hover:opacity-100 rounded p-1 transition', isDark ? 'hover:bg-slate-800 text-slate-500' : 'hover:bg-slate-200 text-slate-400')}
+                    className={cn('rounded p-1 opacity-0 transition group-hover:opacity-100', isDark ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-200')}
                   >
                     <Icons.X className="h-3 w-3" />
                   </button>

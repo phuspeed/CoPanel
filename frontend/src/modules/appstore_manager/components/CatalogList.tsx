@@ -17,6 +17,7 @@ interface Props {
   canOpenModule: (pkg: Package) => boolean;
   loading: boolean;
   actionsDisabled?: boolean;
+  sectionTitle?: string;
 }
 
 export default function CatalogList({
@@ -32,12 +33,13 @@ export default function CatalogList({
   canOpenModule,
   loading,
   actionsDisabled: actionsDisabledProp = false,
+  sectionTitle,
 }: Props) {
   if (loading && packages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center py-16">
         <div className="text-center">
-          <Icons.Loader className="mx-auto mb-2 h-8 w-8 animate-spin text-blue-500" />
+          <Icons.Loader className="mx-auto mb-2 h-8 w-8 animate-spin text-sky-500" />
           <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{tr.fetching}</p>
         </div>
       </div>
@@ -56,23 +58,28 @@ export default function CatalogList({
   const actionsDisabled = actionsDisabledProp || installingId !== null || uninstallingId !== null;
 
   return (
-    <div className="space-y-2 p-4">
-      {packages.map((pkg) => (
-        <PackageRow
-          key={pkg.id}
-          pkg={pkg}
-          isDark={isDark}
-          language={language}
-          tr={tr}
-          isInstalling={installingId === pkg.id}
-          isUninstalling={uninstallingId === pkg.id}
-          actionsDisabled={actionsDisabled}
-          onInstall={onInstall}
-          onUninstall={onUninstall}
-          onOpen={onOpen}
-          canOpen={canOpenModule(pkg)}
-        />
-      ))}
+    <div className="p-4 space-y-3">
+      {sectionTitle && (
+        <h2 className={cn('text-sm font-bold', isDark ? 'text-slate-200' : 'text-slate-800')}>{sectionTitle}</h2>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {packages.map((pkg) => (
+          <PackageRow
+            key={pkg.id}
+            pkg={pkg}
+            isDark={isDark}
+            language={language}
+            tr={tr}
+            isInstalling={installingId === pkg.id}
+            isUninstalling={uninstallingId === pkg.id}
+            actionsDisabled={actionsDisabled}
+            onInstall={onInstall}
+            onUninstall={onUninstall}
+            onOpen={onOpen}
+            canOpen={canOpenModule(pkg)}
+          />
+        ))}
+      </div>
     </div>
   );
 }
