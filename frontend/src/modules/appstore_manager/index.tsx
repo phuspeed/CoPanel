@@ -14,6 +14,7 @@ import BuildProgressModal from './components/BuildProgressModal';
 import CatalogList from './components/CatalogList';
 import CategoryFilter from './components/CategoryFilter';
 import CommunityConfigModal from './components/CommunityConfigModal';
+import FeaturedBanner from './components/FeaturedBanner';
 import { getAppStoreTranslations } from './i18n';
 import type { Package, PackageCategory, StoreNav } from './types';
 import {
@@ -24,6 +25,7 @@ import {
   modulePathFromPackageId,
   pkgIdFromZipName,
 } from './utils';
+import { chromeContentBg } from '../../core/desktopChrome';
 
 export default function AppStoreDashboard() {
   const { theme, language } = useAppShellContext();
@@ -481,6 +483,11 @@ export default function AppStoreDashboard() {
   const updateCount = catalog.filter((p) => p.update_status === 'update_available' || p.has_update).length;
   const installedCount = catalog.filter((p) => p.installed).length;
 
+  const featuredPackages = useMemo(() => {
+    const hot = filterPackagesByNav(catalog, 'hot');
+    return (hot.length ? hot : catalog.filter((p) => p.is_core)).slice(0, 4);
+  }, [catalog]);
+
   const visiblePackages = useMemo(() => {
     let list = filterPackagesByNav(catalog, nav);
     if (nav === 'all' && category !== 'all') {
@@ -510,7 +517,7 @@ export default function AppStoreDashboard() {
         installedCount={installedCount}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={cn('flex min-w-0 flex-1 flex-col', chromeContentBg(isDark))}>
         <AppStoreHeader
           query={query}
           onQueryChange={setQuery}
@@ -530,12 +537,21 @@ export default function AppStoreDashboard() {
           <div
             className={cn(
               'mx-4 mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
-              isDark ? 'border-slate-700 bg-slate-900/60 text-slate-200' : 'border-slate-200 bg-blue-50 text-slate-700',
+              isDark ? 'border-slate-700 bg-slate-900/60 text-slate-200' : 'border-slate-200 bg-sky-50 text-slate-700',
             )}
           >
-            <Icons.Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+            <Icons.Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-500" />
             <span>{msg}</span>
           </div>
+        )}
+
+        {(nav === 'hot' || nav === 'all') && !query.trim() && (
+          <FeaturedBanner
+            packages={featuredPackages}
+            isDark={isDark}
+            language={lang}
+            title={tr.featuredTitle}
+          />
         )}
 
         {nav === 'all' && (
@@ -563,6 +579,7 @@ export default function AppStoreDashboard() {
             canOpenModule={canOpenModule}
             loading={loading}
             actionsDisabled={batchUpdating}
+            sectionTitle={nav === 'hot' || nav === 'all' ? tr.officialServices : undefined}
           />
         </div>
       </div>
