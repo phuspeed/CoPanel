@@ -18,21 +18,31 @@ import json
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import Header, Query
+from fastapi import Header, Query, Request
+from fastapi.responses import JSONResponse
 
 from .api import ApiError
 from .security import verify_token
 from . import user_model
 
 
-# Public endpoints exempt from auth even if the module wires the global
-# dependency. ``auth/login`` must always stay public; the rest are usually
-# health/status helpers.
-_PUBLIC_PATHS = {"/api/auth/login"}
+# Public HTTP endpoints exempt from the global API auth gate.
+# Login, login-page branding, and OAuth browser redirects must stay reachable
+# without a Bearer token. Everything else under ``/api/*`` requires auth.
+_PUBLIC_PATHS = {
+    "/api/auth/login",
+    "/api/panel_settings/branding/public",
+    "/api/backup_manager/oauth/google/callback",
+}
 
 # When CoPanel is started in development without a database (e.g. a test
 # harness) it can be useful to skip auth. Off by default in production.
 _AUTH_DISABLED = os.environ.get("COPANEL_DISABLE_AUTH") == "1"
+
+
+def auth_disabled() -> bool:
+    """True when ``COPANEL_DISABLE_AUTH=1`` (test / local harness only)."""
+    return _AUTH_DISABLED
 
 
 def _normalize_permitted(value: Any) -> List[str]:
@@ -119,3 +129,55 @@ def optional_user_sse(
 ) -> Optional[Dict[str, Any]]:
     """EventSource cannot send Authorization headers; accept ``access_token`` query param."""
     return _user_from_token(authorization) or _user_from_bearer_token(access_token)
+
+
+def user_from_access_token(access_token: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Resolve a user from a raw bearer token string (WebSocket / query)."""
+    return _user_from_bearer_token(access_token)
+
+
+def user_has_module(user: Dict[str, Any], module_id: str) -> bool:
+    """Return True if ``user`` may access ``module_id``."""
+    if user.get("role") == "superadmin":
+        return True
+    permitted = _normalize_permitted(user.get("permitted_modules"))
+    return "all" in permitted or module_id in permitted
+
+
+async def api_auth_middleware(request: Request, call_next):
+    """Reject unauthenticated access to ``/api/*`` except public paths.
+
+    This is the primary defense against login-UI / DevTools bypass: even if the
+    SPA is forced to render, mutating or reading panel data still requires a
+    valid JWT. Module routers should still use ``require_module`` for RBAC.
+    """
+    if _AUTH_DISABLED:
+        return await call_next(request)
+
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if not path.startswith("/api/") and path != "/api":
+        return await call_next(request)
+
+    if path in _PUBLIC_PATHS:
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    access_token = request.query_params.get("access_token")
+    user = _user_from_token(authorization) or _user_from_bearer_token(access_token)
+    if not user:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "error",
+                "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Authentication required.",
+                    "details": None,
+                },
+            },
+        )
+
+    return await call_next(request)

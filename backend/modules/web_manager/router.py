@@ -9,12 +9,13 @@ import subprocess
 import urllib.request
 from typing import List, Dict, Any, Optional, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from core.auth import require_module
 from pydantic import BaseModel, Field
 
 from . import logic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("web_manager"))])
 
 IS_WINDOWS = logic.IS_WINDOWS
 ensure_nginx_dirs = logic.ensure_nginx_dirs

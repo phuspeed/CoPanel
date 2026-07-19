@@ -3,13 +3,14 @@ SSL Manager Router
 Exposes FastAPI endpoints for managing SSL Certificates for domains.
 """
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from core.auth import require_module
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from .logic import SSLManager
 from .auto_renew import AutoRenewManager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("ssl_manager"))])
 
 
 def _expiry_to_days_left(expiry: str) -> int:

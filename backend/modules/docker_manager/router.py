@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.audit import record_audit
-from core.auth import optional_user
+from core.auth import require_module, require_user
 from core.jobs import jobs as job_manager
 
 from .compose_manager import ComposeManager
@@ -28,7 +28,7 @@ from .schemas import (
     StackInitRequest,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("docker_manager"))])
 docker_service = DockerService(allow_mock=should_allow_mock())
 compose_manager = ComposeManager()
 
@@ -471,7 +471,7 @@ async def project_validate_content(req: ProjectValidateContentRequest) -> Dict[s
 
 
 @router.post("/projects/create")
-async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any]] = Depends(optional_user)) -> Dict[str, Any]:
+async def project_create(req: ProjectCreateRequest, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     try:
         template_payload = req.template.model_dump() if req.template else None
         project = compose_manager.create_project(
@@ -489,7 +489,7 @@ async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any
                 kind="docker_manager.compose_deploy",
                 title=f"Deploy project {project['project_name']}",
                 module="docker_manager",
-                actor=(user or {}).get("username"),
+                actor=user.get("username"),
                 payload={"path": project["path"], "project_name": project["project_name"]},
                 handler=_compose_deploy_job_handler,
                 args=(project["path"],),
@@ -499,8 +499,8 @@ async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any
                 "docker.project_create",
                 module="docker_manager",
                 target=project["path"],
-                actor=(user or {}).get("username"),
-                actor_id=(user or {}).get("id"),
+                actor=user.get("username"),
+                actor_id=user.get("id"),
                 meta={"job_id": job.id, "project_name": project["project_name"], "source": req.source},
             )
         return {"status": "success", "data": project, "job_id": job_id}
@@ -509,14 +509,14 @@ async def project_create(req: ProjectCreateRequest, user: Optional[Dict[str, Any
 
 
 @router.post("/compose/deploy")
-async def compose_deploy_job(req: ComposeUpRequest, user: Optional[Dict[str, Any]] = Depends(optional_user)) -> Dict[str, Any]:
+async def compose_deploy_job(req: ComposeUpRequest, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     """Run compose deploy (pull, build local images if needed, up -d) as a background job."""
 
     job = job_manager.submit(
         kind="docker_manager.compose_deploy",
         title=f"Compose deploy {req.path}",
         module="docker_manager",
-        actor=(user or {}).get("username"),
+        actor=user.get("username"),
         payload={"path": req.path},
         handler=_compose_deploy_job_handler,
         args=(req.path,),
@@ -525,8 +525,8 @@ async def compose_deploy_job(req: ComposeUpRequest, user: Optional[Dict[str, Any
         "docker.compose_deploy",
         module="docker_manager",
         target=req.path,
-        actor=(user or {}).get("username"),
-        actor_id=(user or {}).get("id"),
+        actor=user.get("username"),
+        actor_id=user.get("id"),
         meta={"job_id": job.id},
     )
     return {"status": "success", "job_id": job.id}

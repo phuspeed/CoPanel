@@ -259,7 +259,8 @@ export default function TerminalDashboard() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       const port = window.location.port ? `:${window.location.port}` : '';
-      const wsUrl = `${proto}//${host}${port}/api/terminal/ws`;
+      const authToken = localStorage.getItem('copanel_token') || '';
+      const wsUrl = `${proto}//${host}${port}/api/terminal/ws?access_token=${encodeURIComponent(authToken)}`;
 
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
