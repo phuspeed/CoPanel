@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from core.loader import ModuleLoader
 from core import api as core_api
+from core.auth import api_auth_middleware
 from core.jobs import jobs as job_manager
 
 try:
@@ -93,6 +94,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global JWT gate for /api/* (except login / public branding / OAuth callback).
+# Must run for every API request so DevTools UI bypass cannot reach panel actions.
+app.middleware("http")(api_auth_middleware)
 app.middleware("http")(core_api.request_context_middleware)
 core_api.install_exception_handlers(app)
 
@@ -140,7 +144,10 @@ if module_reload is not None:
 
 @app.get("/api/modules")
 async def list_modules():
-    """List loaded modules and live API route paths (reflects hot-reload)."""
+    """List loaded modules and live API route paths (reflects hot-reload).
+
+    Protected by the global API auth middleware (valid JWT required).
+    """
     modules: Dict[str, Any] = {}
     for name in loader.loaded_modules:
         paths = loader.list_route_paths(app, name)

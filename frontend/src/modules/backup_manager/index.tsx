@@ -816,7 +816,9 @@ export default function BackupManagerDashboard() {
     setStreamLogs([]);
     setStreamDone(false);
 
-    const es = new EventSource(`/api/backup_manager/stream_task/${profile.id}`);
+    const authToken = localStorage.getItem('copanel_token') || '';
+    const streamQs = authToken ? `?access_token=${encodeURIComponent(authToken)}` : '';
+    const es = new EventSource(`/api/backup_manager/stream_task/${profile.id}${streamQs}`);
 
     es.onmessage = (event) => {
       try {

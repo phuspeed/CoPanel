@@ -5,17 +5,22 @@ REST endpoints for saved command snippets (JSON per user).
 """
 import os
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from core.api import ApiError, ok
-from core.auth import require_module
+from core.auth import (
+    auth_disabled,
+    require_module,
+    user_from_access_token,
+    user_has_module,
+)
 
 from . import logic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("terminal"))])
 
 
 class SnippetItem(BaseModel):
@@ -50,7 +55,7 @@ def put_snippets(
 IS_WINDOWS = os.name == 'nt'
 
 @router.get("/status")
-def get_status() -> Dict[str, Any]:
+def get_status(_user: Dict[str, Any] = Depends(require_module("terminal"))) -> Dict[str, Any]:
     """Returns terminal capability status."""
     return {
         "status": "success",
@@ -59,7 +64,33 @@ def get_status() -> Dict[str, Any]:
     }
 
 @router.websocket("/ws")
-async def terminal_websocket(websocket: WebSocket):
+async def terminal_websocket(
+    websocket: WebSocket,
+    access_token: Optional[str] = Query(None),
+):
+    """Interactive shell over WebSocket.
+
+    Browsers cannot set Authorization on WebSocket open, so the SPA passes
+    ``access_token`` as a query param (same pattern as SSE). Auth is checked
+    *before* ``accept()`` so unauthenticated clients never get a shell.
+    """
+    # Router-level Depends do not apply to WebSocket routes in the same way;
+    # enforce JWT + module permission here explicitly.
+    user = None
+    if auth_disabled():
+        user = {"id": 0, "username": "dev", "role": "superadmin", "permitted_modules": '["all"]'}
+    else:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                user = user_from_access_token(parts[1])
+        if user is None:
+            user = user_from_access_token(access_token)
+        if not user or not user_has_module(user, "terminal"):
+            await websocket.close(code=4401)
+            return
+
     await websocket.accept()
 
     if IS_WINDOWS:

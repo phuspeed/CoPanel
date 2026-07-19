@@ -3,9 +3,11 @@ import re
 import json
 import subprocess
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from typing import Dict, Any
+
+from core.auth import require_module
 from .logic import (
     ProfileManager,
     BackupTaskEngine,
@@ -17,6 +19,7 @@ from datetime import datetime
 import asyncio
 
 router = APIRouter()
+api = APIRouter(dependencies=[Depends(require_module("backup_manager"))])
 
 
 @router.on_event("startup")
@@ -29,18 +32,18 @@ async def on_startup():
         pass
 
 
-@router.get("/profiles")
+@api.get("/profiles")
 def get_profiles() -> Dict[str, Any]:
     return {"status": "success", "data": ProfileManager.get_profiles()}
 
 
-@router.post("/profiles")
+@api.post("/profiles")
 def create_profile(data: dict) -> Dict[str, Any]:
     pid = ProfileManager.create_profile(data)
     return {"status": "success", "id": pid}
 
 
-@router.put("/profiles/{profile_id}")
+@api.put("/profiles/{profile_id}")
 def update_profile(profile_id: int, data: dict) -> Dict[str, Any]:
     ok = ProfileManager.update_profile(profile_id, data)
     if not ok:
@@ -48,13 +51,13 @@ def update_profile(profile_id: int, data: dict) -> Dict[str, Any]:
     return {"status": "success"}
 
 
-@router.delete("/profiles/{profile_id}")
+@api.delete("/profiles/{profile_id}")
 def delete_profile(profile_id: int) -> Dict[str, Any]:
     ProfileManager.delete_profile(profile_id)
     return {"status": "success"}
 
 
-@router.get("/remotes")
+@api.get("/remotes")
 def list_remotes() -> Dict[str, Any]:
     """Returns detailed remote info: [{name, type}]"""
     remotes = ProfileManager.get_rclone_remotes_detail()
@@ -76,7 +79,7 @@ def list_remotes() -> Dict[str, Any]:
     }
 
 
-@router.get("/system-folders")
+@api.get("/system-folders")
 def get_system_folders() -> Dict[str, Any]:
     if os.name == 'nt':
         current_file_dir = Path(__file__).parent.resolve()
@@ -100,7 +103,7 @@ def get_system_folders() -> Dict[str, Any]:
     }
 
 
-@router.get("/rclone-config")
+@api.get("/rclone-config")
 def get_rclone_config() -> Dict[str, Any]:
     return {
         "status": "success",
@@ -109,7 +112,7 @@ def get_rclone_config() -> Dict[str, Any]:
     }
 
 
-@router.post("/rclone-config")
+@api.post("/rclone-config")
 def save_rclone_config(data: dict) -> Dict[str, Any]:
     content = data.get("content", "")
     ok = ProfileManager.save_rclone_config(content)
@@ -118,7 +121,7 @@ def save_rclone_config(data: dict) -> Dict[str, Any]:
     return {"status": "success"}
 
 
-@router.post("/oauth/google/start")
+@api.post("/oauth/google/start")
 def oauth_google_start(data: dict) -> Dict[str, Any]:
     try:
         result = GoogleOAuthService.start_oauth(
@@ -134,7 +137,7 @@ def oauth_google_start(data: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to start OAuth flow: {e}")
 
 
-@router.post("/oauth/google/manual-token")
+@api.post("/oauth/google/manual-token")
 def oauth_google_manual_token(data: dict) -> Dict[str, Any]:
     try:
         result = GoogleOAuthService.apply_manual_token(
@@ -175,7 +178,7 @@ def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
         )
 
 
-@router.get("/oauth/google/status")
+@api.get("/oauth/google/status")
 def oauth_google_status(remote_name: str = "") -> Dict[str, Any]:
     if remote_name:
         row = ProfileManager.get_oauth_token(remote_name=remote_name, provider="google")
@@ -183,7 +186,7 @@ def oauth_google_status(remote_name: str = "") -> Dict[str, Any]:
     return {"status": "success", "data": ProfileManager.list_oauth_status(provider="google")}
 
 
-@router.post("/remotes/google")
+@api.post("/remotes/google")
 def create_or_update_google_remote(data: dict) -> Dict[str, Any]:
     remote_name = ProfileManager.normalize_remote_name((data.get("remote_name") or "").strip())
     if not remote_name:
@@ -197,7 +200,7 @@ def create_or_update_google_remote(data: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to create/update remote: {e}")
 
 
-@router.get("/explore")
+@api.get("/explore")
 def explore_files(path: str = "/") -> Dict[str, Any]:
     """Simple file explorer for Visual File Selector."""
     if os.name == 'nt' and path == "/":
@@ -223,7 +226,7 @@ def explore_files(path: str = "/") -> Dict[str, Any]:
     return {"status": "success", "data": items, "current_path": str(target)}
 
 
-@router.get("/stream_task/{profile_id}")
+@api.get("/stream_task/{profile_id}")
 async def stream_task(profile_id: int):
     """
     Server-Sent Events (SSE) stream for real-time rclone progress.
@@ -364,3 +367,6 @@ def _fmt_bytes(n: int) -> str:
     elif n < 1024 ** 3:
         return f"{n / 1024 ** 2:.1f} MB"
     return f"{n / 1024 ** 3:.2f} GB"
+
+# Protected routes (JWT + backup_manager permission)
+router.include_router(api)

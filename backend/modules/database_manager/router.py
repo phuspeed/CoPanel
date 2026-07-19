@@ -9,7 +9,8 @@ Site Wizard.
 import os
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from core.auth import require_module
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
@@ -17,7 +18,7 @@ from starlette.background import BackgroundTask
 from .logic import DBManager
 from .postgres import PostgresManager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("database_manager"))])
 
 
 def _engine(name: str):

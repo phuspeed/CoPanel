@@ -8,10 +8,11 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from core.auth import require_module
 from pydantic import BaseModel, Field
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("firewall"))])
 
 IS_WINDOWS = os.name == 'nt'
 

@@ -7,10 +7,10 @@ from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 
-from core.auth import require_admin
+from core.auth import require_admin, require_module
 from .logic import AppStoreManager, get_copanel_home, derive_pkg_id_from_upload_name, BATCH_UPDATE_TASK_ID
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("appstore_manager"))])
 
 @router.get("/catalog")
 def get_catalog() -> Dict[str, Any]:

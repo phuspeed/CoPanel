@@ -2,12 +2,13 @@
 Package Manager Module - Router
 """
 from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from core.auth import require_module
 from pydantic import BaseModel
 
 from . import logic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module("package_manager"))])
 
 class PackageResponse(BaseModel):
     id: str

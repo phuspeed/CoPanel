@@ -67,6 +67,9 @@ export function createRoutes() {
   });
   const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
   const [extensionsReady, setExtensionsReady] = useState(false);
+  // Do not paint the desktop until /api/auth/me confirms the stored JWT.
+  // Prevents DevTools localStorage spoofing from briefly showing panel UI.
+  const [sessionVerified, setSessionVerified] = useState(() => !localStorage.getItem('copanel_token'));
 
   useEffect(() => {
     moduleRegistry
@@ -97,6 +100,7 @@ export function createRoutes() {
   const handleLoginSuccess = (newToken: string, loggedUser: any) => {
     localStorage.setItem('copanel_token', newToken);
     localStorage.setItem('copanel_user', JSON.stringify(loggedUser));
+    setSessionVerified(true);
     setToken(newToken);
     setUser(loggedUser);
   };
@@ -104,23 +108,36 @@ export function createRoutes() {
   const handleLogout = () => {
     localStorage.removeItem('copanel_token');
     localStorage.removeItem('copanel_user');
+    setSessionVerified(true);
     setToken(null);
     setUser(null);
   };
 
   // Check if session token still valid on load
   useEffect(() => {
-    if (token) {
-      fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-        .then((r) => {
-          if (!r.ok) {
-            handleLogout();
-          }
-        })
-        .catch(() => handleLogout());
+    if (!token) {
+      setSessionVerified(true);
+      return;
     }
+    let cancelled = false;
+    fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then((r) => {
+        if (cancelled) return;
+        if (!r.ok) {
+          handleLogout();
+        }
+        setSessionVerified(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        handleLogout();
+        setSessionVerified(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
 
   // If not logged in, render the login view
@@ -128,7 +145,7 @@ export function createRoutes() {
     return <Login onLoginSuccess={handleLoginSuccess} branding={branding} />;
   }
 
-  if (!extensionsReady) {
+  if (!sessionVerified || !extensionsReady) {
     return <ModuleLoader />;
   }
 
