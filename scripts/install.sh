@@ -20,6 +20,7 @@
 # - Python virtual environment setup
 # - Nginx reverse proxy configuration (port 8686)
 # - Systemd service installation
+# - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
 ###############################################################################
 
@@ -452,6 +453,62 @@ install_dependencies() {
 }
 
 ###############################################################################
+# Sparse checkout: only runtime paths needed to install / run CoPanel on VPS.
+# Skips docs (*.md), website/, .github/, and other non-runtime root files.
+###############################################################################
+
+# Patterns for git sparse-checkout --no-cone (leading / = repo root).
+COPANEL_SPARSE_PATHS=(
+    "/backend/"
+    "/frontend/"
+    "/scripts/"
+    "/config/"
+    "/VERSION"
+    "/.gitignore"
+    "/.gitattributes"
+)
+
+# Apply sparse-checkout in an existing git worktree under $1.
+copanel_apply_sparse_checkout() {
+    local repo="$1"
+    [[ -d "$repo/.git" ]] || return 0
+    (
+        cd "$repo" || exit 0
+        git sparse-checkout init --no-cone >/dev/null 2>&1 || true
+        git sparse-checkout set --no-cone "${COPANEL_SPARSE_PATHS[@]}" >/dev/null 2>&1 \
+            || git sparse-checkout set "${COPANEL_SPARSE_PATHS[@]}" >/dev/null 2>&1 \
+            || true
+    )
+}
+
+# Remove leftover docs / non-runtime files that may already be on disk
+# (e.g. older full clones, or paths not covered by sparse-checkout).
+copanel_prune_nonessential_files() {
+    local root="$1"
+    [[ -d "$root" ]] || return 0
+
+    # Root-level documentation and report files
+    find "$root" -maxdepth 1 -type f \( \
+        -name '*.md' -o \
+        -name '*.MD' -o \
+        -name 'COMPLETION_REPORT.txt' -o \
+        -name 'LICENSE*' \
+    \) -delete 2>/dev/null || true
+
+    # Non-runtime trees
+    rm -rf "$root/website" "$root/.github" 2>/dev/null || true
+
+    # Nested README / architecture notes under backend & frontend
+    find "$root/backend" "$root/frontend" "$root/scripts" -type f \( \
+        -name 'README.md' -o \
+        -name 'README.*.md' -o \
+        -name 'ARCHITECTURE_AI.md' -o \
+        -name 'DESKTOP_UI.md' -o \
+        -name 'NEW_MODULES.md' \
+    \) -delete 2>/dev/null || true
+}
+
+###############################################################################
 # Step 2: Create CoPanel User & Directories
 ###############################################################################
 
@@ -477,6 +534,8 @@ setup_user_and_dirs() {
             cd "$CoPanel_HOME"
             git config --global --add safe.directory '*' || true
             git config --system --add safe.directory '*' || true
+            # Limit worktree to install/runtime paths before fetch/pull
+            copanel_apply_sparse_checkout "$CoPanel_HOME"
             git fetch --all || true
             git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
                 || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
@@ -484,6 +543,8 @@ setup_user_and_dirs() {
             git clean -fd --exclude=config || true
             git pull origin "${COPANEL_GIT_BRANCH}" --force || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
+            copanel_apply_sparse_checkout "$CoPanel_HOME"
+            copanel_prune_nonessential_files "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
         else
             log_info "No local project directory found. Cloning CoPanel directly from GitHub..."
@@ -506,7 +567,17 @@ setup_user_and_dirs() {
             done
             
             rm -rf "$CoPanel_HOME"
-            git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
+            # Sparse clone: only backend/frontend/scripts/config + VERSION (no README/.md/website)
+            if git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 --filter=blob:none --sparse \
+                "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME" 2>/dev/null; then
+                copanel_apply_sparse_checkout "$CoPanel_HOME"
+            else
+                # Fallback for older git without sparse clone support
+                log_warning "Sparse clone unavailable; falling back to full clone + prune."
+                git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
+                copanel_apply_sparse_checkout "$CoPanel_HOME"
+            fi
+            copanel_prune_nonessential_files "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
             
             # Restore the backed up data if any
@@ -556,10 +627,16 @@ setup_user_and_dirs() {
                 --exclude ".git" \
                 --exclude "config" \
                 --exclude "backend/data" \
+                --exclude "website" \
+                --exclude ".github" \
+                --exclude "*.md" \
+                --exclude "*.MD" \
+                --exclude "COMPLETION_REPORT.txt" \
                 "$REPO_DIR/" "$CoPanel_HOME/"
         else
             cp -an "$REPO_DIR"/. "$CoPanel_HOME"/
         fi
+        copanel_prune_nonessential_files "$CoPanel_HOME"
     fi
 
     # Secure permissions and ownership
