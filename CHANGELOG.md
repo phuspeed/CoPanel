@@ -2,6 +2,31 @@
 
 All notable changes to CoPanel are documented in this file.
 
+## [1.1.1] — 2026-07-19
+
+### English
+
+**Security**
+
+- Global JWT gate for `/api/*` (except login, public branding, OAuth callback) so DevTools / unauthenticated callers cannot invoke panel APIs.
+- Enforce `require_module` on previously open routers: docker, web, database, SSL, firewall, backup, package, and appstore managers.
+- Authenticate terminal WebSocket before accept; SPA passes `access_token` query param.
+- Desktop shell waits for `/api/auth/me` before rendering (blocks fake `localStorage` session flash).
+
+**Added / Changed (since 1.1.0)**
+
+- Desktop UI / NAS-style module layouts and mobile “request desktop site” viewport toggle.
+- Backup manager EventSource streams include `access_token` for SSE under the auth gate.
+- Regression tests: `backend/tests/test_api_auth_gate.py`.
+
+### Tiếng Việt (tóm tắt)
+
+- Vá lỗ hổng bypass login: middleware JWT toàn cục + `require_module` cho các API trước đây mở; Terminal WS bắt buộc token.
+- SPA xác minh session trước khi hiện desktop.
+- Gồm các cải tiến Desktop UI / mobile kể từ 1.1.0.
+
+[1.1.1]: https://github.com/phuspeed/CoPanel/releases/tag/v1.1.1
+
 ## [1.1.0] — 2026-05-09
 
 ### English
