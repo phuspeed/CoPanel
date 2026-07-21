@@ -2,6 +2,24 @@
 
 All notable changes to CoPanel are documented in this file.
 
+## [1.1.2] — 2026-07-21
+
+### English
+
+**Fixed**
+
+- Frontend calls that hit the new API auth gate without a Bearer token (401):
+  - `Layout` package_manager polling
+  - `UsersPanel` `/api/modules` + package list
+  - All `docker_manager` UI fetches (list/start/stop/compose/projects/…)
+- Added shared `frontend/src/core/authHeaders.ts` (`apiFetch` / `getAuthHeaders`).
+
+### Tiếng Việt (tóm tắt)
+
+- Sửa 401 trên Package Manager (Layout) và Docker Manager: frontend gửi JWT sau khi bật auth gate ở 1.1.1.
+
+[1.1.2]: https://github.com/phuspeed/CoPanel/releases/tag/v1.1.2
+
 ## [1.1.1] — 2026-07-19
 
 ### English

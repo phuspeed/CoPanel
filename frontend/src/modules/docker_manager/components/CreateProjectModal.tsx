@@ -6,6 +6,7 @@ import WindowModal from '../../../core/shell/WindowModal';
 import { cn } from '../../../lib/utils';
 import * as Icons from 'lucide-react';
 import FolderBrowser from './FolderBrowser';
+import { apiFetch } from '../../../core/authHeaders';
 
 export type WizardStep = 1 | 2 | 3 | 4;
 export type ConfigMode = 'existing' | 'template' | 'paste';
@@ -190,13 +191,13 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
   useEffect(() => {
     if (!open) return;
     reset();
-    fetch('/api/docker_manager/projects/defaults')
+    apiFetch('/api/docker_manager/projects/defaults')
       .then((r) => r.json())
       .then((d) => {
         if (d?.data?.managed_root) setManagedRoot(d.data.managed_root);
       })
       .catch(() => undefined);
-    fetch('/api/docker_manager/projects/templates')
+    apiFetch('/api/docker_manager/projects/templates')
       .then((r) => r.json())
       .then((d) => setGallery(d.data || []))
       .catch(() => undefined);
@@ -211,7 +212,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
 
   const inspectFolder = useCallback(async (path: string) => {
     if (!path) return null;
-    const res = await fetch('/api/docker_manager/projects/inspect', {
+    const res = await apiFetch('/api/docker_manager/projects/inspect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
@@ -255,7 +256,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
     setValidateMsg(null);
     setError(null);
     try {
-      const res = await fetch('/api/docker_manager/projects/validate-content', {
+      const res = await apiFetch('/api/docker_manager/projects/validate-content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ compose_content: composeContent }),
@@ -323,7 +324,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
       if (source === 'template') {
         body.template = template;
       }
-      const res = await fetch('/api/docker_manager/projects/create', {
+      const res = await apiFetch('/api/docker_manager/projects/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

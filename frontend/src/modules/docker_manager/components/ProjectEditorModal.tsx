@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import WindowModal from '../../../core/shell/WindowModal';
 import { cn } from '../../../lib/utils';
 import * as Icons from 'lucide-react';
+import { apiFetch } from '../../../core/authHeaders';
 
 export interface ProjectRef {
   id: string;
@@ -69,8 +70,8 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
     setMsg(null);
     try {
       const [composeRes, envRes] = await Promise.all([
-        fetch(`/api/docker_manager/projects/compose?path=${encodeURIComponent(project.path)}`),
-        fetch(`/api/docker_manager/projects/env?path=${encodeURIComponent(project.path)}`),
+        apiFetch(`/api/docker_manager/projects/compose?path=${encodeURIComponent(project.path)}`),
+        apiFetch(`/api/docker_manager/projects/env?path=${encodeURIComponent(project.path)}`),
       ]);
       if (!composeRes.ok) throw new Error(tr.loadFail);
       const composeData = await composeRes.json();
@@ -98,7 +99,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
     setSaving(true);
     setMsg(null);
     try {
-      const res = await fetch('/api/docker_manager/projects/validate-content', {
+      const res = await apiFetch('/api/docker_manager/projects/validate-content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ compose_content: composeContent }),
@@ -122,7 +123,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
     setMsg(null);
     try {
       if (tab === 'compose') {
-        const res = await fetch('/api/docker_manager/projects/compose', {
+        const res = await apiFetch('/api/docker_manager/projects/compose', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: project.path, compose_content: composeContent }),
@@ -130,7 +131,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
         const data = await res.json();
         if (!res.ok) throw new Error(data?.detail?.message || data?.detail || 'Save failed');
       } else {
-        const res = await fetch('/api/docker_manager/projects/env', {
+        const res = await apiFetch('/api/docker_manager/projects/env', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: project.path, content: envContent }),
