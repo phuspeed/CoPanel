@@ -66,8 +66,6 @@ def cancel_job(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dic
     return ok({"cancelled": True})
 
 
-# ----- Events ------------------------------------------------------------
-
 @router.get("/events")
 async def event_stream(
     topics: str = Query("jobs,notifications"),
@@ -86,6 +84,20 @@ async def event_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ----- Extensions (AppStore runtime modules) ---------------------------
+
+@router.get("/extensions")
+def list_installed_extensions(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    """Installed AppStore frontend extensions for the desktop shell.
+
+    Authenticated users can list extensions (JWT). Static ``/extensions/index.json``
+    remains as a fallback when nginx serves extension assets directly.
+    """
+    from modules.appstore_manager.logic import AppStoreManager
+
+    return ok(AppStoreManager.list_installed_extensions())
 
 
 # ----- Notifications -----------------------------------------------------

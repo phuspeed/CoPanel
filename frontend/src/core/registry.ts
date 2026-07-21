@@ -106,7 +106,7 @@ class ModuleRegistry {
     console.log(`✓ Registered extension: ${manifest.name} (${manifest.id})`);
   }
 
-  /** Load AppStore extensions from dist/extensions/index.json */
+  /** Load AppStore extensions (API with JWT, static index.json fallback). */
   async loadExtensions(): Promise<void> {
     if (this.extensionsLoaded) return;
     if (!this.loadPromise) {
@@ -115,15 +115,46 @@ class ModuleRegistry {
     await this.loadPromise;
   }
 
+  private authHeaders(): HeadersInit {
+    const token = localStorage.getItem('copanel_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  private async fetchExtensionIndex(): Promise<ExtensionIndexEntry[]> {
+    const token = localStorage.getItem('copanel_token');
+    if (token) {
+      try {
+        const res = await fetch('/api/platform/extensions', {
+          headers: this.authHeaders(),
+          cache: 'no-store',
+        });
+        if (res.ok) {
+          const body = await res.json();
+          const data = body?.data ?? body;
+          if (Array.isArray(data?.extensions)) {
+            return data.extensions;
+          }
+        }
+      } catch {
+        // fall through to static index
+      }
+    }
+
+    const res = await fetch('/extensions/index.json', { cache: 'no-store' });
+    if (!res.ok) {
+      return [];
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return [];
+    }
+    const body = await res.json();
+    return body.extensions || [];
+  }
+
   private async fetchAndRegisterExtensions(): Promise<void> {
     try {
-      const res = await fetch('/extensions/index.json', { cache: 'no-store' });
-      if (!res.ok) {
-        this.extensionsLoaded = true;
-        return;
-      }
-      const body = await res.json();
-      const entries: ExtensionIndexEntry[] = body.extensions || [];
+      const entries = await this.fetchExtensionIndex();
       for (const entry of entries) {
         try {
           const manifestUrl = entry.manifest_url || `/extensions/${entry.id}/manifest.json`;
