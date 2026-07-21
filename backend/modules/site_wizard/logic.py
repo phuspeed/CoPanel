@@ -230,6 +230,80 @@ h1{{color:#2563eb}}.badge{{display:inline-block;background:#dbeafe;color:#1d4ed8
     )
 
 
+def _php_single_quoted(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _wp_config_db_define_replacements(database: Dict[str, Any]) -> List[tuple[str, str]]:
+    host = database.get("host", "localhost")
+    return [
+        (
+            r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
+            f"define('DB_NAME', {_php_single_quoted(database['name'])});",
+        ),
+        (
+            r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
+            f"define('DB_USER', {_php_single_quoted(database['user'])});",
+        ),
+        (
+            r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
+            f"define('DB_PASSWORD', {_php_single_quoted(database['password'])});",
+        ),
+        (
+            r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
+            f"define('DB_HOST', {_php_single_quoted(host)});",
+        ),
+    ]
+
+
+def _apply_wp_config_db_defines(cfg: str, database: Dict[str, Any]) -> str:
+    updated = cfg
+    if "database_name_here" in updated:
+        updated = updated.replace("database_name_here", database["name"])
+        updated = updated.replace("username_here", database["user"])
+        updated = updated.replace("password_here", database["password"])
+    for pattern, replacement in _wp_config_db_define_replacements(database):
+        if re.search(pattern, updated):
+            updated = re.sub(pattern, replacement, updated, count=1)
+    return updated
+
+
+def _verify_mysql_connection(database: Dict[str, Any]) -> bool:
+    try:
+        cmd = [
+            "mysql", "-N", "-B",
+            "-u", database["user"],
+            f"-p{database['password']}",
+            "-h", database.get("host", "localhost"),
+            "-e", "SELECT 1;",
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return res.returncode == 0 and res.stdout.strip() == "1"
+    except Exception:
+        return False
+
+
+def _resolve_wp_db_host(database: Dict[str, Any]) -> str:
+    """Pick a DB_HOST value that works for both mysql CLI and PHP mysqli."""
+    candidates: List[str] = []
+    preferred = database.get("host") or "localhost"
+    candidates.append(preferred)
+    if preferred == "localhost":
+        candidates.append("127.0.0.1")
+    elif preferred == "127.0.0.1":
+        candidates.append("localhost")
+    for host in candidates:
+        test_db = {**database, "host": host}
+        if _verify_mysql_connection(test_db):
+            return host
+    tried = ", ".join(candidates)
+    raise RuntimeError(
+        f"Cannot connect to MySQL database '{database.get('name')}' as user "
+        f"'{database.get('user')}' (tried host: {tried}). "
+        "Ensure MariaDB is running and credentials are correct."
+    )
+
+
 def _wordpress_files_present(root: Path) -> bool:
     return (root / "wp-includes" / "version.php").is_file()
 
@@ -240,15 +314,7 @@ def _update_wp_config_database(root: Path, database: Dict[str, Any]) -> bool:
     if not wp_config.is_file():
         return False
     cfg = wp_config.read_text(encoding="utf-8", errors="ignore")
-    replacements = [
-        (r"define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\);", f"define('DB_NAME', '{database['name']}');"),
-        (r"define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\);", f"define('DB_USER', '{database['user']}');"),
-        (r"define\(\s*'DB_PASSWORD'\s*,\s*'[^']*'\s*\);", f"define('DB_PASSWORD', '{database['password']}');"),
-        (r"define\(\s*'DB_HOST'\s*,\s*'[^']*'\s*\);", f"define('DB_HOST', '{database.get('host', 'localhost')}');"),
-    ]
-    updated = cfg
-    for pattern, replacement in replacements:
-        updated = re.sub(pattern, replacement, updated, count=1)
+    updated = _apply_wp_config_db_defines(cfg, database)
     if updated != cfg:
         wp_config.write_text(updated, encoding="utf-8")
         return True
@@ -261,11 +327,7 @@ def _write_wp_config(root: Path, database: Dict[str, Any]) -> bool:
     sample = root / "wp-config-sample.php"
     if wp_config.is_file() or not sample.is_file():
         return False
-    cfg = sample.read_text(encoding="utf-8", errors="ignore")
-    cfg = cfg.replace("database_name_here", database["name"])
-    cfg = cfg.replace("username_here", database["user"])
-    cfg = cfg.replace("password_here", database["password"])
-    cfg = cfg.replace("localhost", database.get("host", "localhost"))
+    cfg = _apply_wp_config_db_defines(sample.read_text(encoding="utf-8", errors="ignore"), database)
     for key in (
         "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
         "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
@@ -293,7 +355,7 @@ def _wordpress_db_installed(database: Dict[str, Any]) -> bool:
         return False
     try:
         cmd = [
-            "sudo", "mysql", "-N", "-B",
+            "mysql", "-N", "-B",
             "-u", database["user"],
             f"-p{database['password']}",
             "-h", database.get("host", "localhost"),
@@ -311,6 +373,11 @@ def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, An
     root = Path(doc_root)
     if not (root / "wp-load.php").is_file():
         raise RuntimeError("WordPress core files are incomplete (missing wp-load.php).")
+
+    working_host = _resolve_wp_db_host(database)
+    if working_host != database.get("host", "localhost"):
+        database = {**database, "host": working_host}
+        _ensure_wp_config(root, database)
 
     admin_user = "admin"
     admin_pass = _generate_password()
@@ -340,15 +407,24 @@ echo 'OK';
             timeout=120,
         )
         output = (res.stdout or "").strip()
-        if res.returncode != 0 or output not in ("OK", "ALREADY"):
-            detail = (res.stderr or res.stdout or "unknown error").strip()
-            raise RuntimeError(f"WordPress database install failed: {detail}")
-        return {
-            "db_installed": output == "OK",
-            "admin_user": admin_user,
-            "admin_password": admin_pass,
-            "admin_email": admin_email,
-        }
+        if output in ("OK", "ALREADY"):
+            return {
+                "db_installed": output == "OK",
+                "admin_user": admin_user,
+                "admin_password": admin_pass,
+                "admin_email": admin_email,
+                "db_host": working_host,
+            }
+        combined = (res.stderr or "") + "\n" + (res.stdout or "")
+        if "Error establishing a database connection" in combined:
+            raise RuntimeError(
+                f"WordPress cannot connect to MySQL as {database['user']}@{working_host}. "
+                "Credentials were synced but PHP still cannot reach the database."
+            )
+        detail = combined.strip() or "unknown error"
+        if len(detail) > 500:
+            detail = detail[:500] + "..."
+        raise RuntimeError(f"WordPress database install failed: {detail}")
     finally:
         try:
             install_script.unlink(missing_ok=True)
@@ -390,6 +466,8 @@ def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]
         if not files_present:
             raise RuntimeError("WordPress core download failed")
 
+    working_host = _resolve_wp_db_host(database)
+    database = {**database, "host": working_host}
     config_created = _ensure_wp_config(root, database)
     admin_url = f"https://{domain}/wp-admin/"
     result: Dict[str, Any] = {
@@ -397,6 +475,7 @@ def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]
         "files_present": files_present,
         "config_created": config_created,
         "admin_url": admin_url,
+        "db_host": working_host,
     }
 
     if _wordpress_db_installed(database):

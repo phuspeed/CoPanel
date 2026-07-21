@@ -57,6 +57,25 @@ class WordPressHelperTests(unittest.TestCase):
             self.assertIn("new_user", cfg)
             self.assertIn("new_pass", cfg)
 
+    def test_ensure_wp_config_updates_double_quoted_defines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wp_config = root / "wp-config.php"
+            wp_config.write_text(
+                'define( "DB_NAME", "old_db" );\n'
+                'define( "DB_USER", "old_user" );\n'
+                'define( "DB_PASSWORD", "old_pass" );\n'
+                'define( "DB_HOST", "localhost" );\n',
+                encoding="utf-8",
+            )
+            database = {"name": "new_db", "user": "new_user", "password": "p'a$s", "host": "127.0.0.1"}
+            self.assertTrue(_ensure_wp_config(root, database))
+            cfg = wp_config.read_text(encoding="utf-8")
+            self.assertIn("new_db", cfg)
+            self.assertIn("new_user", cfg)
+            self.assertIn("p\\'a$s", cfg)
+            self.assertIn("127.0.0.1", cfg)
+
     def test_write_wp_config_from_sample(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

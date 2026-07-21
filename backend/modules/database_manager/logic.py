@@ -335,16 +335,23 @@ GROUP BY s.schema_name;
             return {"status": "success", "message": f"User '{username}' created successfully (Mock fallback)."}
 
         try:
-            # Create the user & Grant privileges
-            sql_user_cmd = f"CREATE USER IF NOT EXISTS '{username}'@'{host}' IDENTIFIED BY '{password}';"
-            sql_grant_cmd = f"GRANT ALL PRIVILEGES ON `{dbname}`.* TO '{username}'@'{host}';"
-            sql_flush_cmd = "FLUSH PRIVILEGES;"
-            
-            # Execute MySQL queries
-            subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_user_cmd], check=True)
-            if dbname and dbname != "all_databases":
-                subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_grant_cmd], check=True)
-            subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_flush_cmd], check=True)
+            safe_pwd = password.replace("\\", "\\\\").replace("'", "''")
+            hosts = [host]
+            if host == "localhost":
+                hosts.append("127.0.0.1")
+            elif host == "127.0.0.1":
+                hosts.append("localhost")
+
+            for user_host in dict.fromkeys(hosts):
+                sql_user_cmd = (
+                    f"CREATE USER IF NOT EXISTS '{username}'@'{user_host}' IDENTIFIED BY '{safe_pwd}';"
+                    f"ALTER USER '{username}'@'{user_host}' IDENTIFIED BY '{safe_pwd}';"
+                )
+                subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_user_cmd], check=True)
+                if dbname and dbname != "all_databases":
+                    sql_grant_cmd = f"GRANT ALL PRIVILEGES ON `{dbname}`.* TO '{username}'@'{user_host}';"
+                    subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_grant_cmd], check=True)
+            subprocess.run(["sudo", "mysql", "-u", "root", "-e", "FLUSH PRIVILEGES;"], check=True)
 
             return {"status": "success", "message": f"User '{username}' created and linked to '{dbname}' successfully."}
         except Exception as e:
