@@ -8,7 +8,7 @@ import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
 import ExtensionErrorBoundary from './ExtensionErrorBoundary';
-import { DEFAULT_BRANDING, normalizeBranding, type BrandingSettings } from './brandingTypes';
+import { DEFAULT_BRANDING, BRANDING_UPDATED_EVENT, fetchPublicBranding, normalizeBranding, type BrandingSettings } from './brandingTypes';
 
 const DEFAULT_FAVICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d4ed8'/%3E%3Cpath d='M41 20a16 16 0 1 0 0 24' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
@@ -67,13 +67,23 @@ export function createRoutes() {
   }, []);
 
   useEffect(() => {
-    fetch('/api/panel_settings/branding/public')
-      .then((r) => r.json())
-      .then((body) => {
-        const next = body?.status === 'success' && body.data ? body.data : body;
-        setBranding(normalizeBranding(next));
-      })
+    const apply = (next: BrandingSettings) => setBranding(normalizeBranding(next));
+
+    fetchPublicBranding()
+      .then(apply)
       .catch(() => setBranding(DEFAULT_BRANDING));
+
+    const onBrandingUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<BrandingSettings | undefined>).detail;
+      if (detail) {
+        apply(detail);
+        return;
+      }
+      fetchPublicBranding().then(apply).catch(() => setBranding(DEFAULT_BRANDING));
+    };
+
+    window.addEventListener(BRANDING_UPDATED_EVENT, onBrandingUpdated);
+    return () => window.removeEventListener(BRANDING_UPDATED_EVENT, onBrandingUpdated);
   }, []);
 
   useEffect(() => {
