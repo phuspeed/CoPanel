@@ -25,7 +25,8 @@ type Lang = 'en' | 'vi';
 
 interface ModuleActivityState {
   playing?: boolean;
-  badgeText?: string;
+  playbackState?: 'playing' | 'paused' | null;
+  trackName?: string;
   title?: string;
 }
 
@@ -84,7 +85,8 @@ export default function Dock({
       const detail = (event as CustomEvent<{
         modulePath?: string;
         playing?: boolean;
-        badgeText?: string;
+        playbackState?: 'playing' | 'paused' | null;
+        trackName?: string;
         title?: string;
       }>).detail;
       if (!detail?.modulePath) return;
@@ -92,7 +94,8 @@ export default function Dock({
         ...prev,
         [detail.modulePath!]: {
           playing: detail.playing,
-          badgeText: detail.badgeText,
+          playbackState: detail.playbackState ?? (detail.playing ? 'playing' : null),
+          trackName: detail.trackName,
           title: detail.title,
         },
       }));
@@ -179,8 +182,8 @@ export default function Dock({
               active={windows.some((w) => w.modulePath === mod.path && !w.minimized)}
               title={moduleActivity[mod.path]?.title || mod.name}
               onClick={() => handleDockClick(mod.path)}
-              pulse={moduleActivity[mod.path]?.playing}
-              indicator={moduleActivity[mod.path]?.badgeText}
+              playbackState={moduleActivity[mod.path]?.playbackState}
+              trackName={moduleActivity[mod.path]?.trackName}
             >
               <Icon className="h-5 w-5" />
             </DockButton>
@@ -195,23 +198,32 @@ export default function Dock({
         {windows.map((win) => {
           const Icon = ICONS[win.icon] || ICONS.Grid;
           const active = focusedId === win.id && !win.minimized;
+          const activity = windowActivity[win.id];
+          const taskbarLabel = activity?.trackName || win.title;
           return (
             <DockButton
               key={win.id}
               isDark={isDark}
               active={active}
-              title={windowActivity[win.id]?.title || win.title}
+              title={activity?.title || win.title}
               minimized={win.minimized}
               onClick={() => {
                 if (win.minimized) restoreWindow(win.id);
                 else if (focusedId === win.id) minimizeWindow(win.id);
                 else focusWindow(win.id);
               }}
-              pulse={windowActivity[win.id]?.playing}
-              indicator={windowActivity[win.id]?.badgeText}
+              playbackState={activity?.playbackState}
+              trackName={activity?.trackName}
             >
-              <Icon className="h-4 w-4" />
-              <span className="hidden max-w-[100px] truncate text-[10px] font-semibold sm:inline">{win.title}</span>
+              <Icon className="h-4 w-4 shrink-0" />
+              <span
+                className={cn(
+                  'hidden max-w-[140px] truncate text-[10px] font-semibold sm:inline',
+                  activity?.playbackState === 'playing' && 'text-emerald-500',
+                )}
+              >
+                {taskbarLabel}
+              </span>
             </DockButton>
           );
         })}
@@ -275,8 +287,8 @@ function DockButton({
   minimized,
   title,
   badge,
-  pulse,
-  indicator,
+  playbackState,
+  trackName,
 }: {
   children: React.ReactNode;
   onClick: () => void;
@@ -285,13 +297,16 @@ function DockButton({
   minimized?: boolean;
   title?: string;
   badge?: number;
-  pulse?: boolean;
-  indicator?: string;
+  playbackState?: 'playing' | 'paused' | null;
+  trackName?: string;
 }) {
+  const isPlaying = playbackState === 'playing';
+  const isPaused = playbackState === 'paused';
+
   return (
     <button
       type="button"
-      title={title}
+      title={title || trackName}
       onClick={onClick}
       className={cn(
         'relative flex items-center gap-1.5 rounded-xl px-2.5 py-2 transition-colors',
@@ -302,7 +317,8 @@ function DockButton({
           : isDark
             ? 'text-slate-300 hover:bg-slate-800'
             : 'text-slate-600 hover:bg-slate-100',
-        minimized && 'opacity-50',
+        minimized && !isPlaying && 'opacity-50',
+        isPlaying && 'ring-1 ring-emerald-500/30',
       )}
     >
       {children}
@@ -311,12 +327,29 @@ function DockButton({
           {badge > 99 ? '99+' : badge}
         </span>
       )}
-      {pulse && (
-        <span className="absolute -bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+      {isPlaying && (
+        <span className="absolute -bottom-0.5 left-1/2 flex -translate-x-1/2 items-center justify-center">
+          <span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-emerald-400/70" />
+          <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)]" />
+        </span>
       )}
-      {indicator && (
-        <span className="absolute -right-1 -bottom-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[8px] font-bold leading-none text-white">
-          {indicator}
+      {(isPlaying || isPaused) && (
+        <span
+          className={cn(
+            'absolute -right-1 -bottom-1 flex h-4 w-4 items-center justify-center rounded-full border shadow-sm',
+            isPlaying
+              ? 'border-emerald-400/50 bg-emerald-500 text-white'
+              : isDark
+                ? 'border-slate-600 bg-slate-700 text-slate-200'
+                : 'border-slate-300 bg-white text-slate-600',
+            isPlaying && 'animate-pulse',
+          )}
+        >
+          {isPlaying ? (
+            <Icons.Play className="h-2.5 w-2.5 fill-current" />
+          ) : (
+            <Icons.Pause className="h-2.5 w-2.5 fill-current" />
+          )}
         </span>
       )}
     </button>
