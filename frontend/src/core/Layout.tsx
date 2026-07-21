@@ -29,6 +29,7 @@ import { moduleSupportsWindows, openModuleWindow } from './shell/openModuleWindo
 import { DOCK_HEIGHT } from './shell/windowTypes';
 import { useDesktopKeyboard } from './shell/useDesktopKeyboard';
 import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs, api } from './platform';
+import { apiFetch } from './authHeaders';
 
 interface IconProps {
   className?: string;
@@ -509,12 +510,12 @@ export default function Layout({
 
   useEffect(() => {
     const fetchInstalledPackages = () => {
-      fetch('/api/package_manager/list')
+      apiFetch('/api/package_manager/list')
         .then(async (r) => {
           if (r.ok) return r;
-          const alt = await fetch('/api/package_manager/');
+          const alt = await apiFetch('/api/package_manager/');
           if (alt.ok) return alt;
-          const fallback = await fetch('/api/package_manager');
+          const fallback = await apiFetch('/api/package_manager');
           return fallback;
         })
         .then(async (r) => {

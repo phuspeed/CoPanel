@@ -3,6 +3,7 @@
  */
 import { useState, useEffect, useMemo, useCallback, Fragment, type ReactNode } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+import { apiFetch } from '../../core/authHeaders';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import WindowModal from '../../core/shell/WindowModal';
@@ -276,7 +277,7 @@ export default function DockerManagerDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/docker_manager/list');
+      const response = await apiFetch('/api/docker_manager/list');
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to fetch containers');
@@ -296,7 +297,7 @@ export default function DockerManagerDashboard() {
 
   const fetchProjectsCount = useCallback(async () => {
     try {
-      const r = await fetch('/api/docker_manager/projects/list');
+      const r = await apiFetch('/api/docker_manager/projects/list');
       if (r.ok) {
         const d = await r.json();
         setProjectsCount((d.data || []).length);
@@ -309,7 +310,7 @@ export default function DockerManagerDashboard() {
   const fetchImages = useCallback(async () => {
     setImagesLoading(true);
     try {
-      const r = await fetch('/api/docker_manager/images');
+      const r = await apiFetch('/api/docker_manager/images');
       if (r.ok) {
         const d = await r.json();
         setImages(d.data || []);
@@ -324,7 +325,7 @@ export default function DockerManagerDashboard() {
   const fetchNetworks = useCallback(async () => {
     setNetworksLoading(true);
     try {
-      const r = await fetch('/api/docker_manager/networks');
+      const r = await apiFetch('/api/docker_manager/networks');
       if (r.ok) {
         const d = await r.json();
         setNetworks(d.data || []);
@@ -339,7 +340,7 @@ export default function DockerManagerDashboard() {
   const fetchVolumes = useCallback(async () => {
     setVolumesLoading(true);
     try {
-      const r = await fetch('/api/docker_manager/volumes');
+      const r = await apiFetch('/api/docker_manager/volumes');
       if (r.ok) {
         const d = await r.json();
         setVolumes(d.data || []);
@@ -372,7 +373,7 @@ export default function DockerManagerDashboard() {
 
   const handleStartContainer = async (container_id: string) => {
     try {
-      const response = await fetch('/api/docker_manager/start', {
+      const response = await apiFetch('/api/docker_manager/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_id }),
@@ -389,7 +390,7 @@ export default function DockerManagerDashboard() {
 
   const handleStopContainer = async (container_id: string) => {
     try {
-      const response = await fetch('/api/docker_manager/stop', {
+      const response = await apiFetch('/api/docker_manager/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_id }),
@@ -406,7 +407,7 @@ export default function DockerManagerDashboard() {
 
   const handleRestartContainer = async (container_id: string) => {
     try {
-      const response = await fetch('/api/docker_manager/restart', {
+      const response = await apiFetch('/api/docker_manager/restart', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_id }),
@@ -424,7 +425,7 @@ export default function DockerManagerDashboard() {
   const handleRemoveContainer = async (container_id: string) => {
     if (!confirm(tr.deleteConfirm)) return;
     try {
-      const response = await fetch('/api/docker_manager/remove', {
+      const response = await apiFetch('/api/docker_manager/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_id }),
@@ -448,7 +449,7 @@ export default function DockerManagerDashboard() {
         tail: '200',
         timestamps: 'true',
       });
-      const response = await fetch(`/api/docker_manager/logs?${params}`);
+      const response = await apiFetch(`/api/docker_manager/logs?${params}`);
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.detail || 'Failed to fetch container logs');
@@ -471,7 +472,7 @@ export default function DockerManagerDashboard() {
   const handleRemoveImage = async (imageRef: string) => {
     if (!confirm(tr.removeImageConfirm)) return;
     try {
-      const res = await fetch(`/api/docker_manager/images/remove?image_ref=${encodeURIComponent(imageRef)}`, {
+      const res = await apiFetch(`/api/docker_manager/images/remove?image_ref=${encodeURIComponent(imageRef)}`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to remove image');
@@ -484,7 +485,7 @@ export default function DockerManagerDashboard() {
   const handleRemoveNetwork = async (name: string) => {
     if (!confirm(tr.removeNetworkConfirm)) return;
     try {
-      const res = await fetch(`/api/docker_manager/networks/remove?name=${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/api/docker_manager/networks/remove?name=${encodeURIComponent(name)}`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to remove network');
@@ -497,7 +498,7 @@ export default function DockerManagerDashboard() {
   const handleRemoveVolume = async (name: string) => {
     if (!confirm(tr.removeVolumeConfirm)) return;
     try {
-      const res = await fetch(`/api/docker_manager/volumes/remove?name=${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/api/docker_manager/volumes/remove?name=${encodeURIComponent(name)}`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to remove volume');

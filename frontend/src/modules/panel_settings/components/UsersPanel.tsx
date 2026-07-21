@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { api } from '../../../core/platform';
+import { apiFetch } from '../../../core/authHeaders';
 
 interface UserProfile {
   id: number;
@@ -126,8 +127,8 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
   const fetchAvailableModules = useCallback(async () => {
     try {
       const [coreRes, pkgRes] = await Promise.all([
-        fetch('/api/modules'),
-        fetch('/api/package_manager/list'),
+        apiFetch('/api/modules'),
+        apiFetch('/api/package_manager/list'),
       ]);
 
       const next: AvailableModule[] = [];

@@ -6,6 +6,7 @@ import { cn } from '../../../lib/utils';
 import * as Icons from 'lucide-react';
 import ProjectEditorModal, { type ProjectRef } from './ProjectEditorModal';
 import WindowModal from '../../../core/shell/WindowModal';
+import { apiFetch } from '../../../core/authHeaders';
 
 export interface ManagedProject {
   id: string;
@@ -104,7 +105,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
   const fetchProjects = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/docker_manager/projects/list');
+      const res = await apiFetch('/api/docker_manager/projects/list');
       if (res.ok) {
         const data = await res.json();
         setProjects(data.data || []);
@@ -120,7 +121,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
       const url = p
         ? `/api/docker_manager/scan-compose?custom_path=${encodeURIComponent(p)}`
         : '/api/docker_manager/scan-compose';
-      const r = await fetch(url);
+      const r = await apiFetch(url);
       if (r.ok) {
         const d = await r.json();
         setComposeFiles(d.compose_files || []);
@@ -155,7 +156,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
     setActionOutput(null);
     try {
       if (action === 'deploy') {
-        const res = await fetch('/api/docker_manager/compose/deploy', {
+        const res = await apiFetch('/api/docker_manager/compose/deploy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path }),
@@ -165,7 +166,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
         setActionOutput(`Deploy job started: ${data.job_id || 'ok'}`);
       } else {
         const endpoint = action === 'down' ? '/api/docker_manager/compose/down' : '/api/docker_manager/compose/restart';
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path }),
@@ -190,7 +191,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
     setLogsContent('');
     setLogsLoading(true);
     try {
-      const res = await fetch(`/api/docker_manager/compose/logs?path=${encodeURIComponent(project.path)}&tail=200&timestamps=true`);
+      const res = await apiFetch(`/api/docker_manager/compose/logs?path=${encodeURIComponent(project.path)}&tail=200&timestamps=true`);
       const data = await res.json();
       setLogsContent(data.output || data.error || data.logs || 'No logs.');
     } catch {
