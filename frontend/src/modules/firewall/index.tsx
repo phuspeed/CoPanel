@@ -159,7 +159,7 @@ export default function FirewallDashboard() {
     ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
     : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200';
 
-  const authHdr = token ? { Authorization: `Bearer ${token}` } : {};
+  const authHdr: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   useEffect(() => {
     if (activeTab === 'ufw') fetchFirewall();
