@@ -257,9 +257,31 @@ class SSLManager:
             return {"status": "error", "message": str(e)}
 
     @staticmethod
+    def find_nginx_vhost_path(domain: str) -> Optional[Path]:
+        """Resolve the nginx vhost file for a domain (handles ``{domain}.conf`` naming)."""
+        domain = domain.strip().lower()
+        sites_dir = Path("/etc/nginx/sites-available") if not IS_WINDOWS else Path("./test_nginx/sites-available")
+        if not sites_dir.is_dir():
+            return None
+        for candidate in (f"{domain}.conf", domain):
+            path = sites_dir / candidate
+            if path.is_file():
+                return path
+        for path in sites_dir.iterdir():
+            if not path.is_file() or path.name in ("default", "copanel"):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if f"server_name {domain}" in content or f"server_name {domain} " in content:
+                return path
+        return None
+
+    @staticmethod
     def enable_ssl_in_nginx_vhost(domain: str, cert_path: str, key_path: str):
-        vhost_path = Path(f"/etc/nginx/sites-available/{domain}") if not IS_WINDOWS else Path(f"./test_nginx/sites-available/{domain}")
-        if not vhost_path.exists():
+        vhost_path = SSLManager.find_nginx_vhost_path(domain)
+        if not vhost_path or not vhost_path.exists():
             return
 
         content = vhost_path.read_text(encoding="utf-8")

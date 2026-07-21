@@ -694,10 +694,36 @@ function RunPanel({ job, isDark, onReset }: { job: ReturnType<typeof useJob>; is
             )}
             {job.result.deployment?.admin_url && (
               <a href={job.result.deployment.admin_url} target="_blank" rel="noreferrer" className="text-violet-500 text-sm font-semibold hover:underline block">
-                WordPress setup →
+                WordPress admin →
               </a>
             )}
-            {job.result.ssl && <Row k="SSL" v={`${job.result.ssl.type} (${job.result.ssl.domain})`} isDark={isDark} />}
+            {job.result.deployment?.admin_user && (
+              <>
+                <Row k="WP admin" v={job.result.deployment.admin_user} isDark={isDark} />
+                <Row k="WP password" v={job.result.deployment.admin_password} isDark={isDark} mono />
+              </>
+            )}
+            {job.result.ssl && (
+              <Row
+                k="SSL"
+                v={
+                  job.result.ssl.status === 'failed'
+                    ? `failed: ${job.result.ssl.error || 'unknown'}`
+                    : `${job.result.ssl.type} (${job.result.ssl.domain})`
+                }
+                isDark={isDark}
+              />
+            )}
+            {Array.isArray(job.result.warnings) && job.result.warnings.length > 0 && (
+              <div className="space-y-1">
+                <span className={cn('text-xs uppercase tracking-wider', isDark ? 'text-amber-500' : 'text-amber-600')}>Warnings</span>
+                {job.result.warnings.map((w: string, i: number) => (
+                  <p key={i} className={cn('text-xs', isDark ? 'text-amber-400' : 'text-amber-700')}>
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
             {job.result.verification?.reachable !== undefined && (
               <Row
                 k="Reachable"
