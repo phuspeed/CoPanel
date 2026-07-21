@@ -26,6 +26,7 @@ interface Props {
   siteTitle: string;
   siteSubtitle?: string;
   logoDataUrl?: string | null;
+  wallpaperDataUrl?: string | null;
 }
 
 export default function DesktopShell({
@@ -34,6 +35,7 @@ export default function DesktopShell({
   siteTitle,
   siteSubtitle,
   logoDataUrl,
+  wallpaperDataUrl,
 }: Props) {
   const tr = I18N[language === 'vi' ? 'vi' : 'en'];
   const [now, setNow] = useState(new Date());
@@ -55,16 +57,36 @@ export default function DesktopShell({
     <div
       className={cn(
         'relative flex h-full min-h-0 flex-col overflow-hidden',
-        isDark ? chromeWallpaper.dark : chromeWallpaper.light,
+        !wallpaperDataUrl && (isDark ? chromeWallpaper.dark : chromeWallpaper.light),
       )}
+      style={
+        wallpaperDataUrl
+          ? {
+              backgroundImage: `url(${wallpaperDataUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }
+          : undefined
+      }
     >
       <div
-        className="pointer-events-none absolute inset-0 opacity-40"
-        style={{
-          backgroundImage: isDark
-            ? 'radial-gradient(ellipse 80% 50% at 50% 20%, rgba(34,211,238,0.12), transparent)'
-            : 'radial-gradient(ellipse 70% 45% at 50% 25%, rgba(255,255,255,0.55), transparent)',
-        }}
+        className={cn(
+          'pointer-events-none absolute inset-0',
+          wallpaperDataUrl
+            ? isDark
+              ? 'bg-slate-950/55'
+              : 'bg-white/35'
+            : 'opacity-40',
+        )}
+        style={
+          wallpaperDataUrl
+            ? undefined
+            : {
+                backgroundImage: isDark
+                  ? 'radial-gradient(ellipse 80% 50% at 50% 20%, rgba(34,211,238,0.12), transparent)'
+                  : 'radial-gradient(ellipse 70% 45% at 50% 25%, rgba(255,255,255,0.55), transparent)',
+              }
+        }
         aria-hidden
       />
 

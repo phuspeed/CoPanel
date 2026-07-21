@@ -8,20 +8,8 @@ import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
 import ExtensionErrorBoundary from './ExtensionErrorBoundary';
+import { DEFAULT_BRANDING, normalizeBranding, type BrandingSettings } from './brandingTypes';
 
-interface BrandingSettings {
-  site_title: string;
-  site_subtitle: string;
-  favicon_data_url: string | null;
-  logo_data_url: string | null;
-}
-
-const DEFAULT_BRANDING: BrandingSettings = {
-  site_title: 'CoPanel',
-  site_subtitle: 'Lightweight VPS Management',
-  favicon_data_url: null,
-  logo_data_url: null,
-};
 const DEFAULT_FAVICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d4ed8'/%3E%3Cpath d='M41 20a16 16 0 1 0 0 24' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
 
@@ -83,12 +71,7 @@ export function createRoutes() {
       .then((r) => r.json())
       .then((body) => {
         const next = body?.status === 'success' && body.data ? body.data : body;
-        setBranding({
-          site_title: next?.site_title || DEFAULT_BRANDING.site_title,
-          site_subtitle: next?.site_subtitle || DEFAULT_BRANDING.site_subtitle,
-          favicon_data_url: next?.favicon_data_url || null,
-          logo_data_url: next?.logo_data_url || null,
-        });
+        setBranding(normalizeBranding(next));
       })
       .catch(() => setBranding(DEFAULT_BRANDING));
   }, []);

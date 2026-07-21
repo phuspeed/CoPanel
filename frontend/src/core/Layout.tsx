@@ -15,6 +15,7 @@ import NotificationCenter from './shell/NotificationCenter';
 import TaskCenter from './shell/TaskCenter';
 import ToastLayer from './shell/ToastLayer';
 import DesktopShell from './shell/DesktopShell';
+import { activeWallpaperDataUrl, type BrandingSettings } from './brandingTypes';
 import Dock from './shell/Dock';
 import StartMenu from './shell/StartMenu';
 import UserMenu from './shell/UserMenu';
@@ -68,7 +69,7 @@ export default function Layout({
 }: {
   user?: any;
   onLogout?: () => void;
-  branding?: { site_title?: string; site_subtitle?: string; logo_data_url?: string | null };
+  branding?: BrandingSettings;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const location = useLocation();
@@ -128,6 +129,7 @@ export default function Layout({
 
   const isDark = theme === 'dark';
   const siteTitle = branding?.site_title?.trim() || 'CoPanel';
+  const wallpaperDataUrl = activeWallpaperDataUrl(branding);
 
   const t = {
     en: {
@@ -1056,6 +1058,7 @@ export default function Layout({
               siteTitle={siteTitle}
               siteSubtitle={branding?.site_subtitle}
               logoDataUrl={logoDataUrl}
+              wallpaperDataUrl={wallpaperDataUrl}
             />
           ) : (
             <Outlet context={shellContext} />
