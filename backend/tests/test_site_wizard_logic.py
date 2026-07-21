@@ -133,5 +133,37 @@ class HttpVerifyTests(unittest.TestCase):
         self.assertEqual(result["status_code"], 400)
 
 
+class WordPressInstallScriptTests(unittest.TestCase):
+    @patch("modules.site_wizard.logic._resolve_wp_db_host", return_value="127.0.0.1")
+    @patch("modules.site_wizard.logic.subprocess.run")
+    def test_install_script_seeds_http_host(self, mock_run, _host):
+        from modules.site_wizard.logic import _run_wordpress_db_install
+
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            script_path = Path(cmd[-1])
+            captured["script"] = script_path.read_text(encoding="utf-8")
+            mock = MagicMock()
+            mock.returncode = 0
+            mock.stdout = "OK"
+            mock.stderr = ""
+            return mock
+
+        mock_run.side_effect = fake_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "wp-load.php").write_text("<?php", encoding="utf-8")
+            database = {"name": "db", "user": "u", "password": "p", "host": "127.0.0.1"}
+            result = _run_wordpress_db_install(str(root), "example.com", database)
+
+        self.assertTrue(result["db_installed"])
+        script = captured["script"]
+        self.assertIn("HTTP_HOST", script)
+        self.assertIn('"example.com"', script)
+        self.assertIn("WP_HOME", script)
+
+
 if __name__ == "__main__":
     unittest.main()

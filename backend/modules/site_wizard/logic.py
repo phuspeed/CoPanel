@@ -382,10 +382,23 @@ def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, An
     admin_user = "admin"
     admin_pass = _generate_password()
     admin_email = f"admin@{domain}"
+    # Seed a fake web request context — wp_install/home_url() need HTTP_HOST in CLI.
     install_script = root / ".copanel-wp-install.php"
     install_script.write_text(
         f"""<?php
+error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED);
+ini_set('display_errors', '0');
+$_SERVER['HTTP_HOST'] = {json.dumps(domain)};
+$_SERVER['SERVER_NAME'] = {json.dumps(domain)};
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+$_SERVER['HTTPS'] = '';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
 define('WP_USE_THEMES', false);
+define('WP_SITEURL', {json.dumps(f"http://{domain}")});
+define('WP_HOME', {json.dumps(f"http://{domain}")});
 require_once __DIR__ . '/wp-load.php';
 require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 require_once ABSPATH . 'wp-admin/includes/translation-install.php';
@@ -393,23 +406,35 @@ if (is_blog_installed()) {{
     echo 'ALREADY';
     exit(0);
 }}
-wp_install({json.dumps(domain)}, {json.dumps(admin_user)}, {json.dumps(admin_email)}, true, '', {json.dumps(admin_pass)});
+$result = wp_install({json.dumps(domain)}, {json.dumps(admin_user)}, {json.dumps(admin_email)}, true, '', {json.dumps(admin_pass)});
+if (empty($result) || (is_array($result) && empty($result['user_id']))) {{
+    fwrite(STDERR, "wp_install returned empty result\\n");
+    exit(1);
+}}
 echo 'OK';
 """,
         encoding="utf-8",
     )
     try:
         res = subprocess.run(
-            ["php", str(install_script)],
+            ["php", "-d", "display_errors=0", str(install_script)],
             cwd=str(root),
             capture_output=True,
             text=True,
             timeout=120,
+            env={**os.environ, "HTTP_HOST": domain},
         )
         output = (res.stdout or "").strip()
-        if output in ("OK", "ALREADY"):
+        # Accept OK/ALREADY even when PHP prints notices on stdout.
+        status_token = None
+        for line in reversed(output.splitlines() or [output]):
+            token = line.strip()
+            if token in ("OK", "ALREADY"):
+                status_token = token
+                break
+        if status_token:
             return {
-                "db_installed": output == "OK",
+                "db_installed": status_token == "OK",
                 "admin_user": admin_user,
                 "admin_password": admin_pass,
                 "admin_email": admin_email,
