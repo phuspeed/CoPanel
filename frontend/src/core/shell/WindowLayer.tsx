@@ -47,6 +47,7 @@ export default function WindowLayer({ shellContext, isDark }: Props) {
               isFocused={focusedId === win.id}
               isDark={isDark}
               containerRef={containerRef}
+              keepMountedOnMinimize={mod.keepMountedOnMinimize === true}
             >
               <ShellContextProvider value={shellContext}>
                 <Suspense fallback={<ModuleLoader />}>
