@@ -2,6 +2,27 @@
 
 All notable changes to CoPanel are documented in this file.
 
+## [1.1.3] — 2026-07-21
+
+### English
+
+**Fixed / Improved**
+
+- Classic mobile layout: module sidebars use a collapsible drawer instead of a fixed 200px column (App Store, Files, Settings, Web, SSL, Docker, Backup, Site Wizard, System Monitor, Database, Cleaner, Package Manager, Firewall, Cron, DNS, Terminal snippets overlay).
+- Branding wallpaper gallery updates the Desktop shell immediately after save (no manual refresh).
+- App Store featured cards stack on narrow screens to avoid horizontal clipping.
+
+**AppStore (non-core) packages**
+
+- Mobile drawer sidebars: `audio_station` 0.3.8, `download_manager` 0.2.15, `storage_manager` 1.6.2, `cloudflare_ddns` 1.0.12, `cloud_sync` 1.1.6.
+
+### Tiếng Việt (tóm tắt)
+
+- Mobile classic: sidebar module dạng drawer; Terminal snippets overlay; cập nhật hình nền không cần F5.
+- ZIP AppStore non-core đã bump phiên bản kèm drawer tương tự.
+
+[1.1.3]: https://github.com/phuspeed/CoPanel/releases/tag/v1.1.3
+
 ## [1.1.2] — 2026-07-21
 
 ### English
