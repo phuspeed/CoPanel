@@ -4,6 +4,7 @@
  */
 import { cn } from '../../lib/utils';
 import { useAppShellContext } from '../hooks/useAppShellContext';
+import { isLayoutViewportWide } from '../viewportDesktopSite';
 import { useIsWindowedModule } from './WindowViewportContext';
 
 interface Props {
@@ -17,12 +18,13 @@ export default function ModuleViewport({ children, className, constrained = fals
   const { theme } = useAppShellContext();
   const isWindowed = useIsWindowedModule();
   const isDark = theme === 'dark';
+  const isClassicMobile = !isWindowed && !isLayoutViewportWide();
 
   return (
     <div
       className={cn(
         'flex flex-col transition-colors duration-200',
-        isWindowed ? 'h-full min-h-0' : 'min-h-screen',
+        isWindowed ? 'h-full min-h-0' : isClassicMobile ? 'min-h-0' : 'min-h-screen',
         isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900',
         !isWindowed && constrained && 'mx-auto max-w-7xl',
         className,

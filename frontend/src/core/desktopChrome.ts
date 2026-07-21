@@ -61,7 +61,7 @@ const ACCENT = {
 /** Left module sidebar shell (Atoma / ADM style) */
 export function chromeSidebar(isDark: boolean, width: 'sm' | 'md' = 'md') {
   return cn(
-    'flex shrink-0 flex-col border-r',
+    'flex h-full shrink-0 flex-col border-r',
     width === 'sm' ? 'w-[200px]' : 'w-[220px]',
     isDark ? 'border-slate-800 bg-slate-950/95' : 'border-slate-200 bg-[#f4f6f8]',
   );

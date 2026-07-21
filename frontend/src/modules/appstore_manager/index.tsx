@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import { moduleRegistry } from '../../core/registry';
 import { moduleSupportsWindows, openModuleWindow } from '../../core/shell/openModuleWindow';
 import { cn } from '../../lib/utils';
@@ -507,16 +508,20 @@ export default function AppStoreDashboard() {
 
   return (
     <ModuleViewport className="select-none">
-    <div className={cn('flex h-full min-h-0')}>
-      <AppStoreSidebar
-        active={nav}
-        onChange={setNav}
-        isDark={isDark}
-        tr={tr}
-        updateCount={updateCount}
-        installedCount={installedCount}
-      />
-
+    <ModuleSidebarLayout
+      isDark={isDark}
+      mobileTitle={tr.title}
+      sidebar={
+        <AppStoreSidebar
+          active={nav}
+          onChange={setNav}
+          isDark={isDark}
+          tr={tr}
+          updateCount={updateCount}
+          installedCount={installedCount}
+        />
+      }
+    >
       <div className={cn('flex min-w-0 flex-1 flex-col', chromeContentBg(isDark))}>
         <AppStoreHeader
           query={query}
@@ -583,6 +588,7 @@ export default function AppStoreDashboard() {
           />
         </div>
       </div>
+    </ModuleSidebarLayout>
 
       <BuildProgressModal
         open={!!activePkgId}
@@ -623,7 +629,6 @@ export default function AppStoreDashboard() {
         }}
         onClose={() => setIsConfigOpen(false)}
       />
-    </div>
     </ModuleViewport>
   );
 }

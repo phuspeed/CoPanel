@@ -5,6 +5,7 @@ import type { FileItem } from '../types';
 import type { FileManagerState } from '../hooks/useFileManager';
 import FileModals from './FileModals';
 import FileSidebar from './FileSidebar';
+import ModuleSidebarLayout from '../../../core/shell/ModuleSidebarLayout';
 import FileToolbar from './FileToolbar';
 import FileGridView from './FileGridView';
 import FileListView from './FileListView';
@@ -130,19 +131,24 @@ export default function FileManagerShell(fm: FileManagerState) {
       )}
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <FileSidebar
+        <ModuleSidebarLayout
           isDark={isDark}
-          tr={tr}
-          currentPath={currentPath}
-          bookmarks={bookmarks}
-          bookmarkBackendMissing={bookmarkBackendMissing}
-          bookmarkPathSet={bookmarkPathSet}
-          onNavigate={navigateTo}
-          onOpenBookmark={(b) => void openBookmark(b)}
-          onRemoveBookmark={(p) => void removeBookmarkByPath(p)}
-          onBookmarkFolder={() => void bookmarkCurrentDirectory()}
-        />
-
+          mobileTitle={tr.title}
+          sidebar={
+            <FileSidebar
+              isDark={isDark}
+              tr={tr}
+              currentPath={currentPath}
+              bookmarks={bookmarks}
+              bookmarkBackendMissing={bookmarkBackendMissing}
+              bookmarkPathSet={bookmarkPathSet}
+              onNavigate={navigateTo}
+              onOpenBookmark={(b) => void openBookmark(b)}
+              onRemoveBookmark={(p) => void removeBookmarkByPath(p)}
+              onBookmarkFolder={() => void bookmarkCurrentDirectory()}
+            />
+          }
+        >
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <FileToolbar
             isDark={isDark}
@@ -274,6 +280,7 @@ export default function FileManagerShell(fm: FileManagerState) {
             </span>
           </footer>
         </div>
+        </ModuleSidebarLayout>
       </div>
 
       <FileModals fm={fm} />

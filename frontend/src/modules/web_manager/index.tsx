@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import WebManagerSidebar, { type WebManagerTab } from './components/WebManagerSidebar';
 import PhpManagerPanel from './components/PhpManagerPanel';
@@ -845,25 +846,30 @@ export default function WebManagerDashboard() {
 
   return (
     <ModuleViewport className="flex min-h-0 flex-col">
-      <div className={`flex h-full min-h-0 select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-        <WebManagerSidebar
-          activeTab={activeTab}
-          onTab={setActiveTab}
-          isDark={isDark}
-          labels={{
-            sites: tr.tabSites,
-            services: tr.tabServices,
-            databases: tr.tabDbs,
-            php: tr.tabPhp,
-          }}
-          title={tr.title}
-          subtitle={tr.desc}
-          counts={{
-            sites: sites.length,
-            databases: databases.length,
-          }}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={tr.title}
+        className={`select-none ${isDark ? 'text-slate-100' : 'text-slate-900'}`}
+        sidebar={
+          <WebManagerSidebar
+            activeTab={activeTab}
+            onTab={setActiveTab}
+            isDark={isDark}
+            labels={{
+              sites: tr.tabSites,
+              services: tr.tabServices,
+              databases: tr.tabDbs,
+              php: tr.tabPhp,
+            }}
+            title={tr.title}
+            subtitle={tr.desc}
+            counts={{
+              sites: sites.length,
+              databases: databases.length,
+            }}
+          />
+        }
+      >
         <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
           <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1.5 min-w-0">
@@ -1581,7 +1587,7 @@ export default function WebManagerDashboard() {
         <PhpManagerPanel isDark={isDark} language={language || 'en'} authHeaders={authHeaders} />
       )}
         </main>
-      </div>
+      </ModuleSidebarLayout>
 
       <WindowModal
         open={!!viewingSite}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import SettingsSidebar, { type SettingsTab } from './components/SettingsSidebar';
 import UsersPanel from './components/UsersPanel';
 import DateTimePanel from './components/DateTimePanel';
@@ -599,25 +600,30 @@ export default function PanelSettings() {
 
   return (
     <ModuleViewport className="flex min-h-0 flex-col">
-      <div className={`flex h-full min-h-0 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-        <SettingsSidebar
-          tab={tab}
-          onTab={setTab}
-          isDark={isDark}
-          labels={{
-            datetime: t.datetime,
-            users: t.users,
-            ssh: t.ssh,
-            root: t.root,
-            gate: t.gate,
-            totp: t.totp,
-            network: t.network,
-            branding: t.branding,
-          }}
-          title={t.title}
-          subtitle={t.desc}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={t.title}
+        className={isDark ? 'text-slate-100' : 'text-slate-900'}
+        sidebar={
+          <SettingsSidebar
+            tab={tab}
+            onTab={setTab}
+            isDark={isDark}
+            labels={{
+              datetime: t.datetime,
+              users: t.users,
+              ssh: t.ssh,
+              root: t.root,
+              gate: t.gate,
+              totp: t.totp,
+              network: t.network,
+              branding: t.branding,
+            }}
+            title={t.title}
+            subtitle={t.desc}
+          />
+        }
+      >
         <main className="min-h-0 flex-1 overflow-y-auto p-5 md:p-8">
           {error && (
             <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">
@@ -1125,7 +1131,7 @@ export default function PanelSettings() {
         </div>
       )}
         </main>
-      </div>
+      </ModuleSidebarLayout>
     </ModuleViewport>
   );
 }
