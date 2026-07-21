@@ -115,6 +115,8 @@ def _default_store() -> Dict[str, Any]:
             "site_subtitle": "Lightweight VPS Management",
             "favicon_data_url": None,
             "logo_data_url": None,
+            "wallpapers": [],
+            "selected_wallpaper_id": None,
         },
         "updated_at": time.time(),
     }
@@ -860,11 +862,19 @@ def get_public_branding() -> Dict[str, Any]:
     logo_data_url = branding.get("logo_data_url")
     if logo_data_url is not None:
         logo_data_url = str(logo_data_url).strip() or None
+    wallpapers = _normalize_wallpapers_list(branding.get("wallpapers"))
+    selected_wallpaper_id = branding.get("selected_wallpaper_id")
+    if selected_wallpaper_id is not None:
+        selected_wallpaper_id = str(selected_wallpaper_id).strip() or None
+    if selected_wallpaper_id and not any(w["id"] == selected_wallpaper_id for w in wallpapers):
+        selected_wallpaper_id = None
     return {
         "site_title": site_title,
         "site_subtitle": site_subtitle,
         "favicon_data_url": favicon_data_url,
         "logo_data_url": logo_data_url,
+        "wallpapers": wallpapers,
+        "selected_wallpaper_id": selected_wallpaper_id,
     }
 
 
@@ -928,11 +938,88 @@ def _validate_logo_data_url(logo_data_url: Optional[str]) -> Optional[str]:
     return f"data:{match.group(1).lower()};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
+MAX_WALLPAPERS = 12
+MAX_WALLPAPER_BYTES = 2 * 1024 * 1024
+_WALLPAPER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _validate_wallpaper_data_url(data_url: str) -> str:
+    value = str(data_url or "").strip()
+    if not value:
+        raise ValueError("Wallpaper image data is required.")
+    match = re.match(
+        r"^data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)$",
+        value,
+        re.I,
+    )
+    if not match:
+        raise ValueError("Wallpaper must be a PNG, JPEG, GIF, or WEBP image.")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid wallpaper image data.") from exc
+    if len(raw) > MAX_WALLPAPER_BYTES:
+        raise ValueError(f"Wallpaper too large (max {MAX_WALLPAPER_BYTES // (1024 * 1024)} MB).")
+    return f"data:{match.group(1).lower()};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _validate_wallpaper_id(wallpaper_id: str) -> str:
+    value = str(wallpaper_id or "").strip()
+    if not _WALLPAPER_ID_RE.match(value):
+        raise ValueError("Invalid wallpaper id.")
+    return value
+
+
+def _validate_wallpapers(wallpapers: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if not wallpapers:
+        return []
+    if len(wallpapers) > MAX_WALLPAPERS:
+        raise ValueError(f"Too many wallpapers (max {MAX_WALLPAPERS}).")
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for item in wallpapers:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid wallpaper entry.")
+        wid = _validate_wallpaper_id(str(item.get("id") or ""))
+        if wid in seen:
+            raise ValueError(f"Duplicate wallpaper id: {wid}")
+        seen.add(wid)
+        label = item.get("label")
+        label_str = str(label).strip()[:80] if label else None
+        data_url = _validate_wallpaper_data_url(str(item.get("data_url") or ""))
+        out.append({"id": wid, "label": label_str or None, "data_url": data_url})
+    return out
+
+
+def _normalize_wallpapers_list(raw: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        wid = str(item.get("id") or "").strip()
+        data_url = item.get("data_url")
+        if not wid or not _WALLPAPER_ID_RE.match(wid) or not data_url:
+            continue
+        label = item.get("label")
+        out.append(
+            {
+                "id": wid,
+                "label": str(label).strip()[:80] if label else None,
+                "data_url": str(data_url).strip(),
+            }
+        )
+    return out[:MAX_WALLPAPERS]
+
+
 def update_branding(
     site_title: str,
     site_subtitle: Optional[str],
     favicon_data_url: Optional[str],
     logo_data_url: Optional[str],
+    wallpapers: Optional[List[Dict[str, Any]]] = None,
+    selected_wallpaper_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     store = _load_store()
     branding = store.setdefault("branding", {})
@@ -940,6 +1027,14 @@ def update_branding(
     branding["site_subtitle"] = _validate_site_subtitle(site_subtitle)
     branding["favicon_data_url"] = _validate_favicon_data_url(favicon_data_url)
     branding["logo_data_url"] = _validate_logo_data_url(logo_data_url)
+    normalized = _validate_wallpapers(wallpapers)
+    branding["wallpapers"] = normalized
+    sel = str(selected_wallpaper_id).strip() if selected_wallpaper_id else None
+    if sel:
+        sel = _validate_wallpaper_id(sel)
+        if not any(w["id"] == sel for w in normalized):
+            raise ValueError("Selected wallpaper was not found in the wallpaper list.")
+    branding["selected_wallpaper_id"] = sel
     _save_store(store)
     return get_public_branding()
 

@@ -44,7 +44,14 @@ def get_public_branding() -> Dict[str, Any]:
 @router.put("/branding")
 def set_branding(req: BrandingSettingsRequest, user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
     try:
-        result = logic.update_branding(req.site_title, req.site_subtitle, req.favicon_data_url, req.logo_data_url)
+        result = logic.update_branding(
+            req.site_title,
+            req.site_subtitle,
+            req.favicon_data_url,
+            req.logo_data_url,
+            [w.model_dump() for w in req.wallpapers],
+            req.selected_wallpaper_id,
+        )
     except ValueError as exc:
         raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
     record_audit(

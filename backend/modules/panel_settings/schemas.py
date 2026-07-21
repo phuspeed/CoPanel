@@ -6,6 +6,12 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class WallpaperItemRequest(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    label: Optional[str] = Field(None, max_length=80)
+    data_url: str = Field(..., min_length=1)
+
+
 class SshPortRequest(BaseModel):
     port: int = Field(..., ge=1, le=65535)
     confirm: bool = False
@@ -27,6 +33,8 @@ class BrandingSettingsRequest(BaseModel):
     site_subtitle: Optional[str] = Field(None, max_length=120)
     favicon_data_url: Optional[str] = None
     logo_data_url: Optional[str] = None
+    wallpapers: List[WallpaperItemRequest] = Field(default_factory=list)
+    selected_wallpaper_id: Optional[str] = Field(None, max_length=64)
 
 
 class TotpVerifyRequest(BaseModel):

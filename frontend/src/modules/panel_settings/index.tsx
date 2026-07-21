@@ -4,8 +4,16 @@ import ModuleViewport from '../../core/shell/ModuleViewport';
 import SettingsSidebar, { type SettingsTab } from './components/SettingsSidebar';
 import UsersPanel from './components/UsersPanel';
 import DateTimePanel from './components/DateTimePanel';
+import WallpaperGallery from './components/WallpaperGallery';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
+import {
+  MAX_WALLPAPERS,
+  newWallpaperId,
+  normalizeBranding,
+  readImageFileAsDataUrl,
+  type WallpaperItem,
+} from '../../core/brandingTypes';
 
 type Tab = SettingsTab;
 
@@ -14,6 +22,8 @@ interface BrandingSettings {
   site_subtitle: string;
   favicon_data_url: string | null;
   logo_data_url: string | null;
+  wallpapers: WallpaperItem[];
+  selected_wallpaper_id: string | null;
 }
 
 interface Settings {
@@ -82,6 +92,9 @@ export default function PanelSettings() {
   const [faviconName, setFaviconName] = useState('');
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoName, setLogoName] = useState('');
+  const [wallpapers, setWallpapers] = useState<WallpaperItem[]>([]);
+  const [selectedWallpaperId, setSelectedWallpaperId] = useState<string | null>(null);
+  const [wallpaperUploading, setWallpaperUploading] = useState(false);
 
   const [network, setNetwork] = useState<NetworkPayload | null>(null);
   const [netLoading, setNetLoading] = useState(false);
@@ -160,7 +173,7 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Primary interface',
       netplanRename: 'Netplan file uses «{old}» — will write as «{name}» on apply',
-      brandingDesc: 'Customize browser tab title and favicon used by CoPanel.',
+      brandingDesc: 'Customize browser tab title, favicon, logo, and desktop wallpaper.',
       siteTitle: 'Site title',
       siteTitleHint: 'Shown in browser tab, login page, and sidebar header.',
       siteSubtitle: 'Site subtitle',
@@ -243,7 +256,7 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Card mạng chính',
       netplanRename: 'Netplan đang dùng «{old}» — khi áp dụng sẽ ghi thành «{name}»',
-      brandingDesc: 'Tùy chỉnh tiêu đề tab trình duyệt và favicon của CoPanel.',
+      brandingDesc: 'Tùy chỉnh tiêu đề tab, favicon, logo và hình nền desktop.',
       siteTitle: 'Tiêu đề site',
       siteTitleHint: 'Hiện ở tab trình duyệt, trang đăng nhập và tiêu đề sidebar.',
       siteSubtitle: 'Dòng phụ',
@@ -272,6 +285,9 @@ export default function PanelSettings() {
     setSiteSubtitle(data.branding?.site_subtitle || 'Lightweight VPS Management');
     setFaviconDataUrl(data.branding?.favicon_data_url || null);
     setLogoDataUrl(data.branding?.logo_data_url || null);
+    const normalized = normalizeBranding(data.branding);
+    setWallpapers(normalized.wallpapers);
+    setSelectedWallpaperId(normalized.selected_wallpaper_id);
     setFaviconName('');
     setLogoName('');
   }, []);
@@ -366,6 +382,48 @@ export default function PanelSettings() {
     setLogoDataUrl(dataUrl);
     setLogoName(file.name);
     setError(null);
+  };
+
+  const WALLPAPER_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+  const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
+
+  const onUploadWallpapers = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const remaining = MAX_WALLPAPERS - wallpapers.length;
+    if (remaining <= 0) {
+      setError(`Maximum ${MAX_WALLPAPERS} wallpapers allowed.`);
+      return;
+    }
+
+    setWallpaperUploading(true);
+    setError(null);
+    const added: WallpaperItem[] = [];
+    try {
+      for (const file of Array.from(files).slice(0, remaining)) {
+        if (!WALLPAPER_MIME.has(file.type)) {
+          setError('Wallpaper must be PNG, JPEG, GIF, or WebP.');
+          continue;
+        }
+        if (file.size > MAX_WALLPAPER_BYTES) {
+          setError('Each wallpaper must be 2 MB or smaller.');
+          continue;
+        }
+        const data_url = await readImageFileAsDataUrl(file);
+        added.push({ id: newWallpaperId(), label: file.name, data_url });
+      }
+      if (added.length) {
+        setWallpapers((prev) => [...prev, ...added]);
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to read wallpaper image.');
+    } finally {
+      setWallpaperUploading(false);
+    }
+  };
+
+  const onRemoveWallpaper = (id: string) => {
+    setWallpapers((prev) => prev.filter((w) => w.id !== id));
+    setSelectedWallpaperId((prev) => (prev === id ? null : prev));
   };
 
   const card = `${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} border rounded-xl p-5`;
@@ -507,12 +565,17 @@ export default function PanelSettings() {
           site_subtitle: siteSubtitle,
           favicon_data_url: faviconDataUrl,
           logo_data_url: logoDataUrl,
+          wallpapers,
+          selected_wallpaper_id: selectedWallpaperId,
         },
       });
-      setSiteTitle(data.site_title || 'CoPanel');
-      setSiteSubtitle(data.site_subtitle || 'Lightweight VPS Management');
-      setFaviconDataUrl(data.favicon_data_url || null);
-      setLogoDataUrl(data.logo_data_url || null);
+      const normalized = normalizeBranding(data);
+      setSiteTitle(normalized.site_title);
+      setSiteSubtitle(normalized.site_subtitle);
+      setFaviconDataUrl(normalized.favicon_data_url);
+      setLogoDataUrl(normalized.logo_data_url);
+      setWallpapers(normalized.wallpapers);
+      setSelectedWallpaperId(normalized.selected_wallpaper_id);
       setFaviconName('');
       setLogoName('');
       setMsg(t.saved);
@@ -1038,6 +1101,17 @@ export default function PanelSettings() {
               </div>
             </div>
           </div>
+
+          <WallpaperGallery
+            isDark={isDark}
+            language={language}
+            wallpapers={wallpapers}
+            selectedId={selectedWallpaperId}
+            onSelect={setSelectedWallpaperId}
+            onRemove={onRemoveWallpaper}
+            onUpload={onUploadWallpapers}
+            uploading={wallpaperUploading}
+          />
 
           <button
             className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50"
