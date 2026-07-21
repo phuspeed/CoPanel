@@ -23,10 +23,12 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import string
 import subprocess
 import tarfile
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,6 +66,7 @@ class WizardResult:
     ssl: Optional[Dict[str, Any]] = None
     verification: Optional[Dict[str, Any]] = None
     rollback: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     summary: str = ""
 
 
@@ -109,21 +112,45 @@ def _safe_call(label: str, fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         return {"status": "error", "message": f"{label} failed: {exc}"}
 
 
-def _http_verify(domain: str, timeout: float = 4.0, use_https: bool = False) -> Dict[str, Any]:
-    """Best-effort HTTP HEAD check to confirm the site responds."""
+def _http_verify(domain: str, timeout: float = 6.0, use_https: bool = False) -> Dict[str, Any]:
+    """Best-effort HTTP HEAD check to confirm the site responds with a success status."""
     try:
         ip = socket.gethostbyname(domain)
     except OSError as exc:
         return {"reachable": False, "error": f"DNS lookup failed: {exc}"}
+
+    scheme = "https" if use_https else "http"
     port = 443 if use_https else 80
+    url = f"{scheme}://{domain}/"
+    req = urllib.request.Request(
+        url,
+        method="HEAD",
+        headers={"User-Agent": "copanel-site-wizard", "Host": domain},
+    )
+    ctx = ssl.create_default_context() if use_https else None
     try:
-        with socket.create_connection((ip, port), timeout=timeout) as sock:
-            sock.sendall(
-                f"HEAD / HTTP/1.1\r\nHost: {domain}\r\nConnection: close\r\nUser-Agent: copanel-site-wizard\r\n\r\n".encode()
-            )
-            data = sock.recv(4096)
-            first_line = data.split(b"\r\n", 1)[0].decode("latin-1", errors="ignore")
-            return {"reachable": True, "ip": ip, "port": port, "status_line": first_line, "https": use_https}
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            status = int(getattr(resp, "status", 0) or 0)
+            reason = getattr(resp, "reason", "") or ""
+            status_line = f"HTTP/1.1 {status} {reason}".strip()
+            return {
+                "reachable": 200 <= status < 400,
+                "ip": ip,
+                "port": port,
+                "status_code": status,
+                "status_line": status_line,
+                "https": use_https,
+            }
+    except urllib.error.HTTPError as exc:
+        status_line = f"HTTP/1.1 {exc.code} {exc.reason}"
+        return {
+            "reachable": 200 <= exc.code < 400,
+            "ip": ip,
+            "port": port,
+            "status_code": exc.code,
+            "status_line": status_line,
+            "https": use_https,
+        }
     except OSError as exc:
         return {"reachable": False, "ip": ip, "port": port, "error": str(exc), "https": use_https}
 
@@ -203,10 +230,133 @@ h1{{color:#2563eb}}.badge{{display:inline-block;background:#dbeafe;color:#1d4ed8
     )
 
 
-def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
+def _wordpress_files_present(root: Path) -> bool:
+    return (root / "wp-includes" / "version.php").is_file()
+
+
+def _update_wp_config_database(root: Path, database: Dict[str, Any]) -> bool:
+    """Update database credentials in an existing wp-config.php."""
+    wp_config = root / "wp-config.php"
+    if not wp_config.is_file():
+        return False
+    cfg = wp_config.read_text(encoding="utf-8", errors="ignore")
+    replacements = [
+        (r"define\(\s*'DB_NAME'\s*,\s*'[^']*'\s*\);", f"define('DB_NAME', '{database['name']}');"),
+        (r"define\(\s*'DB_USER'\s*,\s*'[^']*'\s*\);", f"define('DB_USER', '{database['user']}');"),
+        (r"define\(\s*'DB_PASSWORD'\s*,\s*'[^']*'\s*\);", f"define('DB_PASSWORD', '{database['password']}');"),
+        (r"define\(\s*'DB_HOST'\s*,\s*'[^']*'\s*\);", f"define('DB_HOST', '{database.get('host', 'localhost')}');"),
+    ]
+    updated = cfg
+    for pattern, replacement in replacements:
+        updated = re.sub(pattern, replacement, updated, count=1)
+    if updated != cfg:
+        wp_config.write_text(updated, encoding="utf-8")
+        return True
+    return False
+
+
+def _write_wp_config(root: Path, database: Dict[str, Any]) -> bool:
+    """Create wp-config.php from the sample template. Returns True when written."""
+    wp_config = root / "wp-config.php"
+    sample = root / "wp-config-sample.php"
+    if wp_config.is_file() or not sample.is_file():
+        return False
+    cfg = sample.read_text(encoding="utf-8", errors="ignore")
+    cfg = cfg.replace("database_name_here", database["name"])
+    cfg = cfg.replace("username_here", database["user"])
+    cfg = cfg.replace("password_here", database["password"])
+    cfg = cfg.replace("localhost", database.get("host", "localhost"))
+    for key in (
+        "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
+        "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
+    ):
+        cfg = re.sub(
+            rf"define\(\s*'{key}'\s*,\s*'put your unique phrase here'\s*\);",
+            f"define('{key}', '{secrets.token_hex(32)}');",
+            cfg,
+            count=1,
+        )
+    wp_config.write_text(cfg, encoding="utf-8")
+    return True
+
+
+def _ensure_wp_config(root: Path, database: Dict[str, Any]) -> bool:
+    if (root / "wp-config.php").is_file():
+        return _update_wp_config_database(root, database)
+    return _write_wp_config(root, database)
+
+
+def _wordpress_db_installed(database: Dict[str, Any]) -> bool:
+    """Return True when the WordPress schema (wp_options) exists in the database."""
+    db_name = database.get("name", "")
+    if not db_name:
+        return False
+    try:
+        cmd = [
+            "sudo", "mysql", "-N", "-B",
+            "-u", database["user"],
+            f"-p{database['password']}",
+            "-h", database.get("host", "localhost"),
+            db_name,
+            "-e", "SHOW TABLES LIKE 'wp_options';",
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return res.returncode == 0 and res.stdout.strip() == "wp_options"
+    except Exception:
+        return False
+
+
+def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
+    """Bootstrap WordPress tables via PHP CLI when core files exist but DB is empty."""
     root = Path(doc_root)
-    if (root / "wp-config.php").is_file() or (root / "index.php").is_file():
-        return {"status": "success", "message": "WordPress already present", "skipped": True}
+    if not (root / "wp-load.php").is_file():
+        raise RuntimeError("WordPress core files are incomplete (missing wp-load.php).")
+
+    admin_user = "admin"
+    admin_pass = _generate_password()
+    admin_email = f"admin@{domain}"
+    install_script = root / ".copanel-wp-install.php"
+    install_script.write_text(
+        f"""<?php
+define('WP_USE_THEMES', false);
+require_once __DIR__ . '/wp-load.php';
+require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+require_once ABSPATH . 'wp-admin/includes/translation-install.php';
+if (is_blog_installed()) {{
+    echo 'ALREADY';
+    exit(0);
+}}
+wp_install({json.dumps(domain)}, {json.dumps(admin_user)}, {json.dumps(admin_email)}, true, '', {json.dumps(admin_pass)});
+echo 'OK';
+""",
+        encoding="utf-8",
+    )
+    try:
+        res = subprocess.run(
+            ["php", str(install_script)],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        output = (res.stdout or "").strip()
+        if res.returncode != 0 or output not in ("OK", "ALREADY"):
+            detail = (res.stderr or res.stdout or "unknown error").strip()
+            raise RuntimeError(f"WordPress database install failed: {detail}")
+        return {
+            "db_installed": output == "OK",
+            "admin_user": admin_user,
+            "admin_password": admin_pass,
+            "admin_email": admin_email,
+        }
+    finally:
+        try:
+            install_script.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _download_wordpress_core(root: Path) -> None:
     tmp_tar = Path("/tmp/copanel-wp-latest.tar.gz")
     url = "https://wordpress.org/latest.tar.gz"
     urllib.request.urlretrieve(url, tmp_tar)
@@ -223,33 +373,42 @@ def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]
             shutil.copytree(item, dest)
         else:
             shutil.copy2(item, dest)
-    wp_config = root / "wp-config.php"
-    sample = root / "wp-config-sample.php"
-    if not wp_config.is_file() and sample.is_file():
-        salt = secrets.token_hex(32)
-        cfg = sample.read_text(encoding="utf-8", errors="ignore")
-        cfg = cfg.replace("database_name_here", database["name"])
-        cfg = cfg.replace("username_here", database["user"])
-        cfg = cfg.replace("password_here", database["password"])
-        cfg = cfg.replace("localhost", database.get("host", "localhost"))
-        if "AUTH_KEY" in cfg:
-            for key in (
-                "AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
-                "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
-            ):
-                cfg = re.sub(
-                    rf"define\(\s*'{key}'\s*,\s*'put your unique phrase here'\s*\);",
-                    f"define('{key}', '{secrets.token_hex(32)}');",
-                    cfg,
-                    count=1,
-                )
-        wp_config.write_text(cfg, encoding="utf-8")
     try:
         tmp_tar.unlink(missing_ok=True)
         shutil.rmtree(wp_src, ignore_errors=True)
     except Exception:
         pass
-    return {"status": "success", "message": "WordPress core installed", "admin_url": f"https://{domain}/wp-admin/install.php"}
+
+
+def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
+    root = Path(doc_root)
+    root.mkdir(parents=True, exist_ok=True)
+    files_present = _wordpress_files_present(root)
+    if not files_present:
+        _download_wordpress_core(root)
+        files_present = _wordpress_files_present(root)
+        if not files_present:
+            raise RuntimeError("WordPress core download failed")
+
+    config_created = _ensure_wp_config(root, database)
+    admin_url = f"https://{domain}/wp-admin/"
+    result: Dict[str, Any] = {
+        "status": "success",
+        "files_present": files_present,
+        "config_created": config_created,
+        "admin_url": admin_url,
+    }
+
+    if _wordpress_db_installed(database):
+        result["message"] = "WordPress already installed"
+        result["db_installed"] = False
+        return result
+
+    install_info = _run_wordpress_db_install(doc_root, domain, database)
+    result.update(install_info)
+    result["message"] = "WordPress core installed and database initialized"
+    result["admin_url"] = admin_url
+    return result
 
 
 def _install_laravel_skeleton(doc_root: str, domain: str) -> Dict[str, Any]:
@@ -397,22 +556,36 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
             lambda: SSLManager.issue_certbot(domain, req.ssl_email),  # type: ignore[arg-type]
         )
         if ssl_res.get("status") != "success":
-            raise RuntimeError(ssl_res.get("message", "SSL issuance failed"))
-        result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email}
-        job.log("SSL certificate issued and applied")
+            warning = ssl_res.get("message", "SSL issuance failed")
+            result.warnings.append(warning)
+            result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "failed", "error": warning}
+            job.log(f"SSL warning: {warning}")
+        else:
+            result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "active"}
+            job.log("SSL certificate issued and applied")
 
     job.update(progress=92, message="Verifying site availability")
-    result.verification = _http_verify(domain, use_https=bool(result.ssl))
+    ssl_active = bool(result.ssl and result.ssl.get("status") == "active")
+    result.verification = _http_verify(domain, use_https=ssl_active)
+    if not result.verification.get("reachable"):
+        verify_note = result.verification.get("status_line") or result.verification.get("error") or "site not reachable"
+        result.warnings.append(f"Reachability check: {verify_note}")
     job.log(json.dumps(result.verification))
 
     job.update(progress=100, message="Site provisioned")
     tpl = get_template(template_id) or {}
+    ssl_note = ", ssl OK" if ssl_active else (", ssl failed" if result.ssl else "")
     result.summary = (
         f"{tpl.get('name', template_id)} on {domain}: nginx OK"
         + (", app deployed" if deploy_info.get("deployed") else "")
         + (", db OK" if result.database else "")
-        + (", ssl OK" if result.ssl else "")
+        + ssl_note
     )
+    if result.warnings:
+        result.summary += f" ({len(result.warnings)} warning(s))"
+    site_url = f"https://{domain}" if ssl_active else f"http://{domain}"
+    if isinstance(deploy_info, dict) and template_id == "wordpress":
+        deploy_info["admin_url"] = f"{site_url}/wp-admin/"
     return {
         "template_id": template_id,
         "domain": result.domain,
@@ -422,7 +595,8 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         "ssl": result.ssl,
         "verification": result.verification,
         "deployment": deploy_info,
+        "warnings": result.warnings,
         "summary": result.summary,
-        "site_url": f"https://{domain}" if result.ssl else f"http://{domain}",
+        "site_url": site_url,
         "completed_at": time.time(),
     }
