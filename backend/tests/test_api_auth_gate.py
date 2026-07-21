@@ -100,6 +100,43 @@ class TerminalWsAuthTests(unittest.TestCase):
                 pass
         auth_mod._AUTH_DISABLED = os.environ.get("COPANEL_DISABLE_AUTH") == "1"
 
+    def test_websocket_accepts_access_token_query(self):
+        import core.auth as auth_mod
+        from unittest.mock import patch
+        from modules.terminal.router import router as terminal_router
+
+        auth_mod._AUTH_DISABLED = False
+        app = FastAPI()
+        app.include_router(terminal_router, prefix="/api/terminal")
+        client = TestClient(app)
+        fake_user = {
+            "id": 1,
+            "username": "admin",
+            "role": "superadmin",
+            "permitted_modules": '["all"]',
+        }
+        with patch("modules.terminal.router.user_from_access_token", return_value=fake_user):
+            with patch("modules.terminal.router.IS_WINDOWS", True):
+                with client.websocket_connect("/api/terminal/ws?access_token=test-jwt") as ws:
+                    msg = ws.receive_text()
+                    self.assertIn("mock", msg.lower())
+        auth_mod._AUTH_DISABLED = os.environ.get("COPANEL_DISABLE_AUTH") == "1"
+
+
+class PlatformExtensionsTests(unittest.TestCase):
+    def test_extensions_requires_auth(self):
+        import core.auth as auth_mod
+        from modules.platform.router import router as platform_router
+
+        auth_mod._AUTH_DISABLED = False
+        app = FastAPI()
+        app.middleware("http")(api_auth_middleware)
+        app.include_router(platform_router, prefix="/api/platform")
+        client = TestClient(app)
+        res = client.get("/api/platform/extensions")
+        self.assertEqual(res.status_code, 401)
+        auth_mod._AUTH_DISABLED = os.environ.get("COPANEL_DISABLE_AUTH") == "1"
+
 
 if __name__ == "__main__":
     unittest.main()

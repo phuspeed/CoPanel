@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 NGINX_EXEMPT_LOCATION_MARKERS = (
     "location /api/platform/events {",
     "location /api/ {",
+    "location /extensions/ {",
     "location /health {",
     "location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {",
 )

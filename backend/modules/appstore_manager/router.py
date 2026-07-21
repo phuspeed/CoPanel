@@ -98,14 +98,6 @@ def get_batch_task_id() -> Dict[str, str]:
     return {"task_id": BATCH_UPDATE_TASK_ID}
 
 
-def list_extensions() -> Dict[str, Any]:
-    """List installed AppStore frontend extensions (runtime modules)."""
-    try:
-        return {"status": "success", "data": AppStoreManager.list_installed_extensions()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
 @router.get("/build-status/{pkg_id}")
 def get_build_status(pkg_id: str) -> Dict[str, Any]:
     """Retrieves real-time build logs and installation status."""

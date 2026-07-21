@@ -20,7 +20,9 @@ from core.auth import (
 
 from . import logic
 
-router = APIRouter(dependencies=[Depends(require_module("terminal"))])
+# Do not attach router-level auth to WebSocket routes — browsers pass JWT via
+# ``?access_token=`` on /ws; router Depends can break the upgrade handshake.
+router = APIRouter()
 
 
 class SnippetItem(BaseModel):
