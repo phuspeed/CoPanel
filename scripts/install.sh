@@ -76,7 +76,10 @@ log_step() {
 
 # -----------------------------------------------------------------------------
 # Panel version for banner / summary (no hardcoded semver).
-# Order: repo VERSION → /opt/copanel/VERSION → git tag/describe → GitHub raw VERSION → fallback.
+#
+# Collect candidates (checkout, /opt/copanel, GitHub main, git tags) and pick
+# the newest with ``sort -V``. This avoids curl/upgrade banners stuck on a
+# stale ``/opt/copanel/VERSION`` before ``git pull`` finishes.
 # -----------------------------------------------------------------------------
 copanel_read_version_file() {
     local f="$1"
@@ -103,7 +106,11 @@ copanel_git_version_describe() {
     local dir="$1"
     [[ -d "$dir/.git" ]] || return 1
     local t
-    t="$(git -C "$dir" describe --tags --always 2>/dev/null)"
+    # Prefer an exact tag on HEAD (e.g. v1.1.2); avoid dirty describe strings for the banner.
+    t="$(git -C "$dir" describe --tags --match 'v*' --exact-match 2>/dev/null)" || t=""
+    if [[ -z "$t" ]]; then
+        t="$(git -C "$dir" describe --tags --match 'v*' --abbrev=0 2>/dev/null)" || t=""
+    fi
     [[ -n "$t" ]] || return 1
     t="${t#v}"
     printf '%s' "$t"
@@ -112,10 +119,15 @@ copanel_git_version_describe() {
 copanel_fetch_github_version() {
     local api_url="https://api.github.com/repos/phuspeed/CoPanel/contents/VERSION?ref=main"
     local raw_url="${COPANEL_VERSION_URL:-https://raw.githubusercontent.com/phuspeed/CoPanel/main/VERSION}"
+    local releases_url="https://api.github.com/repos/phuspeed/CoPanel/releases/latest"
     local raw=""
     if command -v curl &>/dev/null; then
         raw="$(curl -fsSL --max-time 12 -H "Accept: application/vnd.github.v3.raw" "$api_url" 2>/dev/null || true)"
         [[ -n "$raw" ]] || raw="$(curl -fsSL --max-time 12 "$raw_url" 2>/dev/null || true)"
+        if [[ -z "$raw" ]]; then
+            raw="$(curl -fsSL --max-time 12 -H "Accept: application/vnd.github+json" "$releases_url" 2>/dev/null \
+                | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\?\([^"]*\)".*/\1/p' | head -1 || true)"
+        fi
     elif command -v wget &>/dev/null; then
         raw="$(wget -qO- --timeout=12 --header="Accept: application/vnd.github.v3.raw" "$api_url" 2>/dev/null || true)"
         [[ -n "$raw" ]] || raw="$(wget -qO- --timeout=12 "$raw_url" 2>/dev/null || true)"
@@ -129,18 +141,51 @@ copanel_fetch_github_version() {
     printf '%s' "$line"
 }
 
-copanel_resolve_panel_version() {
-    local script_dir repo_dir v=""
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    repo_dir="$(dirname "$script_dir")"
+# Keep only plain semver-ish tokens for sort -V (drop describe junk like 1.1.2-3-gabc).
+copanel_normalize_semver_candidate() {
+    local s="${1#v}"
+    s="${s%%-*}"
+    s="${s%%+*}"
+    [[ "$s" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || return 1
+    printf '%s' "$s"
+}
 
-    v="$(copanel_read_version_file "$repo_dir/VERSION" || true)"
-    [[ -n "$v" ]] || v="$(copanel_read_version_file "$CoPanel_HOME/VERSION" || true)"
-    [[ -n "$v" ]] || v="$(copanel_git_version_nearest_tag "$repo_dir" || true)"
-    [[ -n "$v" ]] || v="$(copanel_git_version_nearest_tag "$CoPanel_HOME" || true)"
-    [[ -n "$v" ]] || v="$(copanel_git_version_describe "$repo_dir" || true)"
-    [[ -n "$v" ]] || v="$(copanel_git_version_describe "$CoPanel_HOME" || true)"
-    [[ -n "$v" ]] || v="$(copanel_fetch_github_version || true)"
+copanel_pick_newest_version() {
+    local newest=""
+    local c n
+    for c in "$@"; do
+        [[ -n "$c" ]] || continue
+        n="$(copanel_normalize_semver_candidate "$c" || true)"
+        [[ -n "$n" ]] || continue
+        if [[ -z "$newest" ]]; then
+            newest="$n"
+            continue
+        fi
+        if printf '%s\n' "$newest" "$n" | sort -V | tail -1 | grep -qx "$n"; then
+            newest="$n"
+        fi
+    done
+    [[ -n "$newest" ]] || return 1
+    printf '%s' "$newest"
+}
+
+copanel_resolve_panel_version() {
+    local script_dir="" repo_dir="" v=""
+    local c_repo="" c_home="" c_gh="" c_tag=""
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || script_dir=""
+    if [[ -n "$script_dir" ]]; then
+        repo_dir="$(dirname "$script_dir")"
+    fi
+
+    if [[ -n "$repo_dir" ]]; then
+        c_repo="$(copanel_read_version_file "$repo_dir/VERSION" || true)"
+        c_tag="$(copanel_git_version_describe "$repo_dir" || true)"
+    fi
+    c_home="$(copanel_read_version_file "${CoPanel_HOME:-/opt/copanel}/VERSION" || true)"
+    [[ -n "$c_tag" ]] || c_tag="$(copanel_git_version_describe "${CoPanel_HOME:-/opt/copanel}" || true)"
+    c_gh="$(copanel_fetch_github_version || true)"
+
+    v="$(copanel_pick_newest_version "$c_gh" "$c_repo" "$c_home" "$c_tag" || true)"
 
     if [[ -z "$v" ]]; then
         v="1.0.0"
