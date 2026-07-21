@@ -33,6 +33,7 @@ _PUBLIC_PATHS = {
     "/api/auth/login",
     "/api/panel_settings/branding/public",
     "/api/backup_manager/oauth/google/callback",
+    "/api/cloud_sync/oauth/google/callback",
 }
 
 # When CoPanel is started in development without a database (e.g. a test
@@ -76,19 +77,44 @@ def _user_from_token(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
     return _user_from_bearer_token(parts[1])
 
 
-def require_user(authorization: str = Header(None)) -> Dict[str, Any]:
-    """Standard dependency: returns the current user or raises 401."""
+def _resolve_user(
+    authorization: Optional[str] = None,
+    access_token: Optional[str] = None,
+    token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Resolve caller from Bearer header or ``access_token`` / ``token`` query."""
     if _AUTH_DISABLED:
         return {"id": 0, "username": "dev", "role": "superadmin", "permitted_modules": "[\"all\"]"}
-    user = _user_from_token(authorization)
+    user = (
+        _user_from_token(authorization)
+        or _user_from_bearer_token(access_token)
+        or _user_from_bearer_token(token)
+    )
     if not user:
         raise ApiError("UNAUTHORIZED", "Authentication required.", http_status=401)
     return user
 
 
-def require_admin(authorization: str = Header(None)) -> Dict[str, Any]:
+def require_user(
+    authorization: str = Header(None),
+    access_token: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Standard dependency: returns the current user or raises 401.
+
+    EventSource / media elements cannot set Authorization; they may pass
+    ``access_token`` or ``token`` as a query parameter instead.
+    """
+    return _resolve_user(authorization, access_token, token)
+
+
+def require_admin(
+    authorization: str = Header(None),
+    access_token: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """Dependency that ensures the caller is a superadmin."""
-    user = require_user(authorization)
+    user = _resolve_user(authorization, access_token, token)
     if user.get("role") != "superadmin":
         raise ApiError("FORBIDDEN", "Administrator privileges required.", http_status=403)
     return user
@@ -101,8 +127,12 @@ def require_module(module_id: str) -> Callable[..., Dict[str, Any]]:
     ``"all"``) in their ``permitted_modules`` list.
     """
 
-    def _dep(authorization: str = Header(None)) -> Dict[str, Any]:
-        user = require_user(authorization)
+    def _dep(
+        authorization: str = Header(None),
+        access_token: Optional[str] = Query(None),
+        token: Optional[str] = Query(None),
+    ) -> Dict[str, Any]:
+        user = _resolve_user(authorization, access_token, token)
         if user.get("role") == "superadmin":
             return user
         permitted = _normalize_permitted(user.get("permitted_modules"))
@@ -126,9 +156,10 @@ def optional_user(authorization: str = Header(None)) -> Optional[Dict[str, Any]]
 def optional_user_sse(
     authorization: str = Header(None),
     access_token: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
 ) -> Optional[Dict[str, Any]]:
-    """EventSource cannot send Authorization headers; accept ``access_token`` query param."""
-    return _user_from_token(authorization) or _user_from_bearer_token(access_token)
+    """EventSource cannot send Authorization headers; accept ``access_token`` / ``token`` query."""
+    return _user_from_token(authorization) or _user_from_bearer_token(access_token or token)
 
 
 def user_from_access_token(access_token: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -165,7 +196,8 @@ async def api_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     authorization = request.headers.get("authorization")
-    access_token = request.query_params.get("access_token")
+    # Also accept legacy ``?token=`` used by HTML5 audio/img (audio_station).
+    access_token = request.query_params.get("access_token") or request.query_params.get("token")
     user = _user_from_token(authorization) or _user_from_bearer_token(access_token)
     if not user:
         return JSONResponse(
