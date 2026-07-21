@@ -31,9 +31,9 @@ export default function FeaturedBanner({ packages, isDark, language, title, subt
           {subtitle && <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-500')}>{subtitle}</p>}
         </div>
       )}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 overflow-hidden sm:grid-cols-3">
         <BannerCard pkg={primary} isDark={isDark} language={language} large />
-        <div className="grid grid-cols-2 gap-2 sm:col-span-2 sm:grid-rows-2">
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:col-span-2 sm:grid-cols-2 sm:grid-rows-2">
           {rest.slice(0, 3).map((pkg, i) => (
             <BannerCard key={pkg.id} pkg={pkg} isDark={isDark} language={language} large={i === 0 && rest.length === 1} />
           ))}

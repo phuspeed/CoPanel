@@ -6,6 +6,7 @@ import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 
 type EngineId = 'mysql' | 'postgres';
@@ -361,9 +362,12 @@ export default function DatabaseManager() {
           </div>
         )}
 
-        <div className="flex flex-1 min-h-0">
+        <ModuleSidebarLayout
+          isDark={isDark}
+          mobileTitle={t.title}
+          sidebar={
           <aside
-            className={`w-48 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
+            className={`h-full w-48 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
           >
             <div className="shrink-0 p-2 border-b border-inherit space-y-0.5">
               {engines.map((eng) => {
@@ -410,7 +414,8 @@ export default function DatabaseManager() {
               })}
             </nav>
           </aside>
-
+          }
+        >
           <main className="flex-1 min-h-0 overflow-y-auto p-4">
             {tab === 'databases' && (
               <section className={`rounded-2xl border p-4 space-y-3 ${panel}`}>
@@ -535,7 +540,7 @@ export default function DatabaseManager() {
               </section>
             )}
           </main>
-        </div>
+        </ModuleSidebarLayout>
       </div>
 
       <WindowModal open={confirm !== null} onClose={() => setConfirm(null)} title={t.delete} maxWidth="sm">

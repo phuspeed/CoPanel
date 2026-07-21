@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
+import { isLayoutViewportWide } from '../../core/viewportDesktopSite';
 import * as Icons from 'lucide-react';
 
 import type { Terminal } from '@xterm/xterm';
@@ -49,7 +50,7 @@ export default function TerminalDashboard() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [draftTitle, setDraftTitle] = useState('');
   const [draftCommand, setDraftCommand] = useState('');
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(() => isLayoutViewportWide());
 
   const t = {
     en: {
@@ -360,7 +361,7 @@ export default function TerminalDashboard() {
           </div>
         </header>
 
-        <div className={`flex flex-1 min-h-0 gap-0 ${isWindowed ? '' : 'max-h-[calc(100vh-8rem)]'}`}>
+        <div className={`relative flex flex-1 min-h-0 gap-0 ${isWindowed ? '' : 'max-h-[calc(100vh-8rem)]'}`}>
           <div className={`flex-1 min-h-0 min-w-0 p-3 flex flex-col ${shell} border-r-0 lg:border-r ${isDark ? 'lg:border-slate-800' : 'lg:border-slate-200'}`}>
             <div
               className={`flex items-center gap-2 px-2 py-1 mb-2 border-b text-xs font-mono shrink-0 ${
@@ -375,10 +376,19 @@ export default function TerminalDashboard() {
             <div ref={terminalRef} className="flex-1 min-h-0 overflow-hidden rounded-lg" />
           </div>
 
+          {panelOpen && (
+            <button
+              type="button"
+              className="fixed inset-0 z-[45] bg-black/40 lg:hidden"
+              aria-label="Close snippets"
+              onClick={() => setPanelOpen(false)}
+            />
+          )}
+
           <aside
-            className={`shrink-0 border-l flex flex-col min-h-0 w-72 transition-all ${
-              panelOpen ? 'flex' : 'hidden lg:flex'
-            } ${shell} ${isDark ? 'border-slate-800' : 'border-slate-200'}`}
+            className={`shrink-0 border-l flex flex-col min-h-0 w-[min(100%,18rem)] max-w-[85vw] transition-transform duration-200 ${
+              panelOpen ? 'flex translate-x-0' : 'hidden lg:flex'
+            } fixed inset-y-0 right-0 z-[46] lg:static lg:z-auto lg:max-w-none lg:w-72 ${shell} ${isDark ? 'border-slate-800' : 'border-slate-200'}`}
           >
           <div className={`p-4 border-b shrink-0 ${isDark ? 'border-slate-800/60' : 'border-slate-200'}`}>
             <h2 className="text-sm font-bold flex items-center gap-2">

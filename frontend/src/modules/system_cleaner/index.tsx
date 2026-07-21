@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 
@@ -296,9 +297,12 @@ export default function SystemCleanerDashboard() {
           </div>
         )}
 
-        <div className="flex flex-1 min-h-0">
+        <ModuleSidebarLayout
+          isDark={isDark}
+          mobileTitle={tr.title}
+          sidebar={
           <aside
-            className={`w-44 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
+            className={`h-full w-44 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
           >
             <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
               {tabs.map((tab) => {
@@ -324,7 +328,8 @@ export default function SystemCleanerDashboard() {
               })}
             </nav>
           </aside>
-
+          }
+        >
           <main className="flex-1 min-h-0 overflow-y-auto p-4">
             {activeTab === 'junk' && (
               <div className={`space-y-6 rounded-2xl border p-6 ${panel}`}>
@@ -562,7 +567,7 @@ export default function SystemCleanerDashboard() {
               </div>
             )}
           </main>
-        </div>
+        </ModuleSidebarLayout>
       </div>
 
       <WindowModal
