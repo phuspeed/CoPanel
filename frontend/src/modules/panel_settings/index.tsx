@@ -11,6 +11,7 @@ import {
   MAX_WALLPAPERS,
   newWallpaperId,
   normalizeBranding,
+  notifyBrandingUpdated,
   readImageFileAsDataUrl,
   type WallpaperItem,
 } from '../../core/brandingTypes';
@@ -576,6 +577,7 @@ export default function PanelSettings() {
       setLogoDataUrl(normalized.logo_data_url);
       setWallpapers(normalized.wallpapers);
       setSelectedWallpaperId(normalized.selected_wallpaper_id);
+      notifyBrandingUpdated(normalized);
       setFaviconName('');
       setLogoName('');
       setMsg(t.saved);

@@ -26,6 +26,20 @@ export const DEFAULT_BRANDING: BrandingSettings = {
 
 export const MAX_WALLPAPERS = 12;
 
+/** Dispatched after branding is saved so the shell refreshes without manual F5. */
+export const BRANDING_UPDATED_EVENT = 'copanel:branding-updated';
+
+export function notifyBrandingUpdated(branding?: BrandingSettings) {
+  window.dispatchEvent(new CustomEvent(BRANDING_UPDATED_EVENT, { detail: branding }));
+}
+
+export async function fetchPublicBranding(): Promise<BrandingSettings> {
+  const res = await fetch('/api/panel_settings/branding/public');
+  const body = await res.json();
+  const next = body?.status === 'success' && body.data ? body.data : body;
+  return normalizeBranding(next);
+}
+
 export function normalizeBranding(raw: Partial<BrandingSettings> | null | undefined): BrandingSettings {
   const wallpapers = Array.isArray(raw?.wallpapers)
     ? raw!.wallpapers
