@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import * as Icons from 'lucide-react';
 import { api } from '../../core/platform';
@@ -225,9 +226,12 @@ export default function DnsManager() {
           </div>
         )}
 
-        <div className="flex flex-1 min-h-0">
+        <ModuleSidebarLayout
+          isDark={isDark}
+          mobileTitle={t.title}
+          sidebar={
           <aside
-            className={`w-52 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
+            className={`h-full w-52 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
           >
             <div className="shrink-0 p-3 border-b border-inherit space-y-2">
               <p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>{t.zones}</p>
@@ -281,7 +285,8 @@ export default function DnsManager() {
               {zones.length === 0 && <p className={`px-2 py-4 text-xs ${muted}`}>{t.noZones}</p>}
             </nav>
           </aside>
-
+          }
+        >
           <main className="flex-1 min-h-0 overflow-y-auto p-4">
             {!active ? (
               <div className={`rounded-2xl border p-8 text-center ${panel}`}>
@@ -367,7 +372,7 @@ export default function DnsManager() {
               </section>
             )}
           </main>
-        </div>
+        </ModuleSidebarLayout>
       </div>
 
       <WindowModal open={confirm !== null} onClose={() => setConfirm(null)} title={t.delete} maxWidth="sm">

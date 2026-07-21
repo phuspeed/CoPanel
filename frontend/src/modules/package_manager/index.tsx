@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import { useLocation } from 'react-router-dom';
 import * as Icons from 'lucide-react';
@@ -260,10 +261,12 @@ export default function PackageManagerDashboard() {
           </div>
         )}
 
-        <div className="flex flex-1 min-h-0">
-          {!selectedPackageId && (
+        <ModuleSidebarLayout
+          isDark={isDark}
+          mobileTitle={tr.title}
+          sidebar={
             <aside
-              className={`w-44 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
+              className={`h-full w-44 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
             >
               <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
                 {categories.map((cat) => {
@@ -287,8 +290,8 @@ export default function PackageManagerDashboard() {
                 })}
               </nav>
             </aside>
-          )}
-
+          }
+        >
           <main className="flex-1 min-h-0 overflow-y-auto p-4">
             {loading && packages.length === 0 ? (
               <div className={`flex flex-col items-center justify-center p-12 border rounded-xl ${panel}`}>
@@ -461,7 +464,7 @@ export default function PackageManagerDashboard() {
               </div>
             )}
           </main>
-        </div>
+        </ModuleSidebarLayout>
       </div>
 
       <WindowModal
