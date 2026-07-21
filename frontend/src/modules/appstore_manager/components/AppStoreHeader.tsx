@@ -39,7 +39,7 @@ export default function AppStoreHeader({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[200px] flex-1">
+        <div className="relative min-w-0 flex-1 basis-full sm:min-w-[200px] sm:basis-auto">
           <Icons.Search className={cn('absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2', isDark ? 'text-slate-500' : 'text-slate-400')} />
           <input
             value={query}
@@ -65,7 +65,7 @@ export default function AppStoreHeader({
           )}
         >
           <Icons.RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          {tr.refresh}
+          <span className="hidden sm:inline">{tr.refresh}</span>
         </button>
 
         {updateCount > 0 && onUpdateAll && (
@@ -97,7 +97,7 @@ export default function AppStoreHeader({
           )}
         >
           <Icons.Store className="h-3.5 w-3.5" />
-          {tr.community}
+          <span className="hidden sm:inline">{tr.community}</span>
         </button>
 
         <label
@@ -107,7 +107,7 @@ export default function AppStoreHeader({
           )}
         >
           <Icons.FileArchive className="h-3.5 w-3.5" />
-          {tr.importZip}
+          <span className="hidden sm:inline">{tr.importZip}</span>
           <input type="file" accept=".zip" className="hidden" onChange={onUploadZip} />
         </label>
 

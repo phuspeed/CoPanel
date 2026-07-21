@@ -6,6 +6,7 @@ import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { apiFetch } from '../../core/authHeaders';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import DockerManagerSidebar, { type DockerTab } from './components/DockerManagerSidebar';
 import CreateProjectModal from './components/CreateProjectModal';
@@ -902,23 +903,28 @@ export default function DockerManagerDashboard() {
 
   return (
     <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
-      <div className={cn('flex h-full min-h-0 select-none', isDark ? 'text-slate-100' : 'text-slate-900')}>
-        <DockerManagerSidebar
-          tab={tab}
-          onTab={setTab}
-          isDark={isDark}
-          labels={labels}
-          title={tr.title}
-          subtitle={tr.subtitle}
-          counts={{
-            containers: totalCount || undefined,
-            compose: projectsCount || undefined,
-            images: images.length || undefined,
-            networks: networks.length || undefined,
-            volumes: volumes.length || undefined,
-          }}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={tr.title}
+        className={cn('select-none', isDark ? 'text-slate-100' : 'text-slate-900')}
+        sidebar={
+          <DockerManagerSidebar
+            tab={tab}
+            onTab={setTab}
+            isDark={isDark}
+            labels={labels}
+            title={tr.title}
+            subtitle={tr.subtitle}
+            counts={{
+              containers: totalCount || undefined,
+              compose: projectsCount || undefined,
+              images: images.length || undefined,
+              networks: networks.length || undefined,
+              volumes: volumes.length || undefined,
+            }}
+          />
+        }
+      >
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
             <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -969,7 +975,7 @@ export default function DockerManagerDashboard() {
             {tab === 'volumes' && renderVolumes()}
           </main>
         </div>
-      </div>
+      </ModuleSidebarLayout>
 
       <CreateProjectModal
         open={createProjectOpen}

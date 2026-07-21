@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import {
@@ -702,27 +703,31 @@ export default function SystemMonitorDashboard() {
           </div>
         </header>
 
-        <div className="flex flex-1 min-h-0">
-          <aside className={chromeSidebar(isDark, 'sm')}>
-            <nav className={chromeSidebarNav()} aria-label="System monitor sections">
-              {sidebarTabs.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveTab(item.id)}
-                    className={chromeNavItem(isDark, isActive, 'sky')}
-                  >
-                    <Icon className={chromeNavIcon(isDark, isActive, 'sky')} />
-                    <span className="truncate text-left text-xs font-semibold">{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </aside>
-
+        <ModuleSidebarLayout
+          isDark={isDark}
+          mobileTitle={tr.heroTitle}
+          sidebar={
+            <aside className={chromeSidebar(isDark, 'sm')}>
+              <nav className={chromeSidebarNav()} aria-label="System monitor sections">
+                {sidebarTabs.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id)}
+                      className={chromeNavItem(isDark, isActive, 'sky')}
+                    >
+                      <Icon className={chromeNavIcon(isDark, isActive, 'sky')} />
+                      <span className="truncate text-left text-xs font-semibold">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+          }
+        >
           <main className={cn('flex-1 min-h-0 overflow-y-auto p-4 space-y-4', chromeContentBg(isDark), isWindowed ? '' : 'max-w-7xl')}>
       {activeTab === 'resources' && (
         <div className="space-y-4">
@@ -1127,7 +1132,7 @@ export default function SystemMonitorDashboard() {
         </div>
       )}
           </main>
-        </div>
+        </ModuleSidebarLayout>
       </div>
 
       <WindowModal open={!!signalModal} onClose={() => setSignalModal(null)} title={tr.confirmAction} maxWidth="md">

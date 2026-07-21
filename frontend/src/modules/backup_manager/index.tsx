@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import BackupManagerSidebar, { type BackupTab } from './components/BackupManagerSidebar';
 import { cn } from '../../lib/utils';
@@ -1754,18 +1755,23 @@ export default function BackupManagerDashboard() {
   // ---- Main render ----
   return (
     <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
-      <div className={cn('flex h-full min-h-0 select-none', isDark ? 'text-slate-100' : 'text-slate-900')}>
-        <BackupManagerSidebar
-          tab={tab}
-          onTab={setTab}
-          isDark={isDark}
-          labels={sidebarLabels}
-          title={tr.title}
-          subtitle={tr.subtitle}
-          oauthConnected={oauthStatusList.length > 0}
-          counts={{ profiles: profiles.length || undefined, remotes: remotes.length || undefined }}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={tr.title}
+        className={cn('select-none', isDark ? 'text-slate-100' : 'text-slate-900')}
+        sidebar={
+          <BackupManagerSidebar
+            tab={tab}
+            onTab={setTab}
+            isDark={isDark}
+            labels={sidebarLabels}
+            title={tr.title}
+            subtitle={tr.subtitle}
+            oauthConnected={oauthStatusList.length > 0}
+            counts={{ profiles: profiles.length || undefined, remotes: remotes.length || undefined }}
+          />
+        }
+      >
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
             <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -1807,7 +1813,7 @@ export default function BackupManagerDashboard() {
             {tab === 'cloud_setup' && renderCloudSetup()}
           </main>
         </div>
-      </div>
+      </ModuleSidebarLayout>
 
       {renderWizard()}
       {renderExplorer()}

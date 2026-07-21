@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import SslManagerSidebar, { type SslTab } from './components/SslManagerSidebar';
 import { cn } from '../../lib/utils';
@@ -504,18 +505,23 @@ export default function SSLManagerDashboard() {
 
   return (
     <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
-      <div className={cn('flex h-full min-h-0', isDark ? 'text-slate-100' : 'text-slate-900')}>
-        <SslManagerSidebar
-          tab={tab}
-          onTab={setTab}
-          isDark={isDark}
-          labels={labels}
-          title={tr.title}
-          subtitle={tr.subtitle}
-          autoRenewOn={autoRenew?.enabled}
-          counts={{ certificates: certs.length || undefined, auto_renew: expiringCount || undefined }}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={tr.title}
+        className={isDark ? 'text-slate-100' : 'text-slate-900'}
+        sidebar={
+          <SslManagerSidebar
+            tab={tab}
+            onTab={setTab}
+            isDark={isDark}
+            labels={labels}
+            title={tr.title}
+            subtitle={tr.subtitle}
+            autoRenewOn={autoRenew?.enabled}
+            counts={{ certificates: certs.length || undefined, auto_renew: expiringCount || undefined }}
+          />
+        }
+      >
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
             <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -551,7 +557,7 @@ export default function SSLManagerDashboard() {
             </div>
           </main>
         </div>
-      </div>
+      </ModuleSidebarLayout>
 
       <WindowModal
         open={!!inlineDomain}

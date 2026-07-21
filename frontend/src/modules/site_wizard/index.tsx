@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
 import WindowModal from '../../core/shell/WindowModal';
 import WizardSidebar, { type WizardStep } from './components/WizardSidebar';
 import { cn } from '../../lib/utils';
@@ -519,21 +520,26 @@ export default function SiteWizard() {
 
   return (
     <ModuleViewport className="flex min-h-0 flex-col overflow-hidden">
-      <div className={cn('flex h-full min-h-0', isDark ? 'text-slate-100' : 'text-slate-900')}>
-        <WizardSidebar
-          step={step}
-          onStep={setStep}
-          isDark={isDark}
-          labels={labels}
-          title={tr.title}
-          subtitle={tr.subtitle}
-          disabled={!!jobId}
-          completed={{
-            template: !!form.templateId,
-            domain: form.domain.length >= 3,
-          }}
-        />
-
+      <ModuleSidebarLayout
+        isDark={isDark}
+        mobileTitle={tr.title}
+        className={isDark ? 'text-slate-100' : 'text-slate-900'}
+        sidebar={
+          <WizardSidebar
+            step={step}
+            onStep={setStep}
+            isDark={isDark}
+            labels={labels}
+            title={tr.title}
+            subtitle={tr.subtitle}
+            disabled={!!jobId}
+            completed={{
+              template: !!form.templateId,
+              domain: form.domain.length >= 3,
+            }}
+          />
+        }
+      >
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <main className={cn('min-h-0 flex-1 overflow-y-auto', windowed ? 'p-5' : 'p-5 md:p-8')}>
             {!jobId ? (
@@ -598,7 +604,7 @@ export default function SiteWizard() {
             </footer>
           )}
         </div>
-      </div>
+      </ModuleSidebarLayout>
 
       <WindowModal open={confirmOpen} onClose={() => setConfirmOpen(false)} title={tr.confirmTitle} maxWidth="md">
         <div className="space-y-4 p-4">
