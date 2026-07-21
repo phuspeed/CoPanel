@@ -13,6 +13,7 @@ export interface ModuleConfig {
   component: React.ComponentType<any>;
   description?: string;
   windowMode?: boolean;
+  keepMountedOnMinimize?: boolean;
   defaultWindowSize?: { width: number; height: number };
   singleton?: boolean;
   pinned?: boolean;
@@ -30,6 +31,7 @@ export interface ExtensionManifest {
   icon?: string;
   description?: string;
   windowMode?: boolean;
+  keepMountedOnMinimize?: boolean;
   defaultWindowSize?: { width: number; height: number };
   pinned?: boolean;
   core_ui?: string;
@@ -82,6 +84,7 @@ class ModuleRegistry {
       component: config.component,
       description: config.description || '',
       windowMode: config.windowMode === true,
+      keepMountedOnMinimize: config.keepMountedOnMinimize === true,
       defaultWindowSize: config.defaultWindowSize,
       singleton: config.singleton,
       pinned: config.pinned === true,
@@ -99,6 +102,7 @@ class ModuleRegistry {
       component,
       description: manifest.description || '',
       windowMode: manifest.windowMode === true,
+      keepMountedOnMinimize: manifest.keepMountedOnMinimize === true,
       defaultWindowSize: manifest.defaultWindowSize,
       pinned: manifest.pinned === true,
       extensionId: manifest.id,

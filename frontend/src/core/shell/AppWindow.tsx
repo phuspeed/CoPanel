@@ -30,12 +30,13 @@ interface Props {
   isFocused: boolean;
   isDark: boolean;
   containerRef: React.RefObject<HTMLDivElement>;
+  keepMountedOnMinimize?: boolean;
   children: React.ReactNode;
 }
 
 type DragMode = 'move' | 'resize-se' | null;
 
-function AppWindowFrame({ win, isFocused, isDark, containerRef, children }: Props) {
+function AppWindowFrame({ win, isFocused, isDark, containerRef, keepMountedOnMinimize = false, children }: Props) {
   const [dragMode, setDragMode] = useState<DragMode>(null);
   const dragOrigin = useRef({ x: 0, y: 0, winX: 0, winY: 0, winW: 0, winH: 0 });
   const Icon = ICONS[win.icon] || Icons.Folder;
@@ -130,7 +131,11 @@ function AppWindowFrame({ win, isFocused, isDark, containerRef, children }: Prop
     };
   }, [dragMode, onPointerMove, onPointerUp]);
 
-  if (win.minimized) return null;
+  if (win.minimized && !keepMountedOnMinimize) return null;
+
+  if (win.minimized) {
+    return <div style={{ display: 'none' }}>{children}</div>;
+  }
 
   const maximizedStyle = win.maximized
     ? { left: 0, top: 0, width: '100%', height: `calc(100% - ${DOCK_HEIGHT}px)` }
