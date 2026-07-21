@@ -1,7 +1,7 @@
 /**
  * Bottom taskbar — Start menu, running windows, system tray, user account.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { moduleRegistry } from '../registry';
@@ -22,6 +22,12 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = Icons
 >;
 
 type Lang = 'en' | 'vi';
+
+interface ModuleActivityState {
+  playing?: boolean;
+  badgeText?: string;
+  title?: string;
+}
 
 interface Props {
   isDark: boolean;
@@ -66,10 +72,33 @@ export default function Dock({
     focusedId: s.focusedId,
   }));
   const [now, setNow] = useState(new Date());
+  const [moduleActivity, setModuleActivity] = useState<Record<string, ModuleActivityState>>({});
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const onStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        modulePath?: string;
+        playing?: boolean;
+        badgeText?: string;
+        title?: string;
+      }>).detail;
+      if (!detail?.modulePath) return;
+      setModuleActivity((prev) => ({
+        ...prev,
+        [detail.modulePath!]: {
+          playing: detail.playing,
+          badgeText: detail.badgeText,
+          title: detail.title,
+        },
+      }));
+    };
+    window.addEventListener('copanel:module-activity', onStatus as EventListener);
+    return () => window.removeEventListener('copanel:module-activity', onStatus as EventListener);
   }, []);
 
   const locale = language === 'vi' ? 'vi-VN' : 'en-US';
@@ -79,6 +108,15 @@ export default function Dock({
   const pinnedModules = moduleRegistry
     .getAll()
     .filter((m) => m.pinned && moduleSupportsWindows(m.path) && (!m.adminOnly || isSuperAdmin));
+  const windowActivity = useMemo(
+    () =>
+      windows.reduce<Record<string, ModuleActivityState>>((acc, win) => {
+        const activity = moduleActivity[win.modulePath];
+        if (activity) acc[win.id] = activity;
+        return acc;
+      }, {}),
+    [moduleActivity, windows],
+  );
 
   const handleDockClick = (modulePath: string) => {
     if (moduleSupportsWindows(modulePath)) {
@@ -139,8 +177,10 @@ export default function Dock({
               key={mod.path}
               isDark={isDark}
               active={windows.some((w) => w.modulePath === mod.path && !w.minimized)}
-              title={mod.name}
+              title={moduleActivity[mod.path]?.title || mod.name}
               onClick={() => handleDockClick(mod.path)}
+              pulse={moduleActivity[mod.path]?.playing}
+              indicator={moduleActivity[mod.path]?.badgeText}
             >
               <Icon className="h-5 w-5" />
             </DockButton>
@@ -160,13 +200,15 @@ export default function Dock({
               key={win.id}
               isDark={isDark}
               active={active}
-              title={win.title}
+              title={windowActivity[win.id]?.title || win.title}
               minimized={win.minimized}
               onClick={() => {
                 if (win.minimized) restoreWindow(win.id);
                 else if (focusedId === win.id) minimizeWindow(win.id);
                 else focusWindow(win.id);
               }}
+              pulse={windowActivity[win.id]?.playing}
+              indicator={windowActivity[win.id]?.badgeText}
             >
               <Icon className="h-4 w-4" />
               <span className="hidden max-w-[100px] truncate text-[10px] font-semibold sm:inline">{win.title}</span>
@@ -233,6 +275,8 @@ function DockButton({
   minimized,
   title,
   badge,
+  pulse,
+  indicator,
 }: {
   children: React.ReactNode;
   onClick: () => void;
@@ -241,6 +285,8 @@ function DockButton({
   minimized?: boolean;
   title?: string;
   badge?: number;
+  pulse?: boolean;
+  indicator?: string;
 }) {
   return (
     <button
@@ -263,6 +309,14 @@ function DockButton({
       {badge !== undefined && badge > 0 && (
         <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white">
           {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+      {pulse && (
+        <span className="absolute -bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+      )}
+      {indicator && (
+        <span className="absolute -right-1 -bottom-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[8px] font-bold leading-none text-white">
+          {indicator}
         </span>
       )}
     </button>
