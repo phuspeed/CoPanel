@@ -133,13 +133,20 @@ function AppWindowFrame({ win, isFocused, isDark, containerRef, keepMountedOnMin
 
   if (win.minimized && !keepMountedOnMinimize) return null;
 
-  if (win.minimized) {
-    return <div style={{ display: 'none' }}>{children}</div>;
-  }
-
   const maximizedStyle = win.maximized
     ? { left: 0, top: 0, width: '100%', height: `calc(100% - ${DOCK_HEIGHT}px)` }
     : { left: win.x, top: win.y, width: win.width, height: win.height };
+
+  const minimizedStyle = win.minimized
+    ? {
+        left: -10000,
+        top: -10000,
+        width: Math.max(win.width, MIN_WINDOW_SIZE.width),
+        height: Math.max(win.height, MIN_WINDOW_SIZE.height),
+        opacity: 0,
+        pointerEvents: 'none' as const,
+      }
+    : null;
 
   const onTitleDoubleClick = () => {
     const { w, h } = containerSize();
@@ -154,8 +161,9 @@ function AppWindowFrame({ win, isFocused, isDark, containerRef, keepMountedOnMin
         isFocused ? 'ring-2 ring-blue-500/40 shadow-blue-900/20' : 'shadow-black/30',
         win.snapped && 'ring-1 ring-blue-400/30',
         dragMode && 'select-none',
+        win.minimized && 'select-none',
       )}
-      style={{ ...maximizedStyle, zIndex: win.zIndex, position: 'absolute' }}
+      style={{ ...(minimizedStyle ?? maximizedStyle), zIndex: win.zIndex, position: 'absolute' }}
       onMouseDown={() => focusWindow(win.id)}
     >
       <div
