@@ -60,10 +60,6 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   Home: Icons.Home,
   Trash2: Icons.Trash2,
   HardDrive: Icons.HardDrive,
-  Bot: Icons.Bot,
-  Sparkles: Icons.Sparkles,
-  Terminal: Icons.Terminal,
-  Clock: Icons.Clock,
 };
 
 export default function Layout({
@@ -189,7 +185,6 @@ export default function Layout({
         'web_browser': 'Web Browser',
         'web_manager': 'Web',
         'settings': 'System Settings',
-        'coagent': 'CoAgent',
       }
     },
     vi: {
@@ -245,7 +240,6 @@ export default function Layout({
         'web_browser': 'Trình duyệt Web',
         'web_manager': 'Quản lý Web',
         'settings': 'Cài đặt hệ thống',
-        'coagent': 'CoAgent',
       }
     }
   };
