@@ -5,7 +5,7 @@ import PackageManagerDashboard from './index';
 
 export default {
   name: 'Packages',
-  icon: 'Package',
+  icon: 'Boxes',
   path: '/package-manager',
   description: 'Manage and install system packages & dynamic modules.',
   component: PackageManagerDashboard,
