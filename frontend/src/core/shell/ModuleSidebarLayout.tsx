@@ -1,5 +1,8 @@
 /**
  * Responsive module chrome: fixed sidebar on wide / windowed; drawer on classic mobile.
+ *
+ * Content column always uses min-h-0 so nested overflow-y-auto panes can scroll
+ * inside Desktop floating windows (see frontend/DESKTOP_UI.md § Desktop window scrolling).
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import * as Icons from 'lucide-react';
