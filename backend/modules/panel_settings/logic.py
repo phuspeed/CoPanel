@@ -834,14 +834,18 @@ def get_settings() -> Dict[str, Any]:
     store = _load_store()
     gate = store.get("nginx_gate") or {}
     admin = _admin_user()
+    want_gate = bool(gate.get("enabled"))
+    has_gate = _nginx_has_gate()
     return {
         "ssh_port": _read_ssh_port(),
         "panel_port": PANEL_PORT,
         "nginx_gate": {
-            "enabled": bool(gate.get("enabled")) or _nginx_has_gate(),
+            "enabled": want_gate or has_gate,
             "username": gate.get("username") or "copanel",
             "configured": HTPASSWD_PATH.is_file(),
-            "needs_repair": _nginx_gate_at_server_level(),
+            # Server-level layout OR settings say enabled but markers were wiped (e.g. install.sh).
+            "needs_repair": _nginx_gate_at_server_level()
+            or (want_gate and HTPASSWD_PATH.is_file() and not has_gate),
         },
         "totp": {
             "enabled": bool(admin.get("totp_enabled")) if admin else False,
@@ -1263,22 +1267,42 @@ def repair_nginx_gate() -> Dict[str, Any]:
     gate = store.get("nginx_gate") or {}
     if not _nginx_has_gate() and not HTPASSWD_PATH.is_file():
         raise ValueError("Nginx gate is not configured.")
+    # Ensure store remains enabled when restoring a wiped nginx site.
+    if HTPASSWD_PATH.is_file() and not gate.get("enabled"):
+        gate = store.setdefault("nginx_gate", {"enabled": False, "username": "copanel"})
+        gate["enabled"] = True
+        _save_store(store)
     user = (gate.get("username") or "copanel").strip()
     return configure_nginx_gate(True, user, None)
 
 
-def maybe_auto_repair_nginx_gate() -> Optional[Dict[str, Any]]:
-    """Startup hook: fix legacy server-level gate after git pull + service restart."""
+def nginx_gate_needs_auto_repair() -> bool:
+    """Whether startup should re-inject or relocate the HTTP access gate."""
     if IS_WINDOWS:
-        return None
-    if not _nginx_gate_at_server_level():
-        return None
-    if not HTPASSWD_PATH.is_file() and not _nginx_has_gate():
+        return False
+    store = _load_store()
+    gate = store.get("nginx_gate") or {}
+    want_enabled = bool(gate.get("enabled"))
+    has_htpasswd = HTPASSWD_PATH.is_file()
+    has_markers = _nginx_has_gate()
+    # install.sh / panel-update overwrite sites-available/copanel without the gate block.
+    missing_after_overwrite = want_enabled and has_htpasswd and not has_markers
+    legacy_server_level = _nginx_gate_at_server_level()
+    if not missing_after_overwrite and not legacy_server_level:
+        return False
+    if not has_htpasswd and not has_markers:
+        return False
+    return True
+
+
+def maybe_auto_repair_nginx_gate() -> Optional[Dict[str, Any]]:
+    """Startup hook: restore wiped gate or fix legacy server-level auth after restart."""
+    if not nginx_gate_needs_auto_repair():
         return None
     try:
         result = repair_nginx_gate()
         logger.info(
-            "Nginx gate auto-repaired (auth moved into location /; /api/ exempt). reload_ok=%s",
+            "Nginx gate auto-repaired (markers restored / moved into location /; /api/ exempt). reload_ok=%s",
             result.get("reload_ok"),
         )
         return result
