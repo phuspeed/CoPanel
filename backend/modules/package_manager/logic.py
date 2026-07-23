@@ -110,11 +110,17 @@ DEFAULT_PACKAGES: List[Dict[str, Any]] = [
     },
     # ── Runtimes & Languages ─────────────────────────────────────────────────
     {
-        "id": "nodejs", "name": "Node.js & PM2",
-        "description": "JavaScript runtime environment and process manager.",
+        "id": "nodejs", "name": "Node.js & npm",
+        "description": "JavaScript runtime environment and npm package manager.",
         "icon": "Code", "status": "not_installed", "category": "Runtimes",
         "apt": ["nodejs", "npm"], "yum": ["nodejs", "npm"],
         "detect_bin": "node",
+    },
+    {
+        "id": "pm2", "name": "PM2",
+        "description": "Production process manager for Node.js apps. Requires Node.js/npm.",
+        "icon": "Terminal", "status": "not_installed", "category": "Runtimes",
+        "detect_bin": "pm2", "install_via": "npm", "npm_packages": ["pm2"],
     },
     {
         "id": "python3", "name": "Python 3 & Pip",
@@ -255,6 +261,7 @@ def load_packages() -> List[Dict[str, Any]]:
         "mongodb": "mongod",
         "fail2ban": "fail2ban-client",
         "nodejs": "node",
+        "pm2": "pm2",
         "python3": "python3",
         "java": "java",
         "golang": "go",
@@ -321,6 +328,27 @@ def _packages_for_current_os(pkg: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _install_npm_global(packages: List[str]) -> None:
+    """Install npm packages globally. Requires node/npm on PATH."""
+    if not packages:
+        return
+    npm = shutil.which("npm")
+    if not npm:
+        raise RuntimeError("Node.js/npm is required. Install the Node.js package first.")
+    _run_with_optional_sudo([npm, "install", "-g"] + packages, check=True)
+
+
+def _remove_npm_global(packages: List[str]) -> None:
+    npm = shutil.which("npm")
+    if not npm or not packages:
+        return
+    _run_with_optional_sudo([npm, "uninstall", "-g"] + packages, check=False)
+
+
+def _pm2_bin() -> Optional[str]:
+    return shutil.which("pm2")
+
+
 def save_packages(packages: List[Dict[str, Any]]):
     """Saves packages to disk."""
     if not CONFIG_DIR.exists():
@@ -370,6 +398,17 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
             save_packages(packages)
             return target_pkg
 
+        # npm global packages (e.g. PM2)
+        if target_pkg.get("install_via") == "npm":
+            npm_pkgs = list(target_pkg.get("npm_packages") or [pkg_id])
+            _install_npm_global(npm_pkgs)
+            if pkg_id == "pm2" and _pm2_bin():
+                # Best-effort: prepare daemon so System Monitor can list apps
+                _run_with_optional_sudo([_pm2_bin(), "ping"], check=False)
+            target_pkg["status"] = "running"
+            save_packages(packages)
+            return target_pkg
+
         os_pkgs = _packages_for_current_os(target_pkg)
         if os_pkgs:
             pm = _pkg_manager()
@@ -398,9 +437,18 @@ def restart_package(pkg_id: str) -> Dict[str, Any]:
             break
     if target_pkg:
         if not IS_WINDOWS:
-            svc = _service_name(target_pkg)
-            if svc:
-                _run_with_optional_sudo(["systemctl", "restart", svc], check=False)
+            if pkg_id == "pm2":
+                pm2 = _pm2_bin()
+                if pm2:
+                    # Start/restart all managed apps (also used for "Start")
+                    try:
+                        _run_with_optional_sudo([pm2, "restart", "all"], check=True)
+                    except Exception:
+                        _run_with_optional_sudo([pm2, "resurrect"], check=False)
+            else:
+                svc = _service_name(target_pkg)
+                if svc:
+                    _run_with_optional_sudo(["systemctl", "restart", svc], check=False)
         save_packages(packages)
         target_pkg["status"] = "running"
     return target_pkg
@@ -416,9 +464,14 @@ def stop_package(pkg_id: str) -> Dict[str, Any]:
             break
     if target_pkg:
         if not IS_WINDOWS:
-            svc = _service_name(target_pkg)
-            if svc:
-                _run_with_optional_sudo(["systemctl", "stop", svc], check=False)
+            if pkg_id == "pm2":
+                pm2 = _pm2_bin()
+                if pm2:
+                    _run_with_optional_sudo([pm2, "stop", "all"], check=False)
+            else:
+                svc = _service_name(target_pkg)
+                if svc:
+                    _run_with_optional_sudo(["systemctl", "stop", svc], check=False)
         target_pkg["status"] = "stopped"
         save_packages(packages)
     return target_pkg
@@ -435,22 +488,32 @@ def remove_package(pkg_id: str) -> Dict[str, Any]:
 
     if target_pkg:
         if not IS_WINDOWS:
-            svc = _service_name(target_pkg)
-            if svc:
-                _run_with_optional_sudo(["systemctl", "disable", "--now", svc], check=False)
-
-            if pkg_id == "phpmyadmin":
-                pm = _pkg_manager()
-                if pm == "apt-get":
-                    _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
-                elif pm == "yum":
-                    _run_with_optional_sudo([pm, "remove", "-y", "phpMyAdmin"], check=False)
-                    _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
+            if pkg_id == "pm2":
+                pm2 = _pm2_bin()
+                if pm2:
+                    _run_with_optional_sudo([pm2, "kill"], check=False)
+                npm_pkgs = list(target_pkg.get("npm_packages") or ["pm2"])
+                _remove_npm_global(npm_pkgs)
             else:
-                os_pkgs = _packages_for_current_os(target_pkg)
-                pm = _pkg_manager()
-                if pm and os_pkgs:
-                    _run_with_optional_sudo([pm, "remove", "-y"] + os_pkgs, check=False)
+                svc = _service_name(target_pkg)
+                if svc:
+                    _run_with_optional_sudo(["systemctl", "disable", "--now", svc], check=False)
+
+                if pkg_id == "phpmyadmin":
+                    pm = _pkg_manager()
+                    if pm == "apt-get":
+                        _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
+                    elif pm == "yum":
+                        _run_with_optional_sudo([pm, "remove", "-y", "phpMyAdmin"], check=False)
+                        _run_with_optional_sudo([pm, "remove", "-y", "phpmyadmin"], check=False)
+                elif target_pkg.get("install_via") == "npm":
+                    npm_pkgs = list(target_pkg.get("npm_packages") or [pkg_id])
+                    _remove_npm_global(npm_pkgs)
+                else:
+                    os_pkgs = _packages_for_current_os(target_pkg)
+                    pm = _pkg_manager()
+                    if pm and os_pkgs:
+                        _run_with_optional_sudo([pm, "remove", "-y"] + os_pkgs, check=False)
 
         target_pkg["status"] = "not_installed"
         save_packages(packages)
