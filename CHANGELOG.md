@@ -2,6 +2,31 @@
 
 All notable changes to CoPanel are documented in this file.
 
+## [1.1.4] — 2026-07-23
+
+### English
+
+**Fixed / Improved (UI)**
+
+- App Store Desktop window: catalog scrolls again (`min-h-0` flex chain + featured/categories in the scroll pane); `appstore_manager` **1.0.37**.
+- Dock: Packages and App Store no longer share the same icon (`Boxes` vs `ShoppingBag`); `package_manager` **1.0.5**, `appstore_manager` **1.0.36**.
+- Package Manager: dedicated **PM2** package (npm global install/lifecycle), dual-UI polish (search, status filters, mobile drawer); `package_manager` **1.0.4+**.
+- Docs: `frontend/DESKTOP_UI.md` — required Desktop window scrolling rules for future modules.
+- Site Wizard / Web Manager: nginx 502 after WordPress 1-click (PHP-FPM socket detection).
+- Dock: audio playback badges no longer force a horizontal taskbar scrollbar.
+
+**Docs / housekeeping**
+
+- README version badges synced to **1.1.4** (were stuck on 1.1.0).
+
+### Tiếng Việt (tóm tắt)
+
+- App Store cửa sổ Desktop cuộn được danh sách app; icon Packages / App Store trên dock khác nhau.
+- Package Manager thêm PM2; tài liệu quy tắc scroll Desktop UI.
+- Badge phiên bản README cập nhật đúng 1.1.4.
+
+[1.1.4]: https://github.com/phuspeed/CoPanel/releases/tag/v1.1.4
+
 ## [1.1.3] — 2026-07-21
 
 ### English
