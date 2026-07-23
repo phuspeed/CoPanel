@@ -74,6 +74,8 @@ class CreateSiteRequest(BaseModel):
     php_version: Optional[str] = None
     php_modules: Optional[List[str]] = None
     engine: Literal["nginx", "apache"] = "nginx"
+    issue_ssl: bool = False
+    ssl_email: Optional[str] = None
 
 class ToggleSiteRequest(BaseModel):
     filename: str
@@ -208,6 +210,19 @@ def _apache_vhost_template(
 async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     """Create a new Nginx or Apache vhost from a basic template."""
     try:
+        if req.issue_ssl:
+            email = (req.ssl_email or "").strip()
+            if not email or "@" not in email:
+                raise HTTPException(
+                    status_code=422,
+                    detail="ssl_email is required when issue_ssl is true.",
+                )
+            if req.engine != "nginx":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Automatic Let's Encrypt SSL is only supported for Nginx sites.",
+                )
+
         fname = req.filename
         if not fname or fname.strip() == "":
             domain_name = req.domain.strip().lower()
@@ -417,7 +432,50 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
                     detail=f"Nginx configuration invalid: {e.stderr}",
                 )
 
-        return {"status": "success", "message": "Nginx site created and activated successfully.", "engine": "nginx"}
+        result: Dict[str, Any] = {
+            "status": "success",
+            "message": "Nginx site created and activated successfully.",
+            "engine": "nginx",
+        }
+
+        # Optional Let's Encrypt SSL via Certbot (HTTP vhost must exist first).
+        if req.issue_ssl:
+            email = (req.ssl_email or "").strip()
+            ssl_domain = req.domain.strip().lower()
+            ssl_domain = re.sub(r"^(https?://)?(www\.)?", "", ssl_domain)
+            try:
+                from modules.ssl_manager.logic import SSLManager
+
+                ssl_res = SSLManager.issue_certbot(ssl_domain, email)
+            except Exception as ssl_exc:
+                ssl_res = {"status": "error", "message": str(ssl_exc)}
+
+            if ssl_res.get("status") == "success":
+                result["ssl"] = {
+                    "type": "letsencrypt",
+                    "domain": ssl_domain,
+                    "email": email,
+                    "status": "active",
+                }
+                result["message"] = (
+                    "Nginx site created and Let's Encrypt SSL issued successfully."
+                )
+            else:
+                warning = ssl_res.get("message") or "SSL issuance failed"
+                result["ssl"] = {
+                    "type": "letsencrypt",
+                    "domain": ssl_domain,
+                    "email": email,
+                    "status": "failed",
+                    "error": warning,
+                }
+                result["message"] = (
+                    "Nginx site created, but SSL issuance failed. "
+                    f"You can retry from SSL Manager. Detail: {warning}"
+                )
+                result["warning"] = warning
+
+        return result
 
     except HTTPException:
         raise

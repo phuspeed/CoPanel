@@ -14,7 +14,7 @@ interface Props {
   children: React.ReactNode;
   title?: string;
   className?: string;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl' | '5xl';
   /** When false, only the X button or explicit Cancel actions close the modal. Default: true */
   closeOnBackdropClick?: boolean;
 }
@@ -25,6 +25,8 @@ const MAX_W = {
   lg: 'max-w-lg',
   xl: 'max-w-xl',
   '2xl': 'max-w-2xl',
+  '4xl': 'max-w-4xl',
+  '5xl': 'max-w-5xl',
 };
 
 export default function WindowModal({

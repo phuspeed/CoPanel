@@ -42,6 +42,9 @@ export default function WebManagerDashboard() {
   const [proxyPort, setProxyPort] = useState<number | ''>('');
   const [siteType, setSiteType] = useState<'static' | 'proxy' | 'php'>('static');
   const [siteEngine, setSiteEngine] = useState<'nginx' | 'apache'>('nginx');
+  const [issueSsl, setIssueSsl] = useState<boolean>(false);
+  const [sslEmail, setSslEmail] = useState<string>('');
+  const [isCreating, setIsCreating] = useState<boolean>(false);
 
   // PHP specific states
   const [phpVersion, setPhpVersion] = useState<string>('8.2');
@@ -139,6 +142,10 @@ export default function WebManagerDashboard() {
       proxyPortLabel: 'Proxy Port',
       phpVersionLabel: 'PHP Version',
       phpModulesLabel: 'PHP Modules (Enable)',
+      sslEnable: 'Enable SSL (Let\'s Encrypt)',
+      sslEmail: 'SSL contact email',
+      sslHint: 'DNS must point to this server. Certbot will issue a certificate and update the Nginx config.',
+      creating: 'Creating...',
       create: 'Create',
       cancel: 'Cancel',
 
@@ -230,6 +237,10 @@ export default function WebManagerDashboard() {
       proxyPortLabel: 'Cổng Proxy',
       phpVersionLabel: 'Phiên bản PHP',
       phpModulesLabel: 'PHP Modules (Bật)',
+      sslEnable: 'Bật SSL (Let\'s Encrypt)',
+      sslEmail: 'Email liên hệ SSL',
+      sslHint: 'DNS cần trỏ về máy chủ này. Certbot sẽ cấp chứng chỉ và cập nhật cấu hình Nginx.',
+      creating: 'Đang tạo...',
       create: 'Tạo mới',
       cancel: 'Hủy',
 
@@ -521,6 +532,12 @@ export default function WebManagerDashboard() {
 
   const handleCreateSite = async () => {
     if (!domain) return;
+    const canIssueSsl = siteEngine === 'nginx' && siteType === 'proxy' && issueSsl;
+    if (canIssueSsl && (!sslEmail.trim() || !sslEmail.includes('@'))) {
+      alert(language === 'vi' ? 'Vui lòng nhập email SSL hợp lệ.' : 'Please enter a valid SSL email.');
+      return;
+    }
+    setIsCreating(true);
     try {
       const response = await fetch('/api/web_manager/create', {
         method: 'POST',
@@ -533,21 +550,30 @@ export default function WebManagerDashboard() {
           php_version: siteType === 'php' ? phpVersion : null,
           php_modules: siteType === 'php' ? phpModules : null,
           engine: siteEngine,
+          issue_ssl: canIssueSsl,
+          ssl_email: canIssueSsl ? sslEmail.trim() : null,
         }),
       });
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.detail || 'Failed to create site');
+      }
+      if (data.ssl?.status === 'failed' || data.warning) {
+        alert(data.message || data.warning || 'Site created but SSL failed.');
       }
       setDomain('');
       setRoot('/var/www/');
       setPort(80);
       setProxyPort('');
       setPhpModules([]);
+      setIssueSsl(false);
+      setSslEmail('');
       setShowCreateModal(false);
       fetchSites();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error creating site');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -1593,8 +1619,8 @@ export default function WebManagerDashboard() {
         open={!!viewingSite}
         onClose={() => setViewingSite(null)}
         title={viewingSite ? `${tr.editConfig}: ${viewingSite.filename}` : tr.editConfig}
-        maxWidth="2xl"
-        className="flex max-h-[85vh] max-w-4xl flex-col"
+        maxWidth="5xl"
+        className="flex h-[85vh] max-h-[90vh] w-full flex-col"
       >
           <div className="flex min-h-0 flex-1 flex-col p-4 select-none">
             {saveStatus && (
@@ -1673,11 +1699,11 @@ export default function WebManagerDashboard() {
               </div>
             )}
 
-            <div className="flex-1 min-h-0 mb-4 flex flex-col">
+            <div className="mb-4 flex min-h-0 flex-1 flex-col">
               <textarea
                 value={editedContent}
                 onChange={(e) => setEditedContent(e.target.value)}
-                className={`w-full h-full border p-4 rounded-xl outline-none focus:border-blue-500 font-mono text-xs transition resize-none ${
+                className={`min-h-[52vh] w-full flex-1 resize-none rounded-xl border p-4 font-mono text-xs outline-none transition focus:border-blue-500 ${
                   isDark ? 'bg-slate-950 border-slate-800/80 text-slate-100' : 'bg-slate-50 border-slate-100 text-slate-800'
                 }`}
               />
@@ -1805,6 +1831,9 @@ export default function WebManagerDashboard() {
                     if (val.trim()) {
                       const cleanDomain = val.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, '');
                       setRoot(`/var/www/${cleanDomain}`);
+                      if (!sslEmail || sslEmail.startsWith('admin@')) {
+                        setSslEmail(`admin@${cleanDomain}`);
+                      }
                     } else {
                       setRoot('/var/www/');
                     }
@@ -1904,11 +1933,57 @@ export default function WebManagerDashboard() {
                   </div>
                 )}
               </div>
+
+              {siteType === 'proxy' && siteEngine === 'nginx' && (
+                <div className={`rounded-xl border p-4 space-y-3 ${
+                  isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50/80'
+                }`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+                        <Icons.Lock className="w-3.5 h-3.5" /> {tr.sslEnable}
+                      </h4>
+                      <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.sslHint}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIssueSsl((prev) => !prev)}
+                      aria-pressed={issueSsl}
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                        issueSsl ? 'bg-blue-600' : isDark ? 'bg-slate-700' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                          issueSsl ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {issueSsl && (
+                    <div>
+                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {tr.sslEmail}
+                      </label>
+                      <input
+                        type="email"
+                        value={sslEmail}
+                        onChange={(e) => setSslEmail(e.target.value)}
+                        placeholder="admin@example.com"
+                        className={`w-full rounded-xl border px-3 py-2 text-xs outline-none focus:border-blue-500 ${
+                          isDark ? 'border-slate-800 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800'
+                        }`}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 mt-6 flex-shrink-0 border-t pt-4 dark:border-slate-800">
               <button
                 onClick={() => setShowCreateModal(false)}
+                disabled={isCreating}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                   isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                 }`}
@@ -1917,9 +1992,11 @@ export default function WebManagerDashboard() {
               </button>
               <button
                 onClick={handleCreateSite}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1.5"
+                disabled={isCreating || !domain.trim()}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1.5"
               >
-                <Icons.Plus className="w-4 h-4" /> {tr.create}
+                {isCreating ? <Icons.Loader className="w-4 h-4 animate-spin" /> : <Icons.Plus className="w-4 h-4" />}
+                {isCreating ? tr.creating : tr.create}
               </button>
             </div>
           </div>
