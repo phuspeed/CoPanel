@@ -1218,38 +1218,48 @@ def configure_nginx_gate(enabled: bool, username: Optional[str], password: Optio
     if not site.is_file():
         raise RuntimeError(f"Nginx site config not found: {site}")
 
-    if enabled:
-        user = (username or gate.get("username") or "copanel").strip()
-        if not user:
-            raise ValueError("Gate username required.")
-        if not password:
-            if HTPASSWD_PATH.is_file() and (gate.get("enabled") or _nginx_has_gate()):
-                ht_path = str(HTPASSWD_PATH)
+    original = site.read_text(encoding="utf-8")
+    try:
+        if enabled:
+            user = (username or gate.get("username") or "copanel").strip()
+            if not user:
+                raise ValueError("Gate username required.")
+            if not password:
+                if HTPASSWD_PATH.is_file() and (gate.get("enabled") or _nginx_has_gate()):
+                    ht_path = str(HTPASSWD_PATH)
+                else:
+                    raise ValueError("Gate password required when enabling.")
             else:
-                raise ValueError("Gate password required when enabling.")
-        else:
-            ht_path = _write_nginx_htpasswd(user, password)
+                ht_path = _write_nginx_htpasswd(user, password)
 
-        content = site.read_text(encoding="utf-8")
-        content = _apply_nginx_gate(content, ht_path)
-        _write_file_privileged(site, content)
-        gate.update({"enabled": True, "username": user})
-    else:
-        content = site.read_text(encoding="utf-8")
-        content = _remove_nginx_gate_block(content)
-        _write_file_privileged(site, content)
-        if HTPASSWD_PATH.is_file():
-            try:
-                HTPASSWD_PATH.unlink()
-            except OSError:
-                pass
-        gate["enabled"] = False
+            content = _apply_nginx_gate(original, ht_path)
+            _write_file_privileged(site, content)
+            gate.update({"enabled": True, "username": user})
+        else:
+            content = _remove_nginx_gate_block(original)
+            _write_file_privileged(site, content)
+            if HTPASSWD_PATH.is_file():
+                try:
+                    HTPASSWD_PATH.unlink()
+                except OSError:
+                    pass
+            gate["enabled"] = False
+
+        test = _run_privileged(["nginx", "-t"], timeout=30)
+        if test.returncode != 0:
+            raise RuntimeError(f"nginx -t failed: {(test.stderr or test.stdout or '').strip()}")
+    except Exception:
+        # Never leave a broken sites-available/copanel on disk after a failed apply.
+        try:
+            if site.read_text(encoding="utf-8") != original:
+                _write_file_privileged(site, original)
+        except Exception as rollback_exc:
+            logger.warning("Failed to rollback nginx site after gate error: %s", rollback_exc)
+        raise
 
     _save_store(store)
-    test = _run_privileged(["nginx", "-t"])
-    if test.returncode != 0:
-        raise RuntimeError(f"nginx -t failed: {(test.stderr or test.stdout or '').strip()}")
-    reload = _run_privileged(["systemctl", "reload", "nginx"])
+    # Keep reload short so callers (especially install hooks) cannot hang forever.
+    reload = _run_privileged(["systemctl", "reload", "nginx"], timeout=30)
     return {
         "enabled": enabled,
         "username": gate.get("username"),

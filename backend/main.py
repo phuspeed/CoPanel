@@ -8,6 +8,7 @@ running module task can flow through the unified Task Center.
 """
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, Dict
@@ -68,12 +69,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("core.module_reload missing — hot-reload disabled; update CoPanel core (git pull).")
     await job_manager.start(app)
-    try:
-        from modules.panel_settings.logic import maybe_auto_repair_nginx_gate
 
-        maybe_auto_repair_nginx_gate()
-    except Exception as exc:
-        logger.warning("panel_settings startup hook: %s", exc)
+    # Never block startup on nginx reload — systemctl reload can hang past
+    # systemd TimeoutStartSec and leave the API in a 502 crash loop.
+    def _nginx_gate_repair_bg() -> None:
+        try:
+            from modules.panel_settings.logic import maybe_auto_repair_nginx_gate
+
+            maybe_auto_repair_nginx_gate()
+        except Exception as exc:
+            logger.warning("panel_settings startup hook: %s", exc)
+
+    threading.Thread(
+        target=_nginx_gate_repair_bg,
+        name="nginx-gate-auto-repair",
+        daemon=True,
+    ).start()
+
     yield
     await job_manager.stop()
     logger.info("CoPanel shutting down...")
