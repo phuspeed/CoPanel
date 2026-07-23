@@ -507,7 +507,7 @@ export default function AppStoreDashboard() {
   }, [catalog, nav, category, query]);
 
   return (
-    <ModuleViewport className="select-none">
+    <ModuleViewport className="select-none overflow-hidden">
     <ModuleSidebarLayout
       isDark={isDark}
       mobileTitle={tr.title}
@@ -522,7 +522,7 @@ export default function AppStoreDashboard() {
         />
       }
     >
-      <div className={cn('flex min-w-0 flex-1 flex-col', chromeContentBg(isDark))}>
+      <div className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden', chromeContentBg(isDark))}>
         <AppStoreHeader
           query={query}
           onQueryChange={setQuery}
@@ -541,7 +541,7 @@ export default function AppStoreDashboard() {
         {msg && (
           <div
             className={cn(
-              'mx-4 mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
+              'mx-4 mt-3 flex shrink-0 items-start gap-2 rounded-xl border px-3 py-2 text-xs',
               isDark ? 'border-slate-700 bg-slate-900/60 text-slate-200' : 'border-slate-200 bg-sky-50 text-slate-700',
             )}
           >
@@ -550,27 +550,27 @@ export default function AppStoreDashboard() {
           </div>
         )}
 
-        {(nav === 'hot' || nav === 'all') && !query.trim() && (
-          <FeaturedBanner
-            packages={featuredPackages}
-            isDark={isDark}
-            language={lang}
-            title={tr.featuredTitle}
-          />
-        )}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {(nav === 'hot' || nav === 'all') && !query.trim() && (
+            <FeaturedBanner
+              packages={featuredPackages}
+              isDark={isDark}
+              language={lang}
+              title={tr.featuredTitle}
+            />
+          )}
 
-        {nav === 'all' && (
-          <CategoryFilter
-            active={category}
-            onChange={setCategory}
-            expanded={categoriesOpen}
-            onToggle={() => setCategoriesOpen((v) => !v)}
-            isDark={isDark}
-            tr={tr}
-          />
-        )}
+          {nav === 'all' && (
+            <CategoryFilter
+              active={category}
+              onChange={setCategory}
+              expanded={categoriesOpen}
+              onToggle={() => setCategoriesOpen((v) => !v)}
+              isDark={isDark}
+              tr={tr}
+            />
+          )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
           <CatalogList
             packages={visiblePackages}
             isDark={isDark}
