@@ -30,10 +30,11 @@ Toggle anytime in panel · `localStorage` `copanel_desktop_ui` = `1`|`0`.
 ```
 DesktopShell (wallpaper + icons)
     └── WindowLayer
-            └── AppWindow (title bar, drag, resize)
-                    └── WindowViewportBody  ← scroll container
-                            └── ModuleViewport
+            └── AppWindow (title bar, drag, resize)          ← overflow-hidden
+                    └── WindowViewportBody                   ← flex-1 min-h-0 (fallback overflow-auto)
+                            └── ModuleViewport               ← h-full min-h-0 (window) | min-h-screen (classic)
                                     └── Your module (index.tsx)
+                                            └── scroll pane  ← flex-1 min-h-0 overflow-y-auto  ★ scroll thật
 ```
 
 | Lớp | File | Vai trò |
@@ -42,10 +43,13 @@ DesktopShell (wallpaper + icons)
 | Window chrome | `core/shell/AppWindow.tsx` | drag, resize, traffic lights |
 | Viewport context | `core/shell/WindowViewportContext.tsx` | ref cho modal trong window |
 | Module wrapper | `core/shell/ModuleViewport.tsx` | `h-full` vs `min-h-screen` |
+| Sidebar chrome | `core/shell/ModuleSidebarLayout.tsx` | sidebar cố định / drawer mobile; **content column luôn `min-h-0`** |
 | Modal scoped | `core/shell/WindowModal.tsx` | overlay trong window, không phủ desktop |
 | Shell context | `core/hooks/useAppShellContext.ts` | theme + language (Outlet hoặc window) |
 
 Module **không** mount qua React Router `<Outlet />` khi mở window — mount trực tiếp trong `WindowLayer`. Dùng `useAppShellContext()`, **không** dùng `useOutletContext()` trực tiếp.
+
+> **Scroll:** `WindowViewportBody` chỉ là fallback. Module **phải** tự có vùng `overflow-y-auto` bên trong. Nếu thiếu `min-h-0` trên chuỗi flex, nội dung bị cắt và **không có scrollbar** trong Desktop window (Classic vẫn scroll vì `min-h-screen`). Chi tiết: [§ Desktop window scrolling](#desktop-window-scrolling-required).
 
 ---
 
@@ -85,6 +89,8 @@ export default {
 
 ## Template module mới
 
+### A — Layout đơn (header + body scroll)
+
 ```tsx
 // src/modules/my_module/index.tsx
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
@@ -98,17 +104,92 @@ export default function MyModule() {
   const isWindowed = useIsWindowedModule();
 
   return (
-    <ModuleViewport className="flex min-h-0 flex-col">
-      {/* Root: h-full chain — KHÔNG min-h-screen / 100vh trong window mode */}
-      <header className="shrink-0 border-b px-4 py-3">...</header>
+    <ModuleViewport constrained className="overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col">
+        {/* Root: h-full chain — KHÔNG min-h-screen / 100vh trong window mode */}
+        <header className="shrink-0 border-b px-4 py-3">...</header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto p-4">
-        {/* Nội dung chính scroll ở đây */}
-      </main>
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+          {/* Nội dung chính scroll ở đây */}
+        </main>
+      </div>
     </ModuleViewport>
   );
 }
 ```
+
+### B — Sidebar + nội dung (khuyên dùng cho module lớn)
+
+```tsx
+import ModuleViewport from '../../core/shell/ModuleViewport';
+import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
+import { useAppShellContext } from '../../core/hooks/useAppShellContext';
+
+export default function MyModule() {
+  const { theme } = useAppShellContext();
+  const isDark = theme === 'dark';
+
+  return (
+    <ModuleViewport constrained className="overflow-hidden">
+      <ModuleSidebarLayout isDark={isDark} mobileTitle="My Module" sidebar={<aside>...</aside>}>
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="shrink-0 border-b px-4 py-3">...</header>
+          {/* Filters / tabs sticky: shrink-0; hoặc đưa vào scroll pane nếu cao */}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+            {/* lists / cards / tables */}
+          </div>
+        </div>
+      </ModuleSidebarLayout>
+    </ModuleViewport>
+  );
+}
+```
+
+Tham chiếu: `appstore_manager`, `package_manager`, `docker_manager`.
+
+---
+
+## Desktop window scrolling (required)
+
+> Floating window có **chiều cao cố định**. CSS flex mặc định `min-height: auto` → con không được co nhỏ hơn nội dung → `overflow-y-auto` **không bao giờ kích hoạt** → danh sách bị cắt, không có scrollbar.
+
+### Chuỗi bắt buộc (mọi tầng từ window xuống scroll pane)
+
+```
+AppWindow (overflow-hidden)
+  └─ WindowViewportBody (flex-1 min-h-0)
+       └─ ModuleViewport (h-full min-h-0)          ← tự set khi windowed
+            └─ [ModuleSidebarLayout nếu có]        ← content column: min-h-0
+                 └─ column (h-full min-h-0 flex flex-col overflow-hidden)
+                      ├─ header / toolbar (shrink-0)
+                      └─ scroll pane (flex-1 min-h-0 overflow-y-auto)  ★
+```
+
+### Checklist scroll
+
+| # | Quy tắc |
+|---|---------|
+| 1 | Mỗi flex child trên đường từ window → scroll pane phải có **`min-h-0`** (hoặc `overflow-hidden` trên parent flex). |
+| 2 | Chỉ **một** vùng scroll chính: `flex-1 min-h-0 overflow-y-auto` (thêm `overscroll-contain` nếu cần). |
+| 3 | Header, toolbar, tab bar, sidebar header: **`shrink-0`**. |
+| 4 | Banner / filter cao: hoặc `shrink-0` (nếu thấp) **hoặc** nằm **trong** scroll pane (khuyên dùng khi window hẹp — xem App Store). |
+| 5 | Dùng `ModuleSidebarLayout` — cột nội dung đã có `min-h-0` (đừng bỏ). |
+| 6 | Root module: `ModuleViewport` + `className="overflow-hidden"` khi có layout flex bên trong. |
+
+### Triệu chứng khi sai
+
+| Hiện tượng | Nguyên nhân thường gặp |
+|------------|------------------------|
+| Desktop: danh sách cắt đáy, **không scrollbar**; Classic OK | Thiếu `min-h-0` trên cột flex / scroll pane không phải `flex-1` |
+| Double scrollbar (window + list) | Vừa `min-h-screen` vừa `overflow-y-auto` bên trong |
+| Scroll cả page trong window | Dùng `min-h-screen` / `h-screen` / `100vh` trong module |
+| Nội dung dưới dock bị che | Scroll pane không bound — overflow bị `AppWindow overflow-hidden` cắt |
+
+### DON'T (scroll)
+
+- Đặt `overflow-y-auto` trên phần tử **không** có chiều cao bị giới hạn (thiếu `flex-1 min-h-0` trong column `h-full`).
+- Dựa vào scroll của `WindowViewportBody` thay cho scroll pane trong module.
+- `min-h-screen` / `h-screen` / `100vh` ở root hoặc wrapper chính khi `windowMode`.
 
 ---
 
@@ -117,10 +198,12 @@ export default function MyModule() {
 ### DO
 
 - Bọc root bằng `<ModuleViewport>` — tự chọn `h-full min-h-0` (window) hoặc `min-h-screen` (classic).
-- Flex column: `flex flex-col h-full` → header `shrink-0` → body `flex-1 min-h-0 overflow-y-auto`.
+- Flex column: `flex flex-col h-full min-h-0` → header `shrink-0` → body `flex-1 min-h-0 overflow-y-auto`.
+- Sidebar modules: `<ModuleSidebarLayout>` + cột nội dung `h-full min-h-0 overflow-hidden`.
 - Dùng `useAppShellContext()` cho theme/language.
 - Modal/dialog: `<WindowModal open={...}>` — overlay nằm trong cửa sổ.
 - Tables/lists: scroll trong body, không scroll cả page.
+- Dock icons: mỗi module **pinned** dùng lucide **khác nhau** (tránh hai `Package` cạnh nhau).
 
 ### DON'T
 
@@ -128,6 +211,7 @@ export default function MyModule() {
 - `fixed inset-0` cho modal — che desktop + dock; dùng `WindowModal`.
 - Giả định sidebar CoPanel hiển thị — desktop mode ẩn sidebar.
 - `useOutletContext()` — không có khi chạy window.
+- Flex column thiếu `min-h-0` rồi kỳ vọng `overflow-y-auto` hoạt động trong window.
 
 ### Z-index tham chiếu
 
@@ -281,13 +365,16 @@ Legend:
 ## Checklist trước merge
 
 - [ ] `config.ts` có `windowMode` + `defaultWindowSize` nếu cần window
-- [ ] Root = `ModuleViewport`, không `min-h-screen`
+- [ ] Root = `ModuleViewport` (+ `overflow-hidden` nếu layout flex bên trong), không `min-h-screen`
 - [ ] `useAppShellContext()` thay `useOutletContext()`
 - [ ] Modals dùng `WindowModal`
-- [ ] Scroll chỉ ở vùng nội dung (`flex-1 overflow-y-auto`)
+- [ ] **Scroll:** chuỗi flex có `min-h-0`; một scroll pane `flex-1 min-h-0 overflow-y-auto`
+- [ ] Nếu dùng `ModuleSidebarLayout`: cột nội dung `h-full min-h-0 overflow-hidden`
+- [ ] Test desktop **window hẹp**: danh sách dài phải cuộn được, không bị cắt đáy
 - [ ] Test desktop: open, drag, snap, Alt+Tab, Ctrl+W, resize
 - [ ] Test classic: route `/your-module` vẫn OK
 - [ ] Test mobile `<1024px`: full-page, không window
+- [ ] Icon `pinned` trên dock không trùng module khác
 
 ---
 
@@ -309,6 +396,9 @@ Chỉ khi `config.ts` trong ZIP có `windowMode: true`. Classic vẫn chạy ful
 
 **Một ZIP cho cả Classic và Desktop?**  
 **Có.** Dùng `useAppShellContext` + `ModuleViewport`. Classic bỏ qua `windowMode`.
+
+**FAQ — Desktop có list dài nhưng không scroll?**  
+Thiếu `min-h-0` trên chuỗi flex hoặc scroll pane không `flex-1 min-h-0 overflow-y-auto`. Xem [§ Desktop window scrolling](#desktop-window-scrolling-required). Classic vẫn OK vì `min-h-screen`.
 
 **Terminal / xterm resize?**  
 `FitAddon.fit()` trong `ResizeObserver` trên container terminal.
@@ -368,13 +458,20 @@ export default function MyModule() {
   const isDark = theme === 'dark';
 
   return (
-    <ModuleViewport constrained className="p-4 md:p-8 space-y-6">
-      {/* NO min-h-screen, NO 100vh, NO fixed fullscreen modals — use WindowModal */}
+    <ModuleViewport constrained className="overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col">
+        <header className="shrink-0 border-b px-4 py-3">...</header>
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+          {/* lists / forms — scroll here, not on the page */}
+        </main>
+      </div>
     </ModuleViewport>
   );
 }
 ```
 
+Full scroll rules (sidebar layout, `min-h-0` chain, failure symptoms):  
+**[§ Desktop window scrolling](#desktop-window-scrolling-required)** above.
 ### Build & publish
 
 ```bash
@@ -397,6 +494,7 @@ No separate Desktop ZIP. No branch-specific catalog.
 - [ ] `useAppShellContext()` — not `useOutletContext()`
 - [ ] Root wrapped in `<ModuleViewport>`
 - [ ] Modals use `<WindowModal>` if module has dialogs
+- [ ] Desktop scroll: `min-h-0` flex chain + one `overflow-y-auto` pane (see § Scroll)
 - [ ] Test **Classic**: `/your-path` full-page
-- [ ] Test **Desktop**: toggle ON, open from grid; if `windowMode`, opens in window
+- [ ] Test **Desktop**: toggle ON, open from grid; if `windowMode`, opens in window **and list scrolls**
 - [ ] Bump `version.txt` + `packages.json` + push ZIP
