@@ -194,7 +194,7 @@ export default function Dock({
       <div className={cn('mx-0.5 h-8 w-px shrink-0', isDark ? 'bg-slate-700' : 'bg-slate-200')} />
 
       {/* Running windows */}
-      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         {windows.map((win) => {
           const Icon = ICONS[win.icon] || ICONS.Grid;
           const active = focusedId === win.id && !win.minimized;
@@ -218,7 +218,7 @@ export default function Dock({
               <Icon className="h-4 w-4 shrink-0" />
               <span
                 className={cn(
-                  'hidden max-w-[140px] truncate text-[10px] font-semibold sm:inline',
+                  'hidden max-w-[100px] truncate text-[10px] font-semibold sm:inline',
                   activity?.playbackState === 'playing' && 'text-emerald-500',
                 )}
               >
@@ -309,7 +309,7 @@ function DockButton({
       title={title || trackName}
       onClick={onClick}
       className={cn(
-        'relative flex items-center gap-1.5 rounded-xl px-2.5 py-2 transition-colors',
+        'relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-xl px-2.5 py-2 transition-colors',
         active
           ? isDark
             ? 'bg-blue-600/30 text-blue-300 ring-1 ring-blue-500/40'
@@ -319,24 +319,19 @@ function DockButton({
             : 'text-slate-600 hover:bg-slate-100',
         minimized && !isPlaying && 'opacity-50',
         isPlaying && 'ring-1 ring-emerald-500/30',
+        (isPlaying || isPaused) && 'pr-6',
       )}
     >
       {children}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white">
+        <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-500 px-1 text-[8px] font-bold text-white">
           {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-      {isPlaying && (
-        <span className="absolute -bottom-0.5 left-1/2 flex -translate-x-1/2 items-center justify-center">
-          <span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-emerald-400/70" />
-          <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)]" />
         </span>
       )}
       {(isPlaying || isPaused) && (
         <span
           className={cn(
-            'absolute -right-1 -bottom-1 flex h-4 w-4 items-center justify-center rounded-full border shadow-sm',
+            'absolute bottom-1 right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border',
             isPlaying
               ? 'border-emerald-400/50 bg-emerald-500 text-white'
               : isDark
@@ -346,9 +341,9 @@ function DockButton({
           )}
         >
           {isPlaying ? (
-            <Icons.Play className="h-2.5 w-2.5 fill-current" />
+            <Icons.Play className="h-2 w-2 fill-current" />
           ) : (
-            <Icons.Pause className="h-2.5 w-2.5 fill-current" />
+            <Icons.Pause className="h-2 w-2 fill-current" />
           )}
         </span>
       )}
