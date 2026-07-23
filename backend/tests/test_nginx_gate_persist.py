@@ -134,6 +134,32 @@ class NginxGateAutoRepairTests(unittest.TestCase):
         self.assertFalse(self.logic._nginx_gate_at_server_level(restored))
         self.assertFalse(self.logic.nginx_gate_needs_auto_repair())
 
+    def test_configure_rolls_back_when_nginx_t_fails(self):
+        self._write_store(False)
+        self.htpasswd.write_text("copanel:hash\n", encoding="utf-8")
+        before = self.nginx_site.read_text(encoding="utf-8")
+
+        def flaky_privileged(cmd, *, input_text=None, timeout=120):
+            class Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            if cmd[:1] == ["nginx"] or (len(cmd) >= 2 and cmd[0] == "sudo" and cmd[2:3] == ["nginx"]):
+                # Match nginx -t
+                if "-t" in cmd:
+                    Result.returncode = 1
+                    Result.stderr = "nginx: configuration file test failed"
+                    return Result()
+            return Result()
+
+        with patch.object(self.logic, "_run_privileged", side_effect=flaky_privileged):
+            with self.assertRaises(RuntimeError):
+                self.logic.configure_nginx_gate(True, "copanel", "secret12345")
+
+        self.assertEqual(self.nginx_site.read_text(encoding="utf-8"), before)
+        self.assertNotIn(self.logic.NGINX_AUTH_START, before)
+
 
 if __name__ == "__main__":
     unittest.main()

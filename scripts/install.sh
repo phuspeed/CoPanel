@@ -1103,6 +1103,10 @@ WorkingDirectory=/opt/copanel/backend
 Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
+# Allow slow first boot (module scan) without blocking forever on nginx hooks.
+TimeoutStartSec=120
+TimeoutStopSec=30
+
 # Restart policy
 Restart=always
 RestartSec=5
