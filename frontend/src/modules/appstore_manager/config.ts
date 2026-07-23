@@ -6,7 +6,7 @@ import AppStoreDashboard from './index';
 
 export default {
   name: 'App Store',
-  icon: 'Package',
+  icon: 'ShoppingBag',
   path: '/appstore-manager',
   description: 'Manage and download public extensions from GitHub.',
   component: AppStoreDashboard,
