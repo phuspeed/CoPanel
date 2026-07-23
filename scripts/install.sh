@@ -1020,6 +1020,12 @@ EOF
         exit 1
     fi
 
+    # Re-apply HTTP access gate if Settings previously enabled it.
+    # setup_nginx overwrites sites-available/copanel with a clean template that
+    # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
+    # until the admin re-saves Settings (or until copanel startup auto-repair).
+    restore_nginx_gate_from_settings
+
     # Open necessary ports if UFW is installed
     if command_exists ufw; then
         log_info "Configuring UFW rules for CoPanel..."
@@ -1029,6 +1035,50 @@ EOF
         ufw allow 80/tcp || true
         ufw allow 443/tcp || true
     fi
+}
+
+###############################################################################
+# Restore nginx HTTP gate from panel_settings.json after template overwrite
+###############################################################################
+
+restore_nginx_gate_from_settings() {
+    local settings_file="${CoPanel_HOME}/config/panel_settings.json"
+    local htpasswd_file="${CoPanel_HOME}/config/panel_access.htpasswd"
+    local py="${CoPanel_HOME}/venv/bin/python"
+    local out=""
+
+    if [[ ! -f "$settings_file" ]] || [[ ! -f "$htpasswd_file" ]]; then
+        return 0
+    fi
+    if [[ ! -x "$py" ]]; then
+        log_info "Skipping nginx gate restore (venv python not ready yet); will restore on service start"
+        return 0
+    fi
+
+    log_info "Checking whether to restore nginx access gate from saved settings..."
+    out="$(
+        cd "${CoPanel_HOME}/backend" && "$py" - <<'PY' 2>/dev/null || true
+from modules.panel_settings.logic import maybe_auto_repair_nginx_gate, nginx_gate_needs_auto_repair
+
+if not nginx_gate_needs_auto_repair():
+    print("skip")
+else:
+    result = maybe_auto_repair_nginx_gate()
+    print("ok" if result else "fail")
+PY
+    )"
+
+    case "$out" in
+        *ok*)
+            log_success "Nginx access gate restored from panel settings"
+            ;;
+        *skip*)
+            log_info "Nginx access gate already applied or not enabled"
+            ;;
+        *)
+            log_info "Nginx access gate restore deferred to CoPanel service startup"
+            ;;
+    esac
 }
 
 ###############################################################################
