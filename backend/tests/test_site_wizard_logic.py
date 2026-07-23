@@ -134,9 +134,11 @@ class HttpVerifyTests(unittest.TestCase):
 
 
 class WordPressInstallScriptTests(unittest.TestCase):
+    @patch("modules.site_wizard.logic._run_wordpress_via_wp_cli", return_value=None)
+    @patch("modules.site_wizard.logic._find_php_bin", return_value="/usr/bin/php")
     @patch("modules.site_wizard.logic._resolve_wp_db_host", return_value="127.0.0.1")
     @patch("modules.site_wizard.logic.subprocess.run")
-    def test_install_script_seeds_http_host(self, mock_run, _host):
+    def test_install_script_seeds_http_host(self, mock_run, _host, _php, _cli):
         from modules.site_wizard.logic import _run_wordpress_db_install
 
         captured = {}
@@ -144,6 +146,8 @@ class WordPressInstallScriptTests(unittest.TestCase):
         def fake_run(cmd, **kwargs):
             script_path = Path(cmd[-1])
             captured["script"] = script_path.read_text(encoding="utf-8")
+            status = script_path.parent / ".copanel-wp-install.status"
+            status.write_text("OK", encoding="utf-8")
             mock = MagicMock()
             mock.returncode = 0
             mock.stdout = "OK"
@@ -163,6 +167,25 @@ class WordPressInstallScriptTests(unittest.TestCase):
         self.assertIn("HTTP_HOST", script)
         self.assertIn('"example.com"', script)
         self.assertIn("WP_HOME", script)
+        self.assertIn("copanel_wp_status", script)
+
+    @patch("modules.site_wizard.logic._wordpress_db_installed", return_value=False)
+    @patch("modules.site_wizard.logic._run_wordpress_db_install", side_effect=RuntimeError("boom"))
+    @patch("modules.site_wizard.logic._ensure_wp_config", return_value=True)
+    @patch("modules.site_wizard.logic._resolve_wp_db_host", return_value="127.0.0.1")
+    @patch("modules.site_wizard.logic._wordpress_files_present", return_value=True)
+    def test_install_soft_fails_when_db_bootstrap_errors(self, *_mocks):
+        from modules.site_wizard.logic import _install_wordpress_core
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _install_wordpress_core(
+                tmp,
+                "example.com",
+                {"name": "db", "user": "u", "password": "p", "host": "127.0.0.1"},
+            )
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(result["warnings"])
+        self.assertIn("install.php", result["admin_url"])
 
 
 if __name__ == "__main__":

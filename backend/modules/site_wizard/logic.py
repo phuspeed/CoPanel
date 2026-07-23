@@ -368,8 +368,106 @@ def _wordpress_db_installed(database: Dict[str, Any]) -> bool:
         return False
 
 
+def _find_php_bin() -> str:
+    for name in ("php", "php8.3", "php8.2", "php8.1", "php8.0", "php7.4"):
+        path = shutil.which(name)
+        if path:
+            return path
+    for path in (
+        "/usr/bin/php",
+        "/usr/bin/php8.3",
+        "/usr/bin/php8.2",
+        "/usr/bin/php8.1",
+        "/usr/sbin/php",
+    ):
+        if Path(path).is_file() and os.access(path, os.X_OK):
+            return path
+    raise RuntimeError("PHP CLI binary not found (needed for WordPress install).")
+
+
+def _wp_cli_path() -> Optional[str]:
+    for name in ("wp", "wp-cli"):
+        path = shutil.which(name)
+        if path:
+            return path
+    phar = Path("/usr/local/bin/wp")
+    if phar.is_file():
+        return str(phar)
+    return None
+
+
+def _ensure_wp_cli_phar() -> Optional[str]:
+    """Download wp-cli.phar once for reliable core install."""
+    phar = Path("/tmp/copanel-wp-cli.phar")
+    if phar.is_file() and phar.stat().st_size > 100_000:
+        return str(phar)
+    try:
+        urllib.request.urlretrieve(
+            "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar",
+            phar,
+        )
+        if phar.is_file() and phar.stat().st_size > 100_000:
+            return str(phar)
+    except Exception:
+        pass
+    return None
+
+
+def _run_wordpress_via_wp_cli(
+    doc_root: str,
+    domain: str,
+    admin_user: str,
+    admin_pass: str,
+    admin_email: str,
+) -> Optional[Dict[str, Any]]:
+    """Try WP-CLI core install. Returns result dict on success, None to fall back."""
+    php_bin = _find_php_bin()
+    wp_bin = _wp_cli_path()
+    cmd: List[str]
+    if wp_bin:
+        cmd = [wp_bin]
+    else:
+        phar = _ensure_wp_cli_phar()
+        if not phar:
+            return None
+        cmd = [php_bin, phar]
+
+    url = f"http://{domain}"
+    full_cmd = cmd + [
+        "core", "install",
+        f"--path={doc_root}",
+        f"--url={url}",
+        f"--title={domain}",
+        f"--admin_user={admin_user}",
+        f"--admin_password={admin_pass}",
+        f"--admin_email={admin_email}",
+        "--skip-email",
+        "--allow-root",
+    ]
+    try:
+        res = subprocess.run(
+            full_cmd,
+            cwd=doc_root,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except Exception:
+        return None
+    combined = ((res.stdout or "") + "\n" + (res.stderr or "")).lower()
+    if res.returncode == 0 or "already installed" in combined or "success" in combined:
+        return {
+            "db_installed": "already" not in combined,
+            "admin_user": admin_user,
+            "admin_password": admin_pass,
+            "admin_email": admin_email,
+            "method": "wp-cli",
+        }
+    return None
+
+
 def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
-    """Bootstrap WordPress tables via PHP CLI when core files exist but DB is empty."""
+    """Bootstrap WordPress tables. Prefers WP-CLI, falls back to seeded PHP CLI script."""
     root = Path(doc_root)
     if not (root / "wp-load.php").is_file():
         raise RuntimeError("WordPress core files are incomplete (missing wp-load.php).")
@@ -382,79 +480,160 @@ def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, An
     admin_user = "admin"
     admin_pass = _generate_password()
     admin_email = f"admin@{domain}"
-    # Seed a fake web request context — wp_install/home_url() need HTTP_HOST in CLI.
+
+    cli_result = _run_wordpress_via_wp_cli(doc_root, domain, admin_user, admin_pass, admin_email)
+    if cli_result and _wordpress_db_installed(database):
+        cli_result["db_host"] = working_host
+        cli_result["db_installed"] = True
+        return cli_result
+
+    # If WP-CLI reported success but tables missing, or WP-CLI unavailable — use PHP script.
+    php_bin = _find_php_bin()
+    status_file = root / ".copanel-wp-install.status"
+    log_file = root / ".copanel-wp-install.log"
     install_script = root / ".copanel-wp-install.php"
+    for p in (status_file, log_file):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     install_script.write_text(
         f"""<?php
-error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED);
+error_reporting(E_ALL);
 ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+ini_set('error_log', {json.dumps(str(log_file))});
+
 $_SERVER['HTTP_HOST'] = {json.dumps(domain)};
 $_SERVER['SERVER_NAME'] = {json.dumps(domain)};
 $_SERVER['SERVER_PORT'] = '80';
 $_SERVER['REQUEST_URI'] = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-$_SERVER['HTTPS'] = '';
+$_SERVER['HTTPS'] = 'off';
 $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+
 define('WP_USE_THEMES', false);
 define('WP_SITEURL', {json.dumps(f"http://{domain}")});
 define('WP_HOME', {json.dumps(f"http://{domain}")});
-require_once __DIR__ . '/wp-load.php';
-require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-require_once ABSPATH . 'wp-admin/includes/translation-install.php';
-if (is_blog_installed()) {{
-    echo 'ALREADY';
-    exit(0);
+
+function copanel_wp_status($code, $msg = '') {{
+    $line = $code . ($msg !== '' ? ' ' . $msg : '');
+    @file_put_contents(__DIR__ . '/.copanel-wp-install.status', $line);
+    echo $line;
 }}
-$result = wp_install({json.dumps(domain)}, {json.dumps(admin_user)}, {json.dumps(admin_email)}, true, '', {json.dumps(admin_pass)});
-if (empty($result) || (is_array($result) && empty($result['user_id']))) {{
-    fwrite(STDERR, "wp_install returned empty result\\n");
+
+try {{
+    require_once __DIR__ . '/wp-load.php';
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    if (file_exists(ABSPATH . 'wp-admin/includes/translation-install.php')) {{
+        require_once ABSPATH . 'wp-admin/includes/translation-install.php';
+    }}
+    global $wpdb;
+    if (!isset($wpdb) || !empty($wpdb->error)) {{
+        $err = isset($wpdb) && is_wp_error($wpdb->error) ? $wpdb->error->get_error_message() : 'wpdb missing';
+        copanel_wp_status('DB_ERROR', $err);
+        exit(1);
+    }}
+    $ping = @$wpdb->query('SELECT 1');
+    if ($ping === false) {{
+        copanel_wp_status('DB_ERROR', 'SELECT 1 failed: ' . $wpdb->last_error);
+        exit(1);
+    }}
+    if (function_exists('is_blog_installed') && is_blog_installed()) {{
+        copanel_wp_status('ALREADY');
+        exit(0);
+    }}
+    $result = wp_install(
+        {json.dumps(domain)},
+        {json.dumps(admin_user)},
+        {json.dumps(admin_email)},
+        true,
+        '',
+        {json.dumps(admin_pass)}
+    );
+    if (empty($result) || (is_array($result) && empty($result['user_id']))) {{
+        copanel_wp_status('FAIL', 'wp_install returned empty');
+        exit(1);
+    }}
+    copanel_wp_status('OK');
+    exit(0);
+}} catch (Throwable $e) {{
+    copanel_wp_status('FAIL', $e->getMessage());
     exit(1);
 }}
-echo 'OK';
 """,
         encoding="utf-8",
     )
     try:
         res = subprocess.run(
-            ["php", "-d", "display_errors=0", str(install_script)],
+            [
+                php_bin,
+                "-d", "display_errors=0",
+                "-d", "log_errors=1",
+                f"-d", f"error_log={log_file}",
+                str(install_script),
+            ],
             cwd=str(root),
             capture_output=True,
             text=True,
-            timeout=120,
-            env={**os.environ, "HTTP_HOST": domain},
+            timeout=180,
+            env={
+                **os.environ,
+                "HTTP_HOST": domain,
+                "SERVER_NAME": domain,
+            },
         )
-        output = (res.stdout or "").strip()
-        # Accept OK/ALREADY even when PHP prints notices on stdout.
-        status_token = None
-        for line in reversed(output.splitlines() or [output]):
-            token = line.strip()
-            if token in ("OK", "ALREADY"):
-                status_token = token
-                break
-        if status_token:
+        status_text = ""
+        if status_file.is_file():
+            status_text = status_file.read_text(encoding="utf-8", errors="ignore").strip()
+        if not status_text:
+            status_text = (res.stdout or "").strip()
+
+        token = status_text.split(None, 1)[0] if status_text else ""
+        if token in ("OK", "ALREADY") or _wordpress_db_installed(database):
             return {
-                "db_installed": status_token == "OK",
+                "db_installed": token == "OK" or (token != "ALREADY" and _wordpress_db_installed(database)),
                 "admin_user": admin_user,
                 "admin_password": admin_pass,
                 "admin_email": admin_email,
                 "db_host": working_host,
+                "method": "php-cli",
             }
-        combined = (res.stderr or "") + "\n" + (res.stdout or "")
-        if "Error establishing a database connection" in combined:
+
+        log_tail = ""
+        if log_file.is_file():
+            try:
+                log_tail = log_file.read_text(encoding="utf-8", errors="ignore")[-800:]
+            except Exception:
+                pass
+        combined = " | ".join(
+            x for x in (
+                status_text,
+                f"exit={res.returncode}",
+                (res.stderr or "").strip(),
+                (res.stdout or "").strip(),
+                log_tail.strip(),
+                f"php={php_bin}",
+            ) if x
+        ) or "unknown error"
+        if "Error establishing a database connection" in combined or token == "DB_ERROR":
             raise RuntimeError(
-                f"WordPress cannot connect to MySQL as {database['user']}@{working_host}. "
-                "Credentials were synced but PHP still cannot reach the database."
+                f"WordPress cannot connect to MySQL as {database['user']}@{working_host}. {combined[:400]}"
             )
-        detail = combined.strip() or "unknown error"
-        if len(detail) > 500:
-            detail = detail[:500] + "..."
+        detail = combined.strip()
+        if len(detail) > 600:
+            detail = detail[:600] + "..."
         raise RuntimeError(f"WordPress database install failed: {detail}")
     finally:
-        try:
-            install_script.unlink(missing_ok=True)
-        except Exception:
-            pass
+        for p in (install_script, status_file, log_file):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _download_wordpress_core(root: Path) -> None:
@@ -494,25 +673,43 @@ def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]
     working_host = _resolve_wp_db_host(database)
     database = {**database, "host": working_host}
     config_created = _ensure_wp_config(root, database)
-    admin_url = f"https://{domain}/wp-admin/"
+    admin_url = f"http://{domain}/wp-admin/install.php"
     result: Dict[str, Any] = {
         "status": "success",
         "files_present": files_present,
         "config_created": config_created,
         "admin_url": admin_url,
         "db_host": working_host,
+        "warnings": [],
     }
 
     if _wordpress_db_installed(database):
         result["message"] = "WordPress already installed"
         result["db_installed"] = False
+        result["admin_url"] = f"http://{domain}/wp-admin/"
         return result
 
-    install_info = _run_wordpress_db_install(doc_root, domain, database)
-    result.update(install_info)
-    result["message"] = "WordPress core installed and database initialized"
-    result["admin_url"] = admin_url
-    return result
+    try:
+        install_info = _run_wordpress_db_install(doc_root, domain, database)
+        result.update(install_info)
+        result["message"] = "WordPress core installed and database initialized"
+        result["admin_url"] = f"http://{domain}/wp-admin/"
+        result.pop("warnings", None)
+        result["warnings"] = []
+        return result
+    except Exception as exc:
+        # Soft-fail: files + wp-config + empty DB are still usable via browser installer.
+        warning = str(exc)
+        result["warnings"] = [warning]
+        result["db_installed"] = False
+        result["status"] = "partial"
+        result["message"] = (
+            "WordPress files deployed; database schema install incomplete — "
+            f"finish at {admin_url}"
+        )
+        result["admin_url"] = admin_url
+        result["install_error"] = warning
+        return result
 
 
 def _install_laravel_skeleton(doc_root: str, domain: str) -> Dict[str, Any]:
@@ -617,11 +814,19 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         php_modules=req.php_modules,
         proxy_port=req.proxy_port,
     )
-    res = await web_router.create_site(create_payload)  # type: ignore[arg-type]
-    if not isinstance(res, dict) or res.get("status") != "success":
-        raise RuntimeError(f"Web vhost creation failed: {res}")
-    result.rollback.append(f"web_manager:{result.site_filename}")
-    job.log("Nginx vhost created and activated")
+    try:
+        res = await web_router.create_site(create_payload)  # type: ignore[arg-type]
+        if not isinstance(res, dict) or res.get("status") != "success":
+            raise RuntimeError(f"Web vhost creation failed: {res}")
+        result.rollback.append(f"web_manager:{result.site_filename}")
+        job.log("Nginx vhost created and activated")
+    except Exception as exc:
+        detail = str(getattr(exc, "detail", "") or exc)
+        if "already exists" in detail.lower():
+            job.log(f"Nginx vhost already exists — reusing {result.site_filename}")
+            result.warnings.append(f"Reused existing nginx vhost {result.site_filename}")
+        else:
+            raise RuntimeError(f"Web vhost creation failed: {detail}") from exc
 
     if req.create_database:
         job.update(progress=48, message="Provisioning database")
@@ -650,6 +855,11 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
     job.update(progress=58, message="Deploying application")
     deploy_info = _deploy_template_app(template_id, doc_root, domain, result.database)
     job.log(json.dumps(deploy_info))
+    for warn in (deploy_info.get("warnings") or []):
+        if warn and warn not in result.warnings:
+            result.warnings.append(warn)
+    if deploy_info.get("status") == "partial" and deploy_info.get("install_error"):
+        job.log(f"WordPress install partial: {deploy_info.get('install_error')}")
 
     if req.issue_ssl:
         job.update(progress=75, message="Issuing SSL certificate")
