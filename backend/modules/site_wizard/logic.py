@@ -208,6 +208,62 @@ def _ensure_stack(job, template_id: Optional[str], php_version: Optional[str]) -
         subprocess.run(["sudo", "yum", "install", "-y", "mariadb-server"], check=False, capture_output=True, text=True)
 
 
+def _update_wordpress_site_urls(doc_root: str, domain: str, use_https: bool) -> bool:
+    """Point WordPress siteurl/home at the public URL (https after SSL)."""
+    root = Path(doc_root)
+    if not (root / "wp-load.php").is_file():
+        return False
+    scheme = "https" if use_https else "http"
+    url = f"{scheme}://{domain}"
+    script = root / ".copanel-wp-urls.php"
+    script.write_text(
+        f"""<?php
+$_SERVER['HTTP_HOST'] = {json.dumps(domain)};
+$_SERVER['HTTPS'] = {json.dumps('on' if use_https else 'off')};
+define('WP_USE_THEMES', false);
+require_once __DIR__ . '/wp-load.php';
+if (!function_exists('update_option')) {{ echo 'NOWP'; exit(1); }}
+update_option('siteurl', {json.dumps(url)});
+update_option('home', {json.dumps(url)});
+echo 'OK';
+""",
+        encoding="utf-8",
+    )
+    try:
+        php_bin = _find_php_bin()
+        res = subprocess.run(
+            [php_bin, "-d", "display_errors=0", str(script)],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return (res.stdout or "").strip().endswith("OK")
+    except Exception:
+        return False
+    finally:
+        try:
+            script.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _ensure_vhost_php_fpm(domain: str, php_version: Optional[str], job, result: WizardResult) -> None:
+    """Repair nginx fastcgi_pass so WordPress does not 502 on a dead PHP-FPM socket."""
+    from modules.web_manager.logic import repair_nginx_php_socket
+
+    fix = repair_nginx_php_socket(domain, php_version)
+    if fix.get("status") == "success":
+        if fix.get("updated"):
+            job.log(f"PHP-FPM socket repaired: {fix.get('socket')}")
+        else:
+            job.log(f"PHP-FPM socket OK: {fix.get('socket') or 'n/a'}")
+    else:
+        msg = fix.get("message") or "PHP-FPM socket check failed"
+        result.warnings.append(msg)
+        job.log(f"PHP-FPM warning: {msg}")
+
+
 def _write_static_placeholder(doc_root: str, domain: str) -> None:
     index = Path(doc_root) / "index.html"
     if index.is_file():
@@ -828,7 +884,8 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         else:
             raise RuntimeError(f"Web vhost creation failed: {detail}") from exc
 
-    if req.create_database:
+    if req.php_version or template_id in ("wordpress", "laravel"):
+        _ensure_vhost_php_fpm(domain, req.php_version, job, result)
         job.update(progress=48, message="Provisioning database")
         db_name = req.database_name or _slug(domain)
         db_user = req.database_user or db_name[:14]
@@ -877,6 +934,14 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         else:
             result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "active"}
             job.log("SSL certificate issued and applied")
+            if template_id == "wordpress":
+                if _update_wordpress_site_urls(doc_root, domain, use_https=True):
+                    job.log("WordPress siteurl/home updated to https")
+                else:
+                    result.warnings.append("Could not update WordPress siteurl/home to https")
+            # SSL rewrite may leave a stale PHP socket — repair again.
+            if req.php_version or template_id in ("wordpress", "laravel"):
+                _ensure_vhost_php_fpm(domain, req.php_version, job, result)
 
     job.update(progress=92, message="Verifying site availability")
     ssl_active = bool(result.ssl and result.ssl.get("status") == "active")

@@ -24,6 +24,8 @@ parse_apache_vhost = logic.parse_apache_vhost
 sanitize_filename = logic.sanitize_filename
 run_with_optional_sudo = logic.run_with_optional_sudo
 detect_php_fpm_socket = logic.detect_php_fpm_socket
+ensure_php_fpm_socket = logic.ensure_php_fpm_socket
+repair_nginx_php_socket = logic.repair_nginx_php_socket
 detect_apache_layout = logic.detect_apache_layout
 list_apache_site_files = logic.list_apache_site_files
 read_apache_site = logic.read_apache_site
@@ -244,7 +246,10 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 
             php_sock = None
             if req.php_version:
-                php_sock = detect_php_fpm_socket(req.php_version) or f"/run/php/php{req.php_version}-fpm.sock"
+                try:
+                    php_sock = ensure_php_fpm_socket(req.php_version)
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
 
             template = _apache_vhost_template(
                 req.port or 80,
@@ -332,7 +337,10 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 }}
 """
         elif req.php_version:
-            sock = detect_php_fpm_socket(req.php_version) or f"/run/php/php{req.php_version}-fpm.sock"
+            try:
+                sock = ensure_php_fpm_socket(req.php_version)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
             template = f"""server {{
     listen {req.port};
     server_name {server_name_str};
@@ -349,6 +357,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         include fastcgi_params;
         fastcgi_pass unix:{sock};
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_read_timeout 300;
     }}
 
     location ~ /\\.ht {{

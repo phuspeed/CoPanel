@@ -237,7 +237,7 @@ def systemctl_is_active(unit: str) -> Optional[str]:
 
 def detect_php_fpm_socket(version: str) -> Optional[str]:
     """Return first existing PHP-FPM socket for version, or None."""
-    ver = version.strip()
+    ver = (version or "").strip()
     candidates = [
         f"/run/php/php{ver}-fpm.sock",
         f"/var/run/php/php{ver}-fpm.sock",
@@ -247,11 +247,117 @@ def detect_php_fpm_socket(version: str) -> Optional[str]:
             return c
     try:
         for path in glob.glob("/run/php/php*-fpm.sock"):
-            if ver in path:
+            if ver and ver in path:
                 return path
     except Exception:
         pass
     return None
+
+
+def _start_php_fpm(version: str) -> None:
+    ver = (version or "").strip()
+    if not ver or IS_WINDOWS:
+        return
+    for unit in (f"php{ver}-fpm", f"php-fpm{ver}", "php-fpm"):
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "start", unit],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            subprocess.run(
+                ["sudo", "systemctl", "enable", unit],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except Exception:
+            continue
+
+
+def ensure_php_fpm_socket(version: Optional[str] = None) -> str:
+    """Return a live PHP-FPM unix socket, starting FPM if needed.
+
+    Raises RuntimeError when no socket can be found (would cause nginx 502).
+    """
+    preferred = (version or "").strip() or "8.2"
+    sock = detect_php_fpm_socket(preferred)
+    if sock:
+        return sock
+
+    _start_php_fpm(preferred)
+    sock = detect_php_fpm_socket(preferred)
+    if sock:
+        return sock
+
+    # Any other running FPM socket is better than a dead path that causes 502.
+    for path in sorted(glob.glob("/run/php/php*-fpm.sock")) + sorted(
+        glob.glob("/var/run/php/php*-fpm.sock")
+    ):
+        if os.path.exists(path):
+            return path
+
+    # Last attempt: start common versions then rescan.
+    for ver in ("8.3", "8.2", "8.1", "8.0"):
+        if ver == preferred:
+            continue
+        _start_php_fpm(ver)
+        sock = detect_php_fpm_socket(ver)
+        if sock:
+            return sock
+
+    raise RuntimeError(
+        f"PHP-FPM socket not found for PHP {preferred}. "
+        "Install/start php-fpm (e.g. systemctl start php8.2-fpm) to avoid nginx 502."
+    )
+
+
+def repair_nginx_php_socket(domain: str, php_version: Optional[str] = None) -> Dict[str, Any]:
+    """Ensure the nginx vhost for domain points at a live PHP-FPM socket."""
+    from modules.ssl_manager.logic import SSLManager
+
+    try:
+        sock = ensure_php_fpm_socket(php_version)
+    except RuntimeError as exc:
+        return {"status": "error", "message": str(exc), "updated": False}
+
+    vhost = SSLManager.find_nginx_vhost_path(domain)
+    if not vhost or not vhost.is_file():
+        return {"status": "error", "message": f"nginx vhost for {domain} not found", "socket": sock, "updated": False}
+
+    content = vhost.read_text(encoding="utf-8", errors="ignore")
+    if "fastcgi_pass" not in content:
+        return {"status": "success", "message": "vhost has no PHP fastcgi_pass", "socket": sock, "updated": False}
+
+    new_content, n = re.subn(
+        r"fastcgi_pass\s+unix:[^;]+;",
+        f"fastcgi_pass unix:{sock};",
+        content,
+        count=1,
+    )
+    if n == 0:
+        return {"status": "success", "message": "no unix fastcgi_pass to update", "socket": sock, "updated": False}
+
+    if new_content == content:
+        return {"status": "success", "message": "PHP-FPM socket already correct", "socket": sock, "updated": False}
+
+    vhost.write_text(new_content, encoding="utf-8")
+    if not IS_WINDOWS and shutil.which("nginx"):
+        test = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+        if test.returncode == 0:
+            subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+        else:
+            vhost.write_text(content, encoding="utf-8")
+            return {
+                "status": "error",
+                "message": f"nginx -t failed after socket update: {test.stderr or test.stdout}",
+                "socket": sock,
+                "updated": False,
+            }
+    return {"status": "success", "message": f"Updated fastcgi_pass to {sock}", "socket": sock, "updated": True}
 
 
 def list_php_fpm_versions() -> List[Dict[str, Any]]:
