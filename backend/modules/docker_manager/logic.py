@@ -197,10 +197,78 @@ class DockerService:
         payload = json.loads(out)
         return payload[0] if payload else {}
 
+    @staticmethod
+    def _normalize_stats_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize `docker stats --format json` into stable UI fields."""
+        cpu = raw.get("CPUPerc") or raw.get("cpu_percent") or "0%"
+        mem_usage = raw.get("MemUsage") or raw.get("mem_usage") or "-"
+        mem_perc = raw.get("MemPerc") or raw.get("mem_percent") or "0%"
+        net_io = raw.get("NetIO") or raw.get("net_io") or "-"
+        block_io = raw.get("BlockIO") or raw.get("block_io") or "-"
+        pids = raw.get("PIDs") or raw.get("pids") or "0"
+        name = raw.get("Name") or raw.get("name") or ""
+        cid = raw.get("Container") or raw.get("ID") or raw.get("id") or ""
+        return {
+            "id": cid,
+            "name": name,
+            "cpu": cpu,
+            "cpu_percent": cpu,
+            "mem_usage": mem_usage,
+            "mem_percent": mem_perc,
+            "net_io": net_io,
+            "block_io": block_io,
+            "pids": pids,
+            "raw": raw,
+        }
+
     def container_stats(self, container_id: str) -> Dict[str, Any]:
-        result = self._run([self._docker_bin(), "stats", "--no-stream", "--format", "{{json .}}", container_id])
+        result = self._run(
+            [self._docker_bin(), "stats", "--no-stream", "--format", "{{json .}}", container_id],
+            timeout=20,
+        )
         out = self._ensure_ok(result, "Failed to retrieve container stats.")
-        return json.loads(out.strip()) if out.strip() else {}
+        raw = json.loads(out.strip()) if out.strip() else {}
+        return self._normalize_stats_row(raw) if raw else {}
+
+    def list_stats(self) -> List[Dict[str, Any]]:
+        """Return live CPU/RAM/network stats for all running containers (one docker call)."""
+        result = self._run(
+            [self._docker_bin(), "stats", "--no-stream", "--format", "{{json .}}"],
+            timeout=25,
+        )
+        if result.returncode != 0:
+            if self.allow_mock:
+                return [
+                    {
+                        "id": c["id"],
+                        "name": c["name"],
+                        "cpu": "1.2%",
+                        "cpu_percent": "1.2%",
+                        "mem_usage": "64MiB / 512MiB",
+                        "mem_percent": "12.5%",
+                        "net_io": "1.2kB / 800B",
+                        "block_io": "0B / 0B",
+                        "pids": "12",
+                    }
+                    for c in MOCK_CONTAINERS
+                    if c.get("status") == "running"
+                ]
+            raise DockerManagerError(
+                "Failed to retrieve container stats",
+                code="docker_stats_failed",
+                details=result.stderr.strip() or result.stdout.strip(),
+            )
+        rows: List[Dict[str, Any]] = []
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rows.append(self._normalize_stats_row(raw))
+        return rows
 
     def exec_command(self, container_id: str, command: List[str]) -> Dict[str, Any]:
         if not command:

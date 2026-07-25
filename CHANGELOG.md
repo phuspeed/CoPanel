@@ -2,6 +2,23 @@
 
 All notable changes to CoPanel are documented in this file.
 
+## Unreleased
+
+### English
+
+**Fixed / Improved (`docker_manager` 1.0.14)**
+
+- Long Docker/Compose work (deploy, build, stop, restart, list, scan) no longer blocks the FastAPI event loop — UI stays responsive while tasks run.
+- Deploy / stop / restart / build compose stacks and container start/stop/restart/remove run as background jobs with progress in Task Center.
+- Containers tab shows live CPU, memory, and network I/O (polled via `GET /stats`).
+- Container and compose logs support larger tails, manual refresh, and auto-refresh.
+- Project list status uses a single `docker ps` instead of N× `compose ps`.
+
+### Tiếng Việt (tóm tắt)
+
+- Build / deploy / stop / restart không còn làm đơ giao diện CoPanel; có tiến trình job rõ ràng.
+- Hiển thị CPU, RAM, network của container; log chi tiết hơn (làm mới / tự làm mới).
+
 ## [1.1.4] — 2026-07-23
 
 ### English

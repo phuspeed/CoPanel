@@ -27,6 +27,15 @@ class DockerManagerRouterBackwardCompatTests(unittest.TestCase):
         self.assertEqual(body["status"], "success")
         self.assertIn("containers", body)
 
+    @patch("modules.docker_manager.router.docker_service.list_stats")
+    def test_stats_endpoint(self, mock_stats):
+        mock_stats.return_value = [{"id": "abc", "name": "demo", "cpu": "1%", "mem_usage": "10MiB / 100MiB", "net_io": "1B / 2B"}]
+        response = self.client.get("/api/docker_manager/stats")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "success")
+        self.assertEqual(len(body["data"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

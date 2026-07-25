@@ -103,10 +103,11 @@ class DockerManagerServiceTests(unittest.TestCase):
             (stack / ".env.example").write_text("FOO=bar\n", encoding="utf-8")
             manager = ComposeManager(managed_root=str(managed))
 
-            with patch.object(manager, "ps", return_value={"status": "success", "output": "running"}):
+            with patch.object(manager, "_compose_project_statuses", return_value={"demo": "running"}):
                 projects = manager.list_projects()
             self.assertEqual(len(projects), 1)
             self.assertEqual(projects[0]["id"], "demo")
+            self.assertEqual(projects[0]["status"], "running")
 
             env = manager.get_env_at_path(str(stack))
             self.assertIn("FOO", env["content"])
@@ -157,6 +158,40 @@ class DockerManagerServiceTests(unittest.TestCase):
         service = DockerService()
         with self.assertRaises(DockerManagerError):
             service.exec_command("abc", [])
+
+    def test_normalize_stats_row(self):
+        row = DockerService._normalize_stats_row(
+            {
+                "Container": "abc123",
+                "Name": "demo",
+                "CPUPerc": "12.5%",
+                "MemUsage": "64MiB / 512MiB",
+                "MemPerc": "12.50%",
+                "NetIO": "1kB / 2kB",
+                "BlockIO": "0B / 0B",
+                "PIDs": "8",
+            }
+        )
+        self.assertEqual(row["cpu"], "12.5%")
+        self.assertEqual(row["mem_usage"], "64MiB / 512MiB")
+        self.assertEqual(row["net_io"], "1kB / 2kB")
+        self.assertEqual(row["name"], "demo")
+
+    @patch("modules.docker_manager.logic.DockerService._run")
+    def test_list_stats_parses_json_lines(self, mock_run):
+        mock_run.return_value = type(
+            "R",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"Container":"c1","Name":"a","CPUPerc":"1%","MemUsage":"10MiB / 100MiB","MemPerc":"10%","NetIO":"1B / 2B","BlockIO":"0B / 0B","PIDs":"1"}\n',
+                "stderr": "",
+            },
+        )()
+        service = DockerService()
+        rows = service.list_stats()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cpu"], "1%")
 
 
 if __name__ == "__main__":
