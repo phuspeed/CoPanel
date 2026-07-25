@@ -1,9 +1,10 @@
 /**
  * Docker Manager — Desktop sidebar shell with containers, compose, images, networks, volumes.
  */
-import { useState, useEffect, useMemo, useCallback, Fragment, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment, type ReactNode } from 'react';
 import { useAppShellContext } from '../../core/hooks/useAppShellContext';
 import { apiFetch } from '../../core/authHeaders';
+import { useJobs, jobsApi } from '../../core/platform';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import ModuleViewport from '../../core/shell/ModuleViewport';
 import ModuleSidebarLayout from '../../core/shell/ModuleSidebarLayout';
@@ -11,6 +12,7 @@ import WindowModal from '../../core/shell/WindowModal';
 import DockerManagerSidebar, { type DockerTab } from './components/DockerManagerSidebar';
 import CreateProjectModal from './components/CreateProjectModal';
 import ProjectManagerPanel from './components/ProjectManagerPanel';
+import OperationStatusBanner, { useBusyContainerIds } from './components/OperationStatusBanner';
 import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
@@ -21,6 +23,15 @@ interface ContainerItem {
   status: string;
   ports: string;
   project?: string;
+}
+
+interface ContainerStats {
+  id: string;
+  name: string;
+  cpu: string;
+  mem_usage: string;
+  mem_percent: string;
+  net_io: string;
 }
 
 interface ImageItem {
@@ -102,8 +113,15 @@ export default function DockerManagerDashboard() {
 
   const [viewingLogs, setViewingLogs] = useState<{ id: string; name: string; content: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsTail, setLogsTail] = useState(500);
+  const [logsAutoRefresh, setLogsAutoRefresh] = useState(false);
+  const [statsById, setStatsById] = useState<Record<string, ContainerStats>>({});
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState<string>('all');
+  const busyContainerIds = useBusyContainerIds();
+  const { jobs } = useJobs();
+  const prevJobStatuses = useRef<Record<string, string>>({});
 
   const tr = useMemo(
     () =>
@@ -144,6 +162,9 @@ export default function DockerManagerDashboard() {
           colName: 'Container Name & ID',
           colImage: 'Image Name',
           colStatus: 'Status',
+          colCpu: 'CPU',
+          colMem: 'Memory',
+          colNet: 'Network I/O',
           colPorts: 'Ports Mapping',
           colProject: 'Project',
           colActions: 'Actions',
@@ -160,6 +181,11 @@ export default function DockerManagerDashboard() {
           logMessage: 'Message',
           closeBtn: 'Close',
           loadingLogs: 'Loading logs...',
+          refreshLogs: 'Refresh',
+          autoRefresh: 'Auto-refresh',
+          logTail: 'Lines',
+          jobQueued: 'Task queued — follow progress in Task Center.',
+          actionBusy: 'Busy',
           composeColFile: 'Compose file',
           composeColPath: 'Directory',
           composeColAction: 'Action',
@@ -214,6 +240,9 @@ export default function DockerManagerDashboard() {
           colName: 'Tên & ID Container',
           colImage: 'Tên Image',
           colStatus: 'Trạng thái',
+          colCpu: 'CPU',
+          colMem: 'RAM',
+          colNet: 'Network I/O',
           colPorts: 'Bản đồ cổng',
           colProject: 'Project',
           colActions: 'Hành động',
@@ -230,6 +259,11 @@ export default function DockerManagerDashboard() {
           logMessage: 'Nội dung',
           closeBtn: 'Đóng',
           loadingLogs: 'Đang tải log...',
+          refreshLogs: 'Làm mới',
+          autoRefresh: 'Tự làm mới',
+          logTail: 'Số dòng',
+          jobQueued: 'Đã xếp hàng — theo dõi tiến trình ở Task Center.',
+          actionBusy: 'Đang xử lý',
           composeColFile: 'Tệp Compose',
           composeColPath: 'Thư mục',
           composeColAction: 'Hành động',
@@ -274,14 +308,17 @@ export default function DockerManagerDashboard() {
     [tr],
   );
 
-  const fetchContainers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const fetchContainers = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const response = await apiFetch('/api/docker_manager/list');
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.detail || 'Failed to fetch containers');
+        const detail = data.detail;
+        throw new Error(typeof detail === 'object' ? detail?.message || 'Failed to fetch containers' : detail || 'Failed to fetch containers');
       }
       const data = await response.json();
       const list = data.containers || [];
@@ -290,11 +327,55 @@ export default function DockerManagerDashboard() {
       setRunningCount(running);
       setTotalCount(list.length);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      if (!opts?.silent) setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/docker_manager/stats');
+      if (!response.ok) return;
+      const data = await response.json();
+      const rows: ContainerStats[] = data.data || [];
+      const map: Record<string, ContainerStats> = {};
+      for (const row of rows) {
+        if (row.id) map[row.id] = row;
+        if (row.name) map[row.name] = row;
+      }
+      setStatsById(map);
+    } catch {
+      // stats are best-effort; list still works without them
+    }
+  }, []);
+
+  const lookupStats = useCallback(
+    (item: ContainerItem): ContainerStats | undefined => {
+      return (
+        statsById[item.id] ||
+        statsById[item.name] ||
+        Object.values(statsById).find(
+          (s) =>
+            (s.id && (item.id.startsWith(s.id) || s.id.startsWith(item.id))) ||
+            s.name === item.name ||
+            s.name?.endsWith(`/${item.name}`) ||
+            s.name?.endsWith(`_${item.name}`),
+        )
+      );
+    },
+    [statsById],
+  );
+
+  const isContainerBusy = useCallback(
+    (containerId: string) => {
+      for (const id of busyContainerIds) {
+        if (id === containerId || id.startsWith(containerId) || containerId.startsWith(id)) return true;
+      }
+      return false;
+    },
+    [busyContainerIds],
+  );
 
   const fetchProjectsCount = useCallback(async () => {
     try {
@@ -364,7 +445,9 @@ export default function DockerManagerDashboard() {
   useEffect(() => {
     fetchContainers();
     fetchProjectsCount();
-  }, [language, fetchContainers, fetchProjectsCount]);
+    fetchStats();
+    jobsApi.refresh(50).catch(() => {});
+  }, [language, fetchContainers, fetchProjectsCount, fetchStats]);
 
   useEffect(() => {
     if (tab === 'images' && images.length === 0) fetchImages();
@@ -372,102 +455,121 @@ export default function DockerManagerDashboard() {
     if (tab === 'volumes' && volumes.length === 0) fetchVolumes();
   }, [tab, images.length, networks.length, volumes.length, fetchImages, fetchNetworks, fetchVolumes]);
 
-  const handleStartContainer = async (container_id: string) => {
+  // Poll live stats while Containers tab is visible.
+  useEffect(() => {
+    if (tab !== 'containers') return;
+    fetchStats();
+    const timer = window.setInterval(() => fetchStats(), 5000);
+    return () => window.clearInterval(timer);
+  }, [tab, fetchStats]);
+
+  // Soft-refresh container list periodically so status stays current during jobs.
+  useEffect(() => {
+    if (tab !== 'containers') return;
+    const timer = window.setInterval(() => fetchContainers({ silent: true }), 8000);
+    return () => window.clearInterval(timer);
+  }, [tab, fetchContainers]);
+
+  // When a docker_manager job finishes, refresh lists.
+  useEffect(() => {
+    const prev = prevJobStatuses.current;
+    const next: Record<string, string> = { ...prev };
+    let shouldRefresh = false;
+    for (const job of jobs) {
+      if (job.module !== 'docker_manager') continue;
+      const was = prev[job.id];
+      if (
+        was &&
+        (was === 'queued' || was === 'running') &&
+        (job.status === 'success' || job.status === 'failed' || job.status === 'cancelled')
+      ) {
+        shouldRefresh = true;
+      }
+      next[job.id] = job.status;
+    }
+    prevJobStatuses.current = next;
+    if (shouldRefresh) {
+      fetchContainers({ silent: true });
+      fetchStats();
+      fetchProjectsCount();
+    }
+  }, [jobs, fetchContainers, fetchStats, fetchProjectsCount]);
+
+  const queueContainerAction = async (endpoint: string, container_id: string, failMsg: string) => {
     try {
-      const response = await apiFetch('/api/docker_manager/start', {
+      const response = await apiFetch(`/api/docker_manager/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_id }),
       });
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to start container');
+        const detail = data.detail;
+        throw new Error(typeof detail === 'object' ? detail?.message || failMsg : detail || failMsg);
       }
-      fetchContainers();
+      setActionNotice(tr.jobQueued);
+      window.setTimeout(() => setActionNotice(null), 4000);
+      fetchContainers({ silent: true });
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error starting container');
+      alert(err instanceof Error ? err.message : failMsg);
     }
   };
 
-  const handleStopContainer = async (container_id: string) => {
-    try {
-      const response = await apiFetch('/api/docker_manager/stop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ container_id }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to stop container');
-      }
-      fetchContainers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error stopping container');
-    }
-  };
-
-  const handleRestartContainer = async (container_id: string) => {
-    try {
-      const response = await apiFetch('/api/docker_manager/restart', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ container_id }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to restart container');
-      }
-      fetchContainers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error restarting container');
-    }
-  };
+  const handleStartContainer = (container_id: string) => queueContainerAction('start', container_id, 'Failed to start container');
+  const handleStopContainer = (container_id: string) => queueContainerAction('stop', container_id, 'Failed to stop container');
+  const handleRestartContainer = (container_id: string) => queueContainerAction('restart', container_id, 'Failed to restart container');
 
   const handleRemoveContainer = async (container_id: string) => {
     if (!confirm(tr.deleteConfirm)) return;
-    try {
-      const response = await apiFetch('/api/docker_manager/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ container_id }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to remove container');
-      }
-      fetchContainers();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error removing container');
-    }
+    await queueContainerAction('remove', container_id, 'Failed to remove container');
   };
 
-  const handleViewLogs = async (item: ContainerItem) => {
-    setViewingLogs({ id: item.id, name: item.name, content: '' });
-    setLogsLoading(true);
-    try {
-      const params = new URLSearchParams({
-        container_id: item.id,
-        tail: '200',
-        timestamps: 'true',
-      });
-      const response = await apiFetch(`/api/docker_manager/logs?${params}`);
-      if (!response.ok) {
+  const loadContainerLogs = useCallback(
+    async (containerId: string, name: string, tail: number, opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLogsLoading(true);
+      try {
+        const params = new URLSearchParams({
+          container_id: containerId,
+          tail: String(tail),
+          timestamps: 'true',
+        });
+        const response = await apiFetch(`/api/docker_manager/logs?${params}`);
+        if (!response.ok) {
+          const data = await response.json();
+          const detail = data.detail;
+          throw new Error(typeof detail === 'object' ? detail?.message || 'Failed to fetch container logs' : detail || 'Failed to fetch container logs');
+        }
         const data = await response.json();
-        throw new Error(data.detail || 'Failed to fetch container logs');
+        setViewingLogs({
+          id: containerId,
+          name,
+          content: data.logs || 'No logs recorded.',
+        });
+      } catch (err) {
+        if (!opts?.silent) {
+          setViewingLogs(null);
+          alert(err instanceof Error ? err.message : 'Error retrieving logs');
+        }
+      } finally {
+        if (!opts?.silent) setLogsLoading(false);
       }
-      const data = await response.json();
-      setViewingLogs({
-        id: item.id,
-        name: item.name,
-        content: data.logs || 'No logs recorded.',
-      });
-    } catch (err) {
-      setViewingLogs(null);
-      alert(err instanceof Error ? err.message : 'Error retrieving logs');
-    } finally {
-      setLogsLoading(false);
-    }
+    },
+    [],
+  );
+
+  const handleViewLogs = (item: ContainerItem) => {
+    setViewingLogs({ id: item.id, name: item.name, content: '' });
+    setLogsAutoRefresh(false);
+    loadContainerLogs(item.id, item.name, logsTail);
   };
+
+  useEffect(() => {
+    if (!viewingLogs || !logsAutoRefresh) return;
+    const timer = window.setInterval(() => {
+      loadContainerLogs(viewingLogs.id, viewingLogs.name, logsTail, { silent: true });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [viewingLogs?.id, viewingLogs?.name, logsAutoRefresh, logsTail, loadContainerLogs]);
 
 
   const handleRemoveImage = async (imageRef: string) => {
@@ -544,6 +646,20 @@ export default function DockerManagerDashboard() {
 
   const renderContainers = () => (
     <div className="space-y-6">
+      <OperationStatusBanner isDark={isDark} language={language || 'en'} />
+      {actionNotice && (
+        <div
+          className={cn(
+            'rounded-xl border px-3 py-2 text-xs font-medium flex items-center justify-between gap-2',
+            isDark ? 'bg-emerald-950/30 border-emerald-500/25 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700',
+          )}
+        >
+          <span>{actionNotice}</span>
+          <button type="button" onClick={() => setActionNotice(null)} className="opacity-70 hover:opacity-100">
+            ✕
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div
           className={cn(
@@ -638,6 +754,9 @@ export default function DockerManagerDashboard() {
                   <th className="p-3 font-bold">{tr.colProject}</th>
                   <th className="p-3 font-bold">{tr.colImage}</th>
                   <th className="p-3 font-bold">{tr.colStatus}</th>
+                  <th className="p-3 font-bold">{tr.colCpu}</th>
+                  <th className="p-3 font-bold">{tr.colMem}</th>
+                  <th className="p-3 font-bold">{tr.colNet}</th>
                   <th className="p-3 font-bold">{tr.colPorts}</th>
                   <th className="p-3 font-bold text-center w-36">{tr.colActions}</th>
                 </tr>
@@ -645,7 +764,7 @@ export default function DockerManagerDashboard() {
               <tbody className={cn('divide-y text-sm', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>
                 {filteredContainers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-10 text-center text-xs text-slate-400">
+                    <td colSpan={9} className="p-10 text-center text-xs text-slate-400">
                       {tr.noContainers}
                     </td>
                   </tr>
@@ -654,7 +773,7 @@ export default function DockerManagerDashboard() {
                   <Fragment key={groupKey || 'flat'}>
                     {projectFilter === 'all' && (
                       <tr key={`group-${groupKey}`} className={isDark ? 'bg-slate-900/60' : 'bg-slate-50/80'}>
-                        <td colSpan={6} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                        <td colSpan={9} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
                           {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
                           <span className="ml-2 font-normal tabular-nums">({items.length})</span>
                         </td>
@@ -662,6 +781,8 @@ export default function DockerManagerDashboard() {
                     )}
                     {items.map((item, idx) => {
                       const isRunning = item.status.toLowerCase().includes('running');
+                      const busy = isContainerBusy(item.id);
+                      const stats = lookupStats(item);
                       return (
                         <tr key={`${groupKey}-${idx}`} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
                           <td className="p-3">
@@ -677,18 +798,42 @@ export default function DockerManagerDashboard() {
                             {item.image}
                           </td>
                           <td className="p-3">
-                            <span
-                              className={cn(
-                                'px-2.5 py-0.5 text-xs font-semibold rounded-full border',
-                                isRunning
-                                  ? 'bg-green-500/10 border-green-500/20 text-green-500'
-                                  : isDark
-                                    ? 'bg-slate-800/60 border-slate-700 text-slate-400'
-                                    : 'bg-slate-100 border-slate-200 text-slate-600',
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className={cn(
+                                  'px-2.5 py-0.5 text-xs font-semibold rounded-full border w-fit',
+                                  isRunning
+                                    ? 'bg-green-500/10 border-green-500/20 text-green-500'
+                                    : isDark
+                                      ? 'bg-slate-800/60 border-slate-700 text-slate-400'
+                                      : 'bg-slate-100 border-slate-200 text-slate-600',
+                                )}
+                              >
+                                {item.status}
+                              </span>
+                              {busy && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                                  <Icons.Loader2 className="w-3 h-3 animate-spin" />
+                                  {tr.actionBusy}
+                                </span>
                               )}
-                            >
-                              {item.status}
-                            </span>
+                            </div>
+                          </td>
+                          <td className={cn('p-3 font-mono text-xs tabular-nums', isDark ? 'text-slate-300' : 'text-slate-700')}>
+                            {isRunning ? stats?.cpu || '…' : '—'}
+                          </td>
+                          <td className={cn('p-3 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.mem_usage}>
+                            {isRunning ? (
+                              <div>
+                                <div>{stats?.mem_percent || '…'}</div>
+                                <div className="opacity-70 truncate max-w-[7rem]">{stats?.mem_usage || ''}</div>
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className={cn('p-3 font-mono text-[11px] truncate max-w-[7rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.net_io}>
+                            {isRunning ? stats?.net_io || '…' : '—'}
                           </td>
                           <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
                           <td className="p-3 text-center">
@@ -696,8 +841,9 @@ export default function DockerManagerDashboard() {
                               {isRunning ? (
                                 <button
                                   onClick={() => handleStopContainer(item.id)}
+                                  disabled={busy}
                                   className={cn(
-                                    'p-1.5 rounded-lg border transition',
+                                    'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
                                     isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
                                   )}
                                   title="Stop"
@@ -707,8 +853,9 @@ export default function DockerManagerDashboard() {
                               ) : (
                                 <button
                                   onClick={() => handleStartContainer(item.id)}
+                                  disabled={busy}
                                   className={cn(
-                                    'p-1.5 rounded-lg border transition',
+                                    'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
                                     isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
                                   )}
                                   title="Start"
@@ -718,8 +865,9 @@ export default function DockerManagerDashboard() {
                               )}
                               <button
                                 onClick={() => handleRestartContainer(item.id)}
+                                disabled={busy}
                                 className={cn(
-                                  'p-1.5 rounded-lg border transition',
+                                  'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
                                   isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
                                 )}
                                 title="Restart"
@@ -738,8 +886,9 @@ export default function DockerManagerDashboard() {
                               </button>
                               <button
                                 onClick={() => handleRemoveContainer(item.id)}
+                                disabled={busy}
                                 className={cn(
-                                  'p-1.5 rounded-lg border transition',
+                                  'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
                                   isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
                                 )}
                                 title="Remove"
@@ -990,13 +1139,57 @@ export default function DockerManagerDashboard() {
 
       <WindowModal
         open={!!viewingLogs}
-        onClose={() => setViewingLogs(null)}
+        onClose={() => {
+          setLogsAutoRefresh(false);
+          setViewingLogs(null);
+        }}
         title={viewingLogs ? `${tr.viewLogsTitle}: ${viewingLogs.name}` : tr.viewLogsTitle}
         maxWidth="2xl"
-        className="flex max-h-[70vh] max-w-3xl flex-col"
+        className="flex max-h-[80vh] max-w-4xl flex-col"
         closeOnBackdropClick={false}
       >
-        <div className="flex min-h-0 flex-1 flex-col space-y-4 p-4">
+        <div className="flex min-h-0 flex-1 flex-col space-y-3 p-4">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
+            <select
+              value={logsTail}
+              onChange={(e) => {
+                const next = Number(e.target.value) || 500;
+                setLogsTail(next);
+                if (viewingLogs) loadContainerLogs(viewingLogs.id, viewingLogs.name, next);
+              }}
+              className={cn(
+                'rounded-lg border px-2 py-1 text-xs font-medium',
+                isDark ? 'border-slate-700 bg-slate-900 text-slate-200' : 'border-slate-200 bg-white text-slate-800',
+              )}
+            >
+              {[100, 300, 500, 1000, 2000, 5000].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => viewingLogs && loadContainerLogs(viewingLogs.id, viewingLogs.name, logsTail)}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold',
+                isDark ? 'border-slate-700 bg-slate-800 text-slate-200' : 'border-slate-200 bg-white text-slate-700',
+              )}
+            >
+              <Icons.RefreshCw className={cn('w-3.5 h-3.5', logsLoading && 'animate-spin')} />
+              {tr.refreshLogs}
+            </button>
+            <label className={cn('flex items-center gap-1.5 text-xs font-medium ml-1', isDark ? 'text-slate-300' : 'text-slate-600')}>
+              <input
+                type="checkbox"
+                checked={logsAutoRefresh}
+                onChange={(e) => setLogsAutoRefresh(e.target.checked)}
+                className="rounded border-slate-400"
+              />
+              {tr.autoRefresh}
+            </label>
+          </div>
           <div
             className={cn(
               'flex-1 rounded-xl overflow-hidden flex flex-col border min-h-0',
@@ -1013,7 +1206,7 @@ export default function DockerManagerDashboard() {
               <span>{tr.logMessage}</span>
             </div>
             <div className="flex-1 overflow-auto select-text">
-              {logsLoading ? (
+              {logsLoading && !viewingLogs?.content ? (
                 <div className={cn('flex items-center justify-center gap-2 h-full min-h-[8rem] text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}>
                   <Icons.Loader2 className="w-4 h-4 animate-spin" />
                   {tr.loadingLogs}
@@ -1048,7 +1241,10 @@ export default function DockerManagerDashboard() {
           </div>
           <div className="flex items-center justify-end flex-shrink-0">
             <button
-              onClick={() => setViewingLogs(null)}
+              onClick={() => {
+                setLogsAutoRefresh(false);
+                setViewingLogs(null);
+              }}
               className={cn(
                 'px-4 py-2 rounded-xl text-xs font-bold transition',
                 isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600',

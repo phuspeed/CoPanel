@@ -1,12 +1,14 @@
 /**
  * Compose tab — managed projects with full lifecycle actions + discover scan.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../../../lib/utils';
 import * as Icons from 'lucide-react';
 import ProjectEditorModal, { type ProjectRef } from './ProjectEditorModal';
 import WindowModal from '../../../core/shell/WindowModal';
 import { apiFetch } from '../../../core/authHeaders';
+import { jobsApi, useJobs } from '../../../core/platform';
+import OperationStatusBanner, { useBusyComposePaths } from './OperationStatusBanner';
 
 export interface ManagedProject {
   id: string;
@@ -40,6 +42,11 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
   const [logsProject, setLogsProject] = useState<ProjectRef | null>(null);
   const [logsContent, setLogsContent] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsTail, setLogsTail] = useState(500);
+  const [logsAutoRefresh, setLogsAutoRefresh] = useState(false);
+  const busyPaths = useBusyComposePaths();
+  const { jobs } = useJobs();
+  const prevJobStatuses = useRef<Record<string, string>>({});
 
   const tr = useMemo(
     () =>
@@ -70,6 +77,11 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
           composeColFile: 'Compose file',
           composeColPath: 'Directory',
           buildDeploy: 'Deploy',
+          jobQueued: 'Task queued — follow progress below or in Task Center.',
+          actionBusy: 'Busy',
+          refreshLogs: 'Refresh',
+          autoRefresh: 'Auto-refresh',
+          logTail: 'Lines',
         },
         vi: {
           managedTitle: 'Project quản lý',
@@ -97,13 +109,18 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
           composeColFile: 'Tệp Compose',
           composeColPath: 'Thư mục',
           buildDeploy: 'Triển khai',
+          jobQueued: 'Đã xếp hàng — theo dõi tiến trình bên dưới hoặc Task Center.',
+          actionBusy: 'Đang xử lý',
+          refreshLogs: 'Làm mới',
+          autoRefresh: 'Tự làm mới',
+          logTail: 'Số dòng',
         },
       })[language],
     [language],
   );
 
-  const fetchProjects = useCallback(async () => {
-    setLoading(true);
+  const fetchProjects = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const res = await apiFetch('/api/docker_manager/projects/list');
       if (res.ok) {
@@ -111,7 +128,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
         setProjects(data.data || []);
       }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -134,7 +151,31 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
   useEffect(() => {
     fetchProjects();
     fetchComposeFiles();
+    jobsApi.refresh(50).catch(() => {});
   }, [fetchProjects, fetchComposeFiles, language]);
+
+  useEffect(() => {
+    const prev = prevJobStatuses.current;
+    const next: Record<string, string> = { ...prev };
+    let shouldRefresh = false;
+    for (const job of jobs) {
+      if (job.module !== 'docker_manager') continue;
+      const was = prev[job.id];
+      if (
+        was &&
+        (was === 'queued' || was === 'running') &&
+        (job.status === 'success' || job.status === 'failed' || job.status === 'cancelled')
+      ) {
+        shouldRefresh = true;
+      }
+      next[job.id] = job.status;
+    }
+    prevJobStatuses.current = next;
+    if (shouldRefresh) {
+      fetchProjects({ silent: true });
+      onRefreshContainers();
+    }
+  }, [jobs, fetchProjects, onRefreshContainers]);
 
   const statusLabel = (status: string) => {
     const map: Record<string, string> = {
@@ -155,26 +196,24 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
   const runComposeAction = async (path: string, action: 'deploy' | 'down' | 'restart') => {
     setActionOutput(null);
     try {
-      if (action === 'deploy') {
-        const res = await apiFetch('/api/docker_manager/compose/deploy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.detail?.message || 'Deploy failed');
-        setActionOutput(`Deploy job started: ${data.job_id || 'ok'}`);
-      } else {
-        const endpoint = action === 'down' ? '/api/docker_manager/compose/down' : '/api/docker_manager/compose/restart';
-        const res = await apiFetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path }),
-        });
-        const data = await res.json();
-        setActionOutput(data.message || data.output || data.error || JSON.stringify(data));
+      const endpoint =
+        action === 'deploy'
+          ? '/api/docker_manager/compose/deploy'
+          : action === 'down'
+            ? '/api/docker_manager/compose/down'
+            : '/api/docker_manager/compose/restart';
+      const res = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.detail;
+        throw new Error(typeof detail === 'object' ? detail?.message || 'Action failed' : detail || 'Action failed');
       }
-      fetchProjects();
+      setActionOutput(`${tr.jobQueued}${data.job_id ? ` (${data.job_id.slice(0, 8)}…)` : ''}`);
+      fetchProjects({ silent: true });
       onRefreshContainers();
     } catch (err) {
       setActionOutput(err instanceof Error ? err.message : 'Error');
@@ -186,25 +225,40 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
     runComposeAction(path, 'down');
   };
 
-  const openLogs = async (project: ProjectRef) => {
-    setLogsProject(project);
-    setLogsContent('');
-    setLogsLoading(true);
+  const loadProjectLogs = useCallback(async (project: ProjectRef, tail: number, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLogsLoading(true);
     try {
-      const res = await apiFetch(`/api/docker_manager/compose/logs?path=${encodeURIComponent(project.path)}&tail=200&timestamps=true`);
+      const res = await apiFetch(
+        `/api/docker_manager/compose/logs?path=${encodeURIComponent(project.path)}&tail=${tail}&timestamps=true`,
+      );
       const data = await res.json();
       setLogsContent(data.output || data.error || data.logs || 'No logs.');
     } catch {
-      setLogsContent('Failed to load logs.');
+      if (!opts?.silent) setLogsContent('Failed to load logs.');
     } finally {
-      setLogsLoading(false);
+      if (!opts?.silent) setLogsLoading(false);
     }
+  }, []);
+
+  const openLogs = (project: ProjectRef) => {
+    setLogsProject(project);
+    setLogsContent('');
+    setLogsAutoRefresh(false);
+    loadProjectLogs(project, logsTail);
   };
+
+  useEffect(() => {
+    if (!logsProject || !logsAutoRefresh) return;
+    const timer = window.setInterval(() => loadProjectLogs(logsProject, logsTail, { silent: true }), 3000);
+    return () => window.clearInterval(timer);
+  }, [logsProject, logsAutoRefresh, logsTail, loadProjectLogs]);
 
   const card = cn('border rounded-2xl overflow-hidden', isDark ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm');
 
   return (
     <div className="space-y-6">
+      <OperationStatusBanner isDark={isDark} language={language} />
+
       <section className="space-y-3">
         <div>
           <h3 className={cn('text-sm font-bold', isDark ? 'text-slate-200' : 'text-slate-800')}>{tr.managedTitle}</h3>
@@ -229,28 +283,39 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
                   </tr>
                 </thead>
                 <tbody className={cn('divide-y text-xs', isDark ? 'divide-slate-800/40' : 'divide-slate-100')}>
-                  {projects.map((p) => (
-                    <tr key={p.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/80'}>
-                      <td className="p-3 font-bold">{p.name}</td>
-                      <td className={cn('p-3 font-mono text-[11px] max-w-[14rem] truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={p.path}>
-                        {p.path}
-                      </td>
-                      <td className="p-3">
-                        <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-semibold', statusClass(p.status))}>
-                          {statusLabel(p.status)}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap items-center justify-center gap-1">
-                          <ActionBtn isDark={isDark} title={tr.edit} onClick={() => setEditProject({ id: p.id, name: p.name, path: p.path })} icon={Icons.Pencil} />
-                          <ActionBtn isDark={isDark} title={tr.deploy} onClick={() => runComposeAction(p.path, 'deploy')} icon={Icons.Play} color="green" />
-                          <ActionBtn isDark={isDark} title={tr.restart} onClick={() => runComposeAction(p.path, 'restart')} icon={Icons.RefreshCcw} color="blue" />
-                          <ActionBtn isDark={isDark} title={tr.logs} onClick={() => openLogs({ id: p.id, name: p.name, path: p.path })} icon={Icons.FileText} />
-                          <ActionBtn isDark={isDark} title={tr.down} onClick={() => handleDown(p.path)} icon={Icons.Square} color="amber" />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {projects.map((p) => {
+                    const busy = busyPaths.has(p.path);
+                    return (
+                      <tr key={p.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/80'}>
+                        <td className="p-3 font-bold">{p.name}</td>
+                        <td className={cn('p-3 font-mono text-[11px] max-w-[14rem] truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={p.path}>
+                          {p.path}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-col gap-1">
+                            <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-semibold w-fit', statusClass(p.status))}>
+                              {statusLabel(p.status)}
+                            </span>
+                            {busy && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                                <Icons.Loader2 className="w-3 h-3 animate-spin" />
+                                {tr.actionBusy}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap items-center justify-center gap-1">
+                            <ActionBtn isDark={isDark} title={tr.edit} onClick={() => setEditProject({ id: p.id, name: p.name, path: p.path })} icon={Icons.Pencil} />
+                            <ActionBtn isDark={isDark} title={tr.deploy} onClick={() => runComposeAction(p.path, 'deploy')} icon={Icons.Play} color="green" disabled={busy} />
+                            <ActionBtn isDark={isDark} title={tr.restart} onClick={() => runComposeAction(p.path, 'restart')} icon={Icons.RefreshCcw} color="blue" disabled={busy} />
+                            <ActionBtn isDark={isDark} title={tr.logs} onClick={() => openLogs({ id: p.id, name: p.name, path: p.path })} icon={Icons.FileText} />
+                            <ActionBtn isDark={isDark} title={tr.down} onClick={() => handleDown(p.path)} icon={Icons.Square} color="amber" disabled={busy} />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -297,28 +362,32 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
                   </tr>
                 </thead>
                 <tbody className={cn('divide-y', isDark ? 'divide-slate-800/50' : 'divide-slate-100')}>
-                  {composeFiles.map((file, idx) => (
-                    <tr key={`${file.path}-${idx}`}>
-                      <td className="px-3 py-2 font-bold">{file.filename}</td>
-                      <td className={cn('px-3 py-2 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{file.path}</td>
-                      <td className="px-3 py-2 text-right space-x-1">
-                        <button
-                          onClick={() => setEditProject({ id: file.filename, name: file.filename, path: file.path })}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-bold"
-                        >
-                          <Icons.Pencil className="w-3 h-3" />
-                          {tr.edit}
-                        </button>
-                        <button
-                          onClick={() => runComposeAction(file.path, 'deploy')}
-                          className="inline-flex items-center gap-1 bg-indigo-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold"
-                        >
-                          <Icons.Play className="w-3 h-3" />
-                          {tr.buildDeploy}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {composeFiles.map((file, idx) => {
+                    const busy = busyPaths.has(file.path);
+                    return (
+                      <tr key={`${file.path}-${idx}`}>
+                        <td className="px-3 py-2 font-bold">{file.filename}</td>
+                        <td className={cn('px-3 py-2 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{file.path}</td>
+                        <td className="px-3 py-2 text-right space-x-1">
+                          <button
+                            onClick={() => setEditProject({ id: file.filename, name: file.filename, path: file.path })}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-bold"
+                          >
+                            <Icons.Pencil className="w-3 h-3" />
+                            {tr.edit}
+                          </button>
+                          <button
+                            onClick={() => runComposeAction(file.path, 'deploy')}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1 bg-indigo-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-40"
+                          >
+                            {busy ? <Icons.Loader2 className="w-3 h-3 animate-spin" /> : <Icons.Play className="w-3 h-3" />}
+                            {tr.buildDeploy}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -354,20 +423,61 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
 
       <WindowModal
         open={!!logsProject}
-        onClose={() => setLogsProject(null)}
+        onClose={() => {
+          setLogsAutoRefresh(false);
+          setLogsProject(null);
+        }}
         title={logsProject ? `${tr.logs}: ${logsProject.name}` : tr.logs}
         maxWidth="2xl"
-        className="max-w-2xl"
+        className="max-w-3xl"
         closeOnBackdropClick={false}
       >
-        <div className="p-4 max-h-[60vh] overflow-auto">
-          {logsLoading ? (
-            <div className="flex justify-center py-8 text-slate-400 text-xs">
-              <Icons.Loader2 className="w-5 h-5 animate-spin" />
-            </div>
-          ) : (
-            <pre className={cn('font-mono text-xs whitespace-pre-wrap', isDark ? 'text-slate-300' : 'text-slate-800')}>{logsContent}</pre>
-          )}
+        <div className="p-4 space-y-3 max-h-[70vh] flex flex-col">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
+            <select
+              value={logsTail}
+              onChange={(e) => {
+                const next = Number(e.target.value) || 500;
+                setLogsTail(next);
+                if (logsProject) loadProjectLogs(logsProject, next);
+              }}
+              className={cn(
+                'rounded-lg border px-2 py-1 text-xs font-medium',
+                isDark ? 'border-slate-700 bg-slate-900 text-slate-200' : 'border-slate-200 bg-white text-slate-800',
+              )}
+            >
+              {[100, 300, 500, 1000, 2000, 5000].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => logsProject && loadProjectLogs(logsProject, logsTail)}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold',
+                isDark ? 'border-slate-700 bg-slate-800 text-slate-200' : 'border-slate-200 bg-white text-slate-700',
+              )}
+            >
+              <Icons.RefreshCw className={cn('w-3.5 h-3.5', logsLoading && 'animate-spin')} />
+              {tr.refreshLogs}
+            </button>
+            <label className={cn('flex items-center gap-1.5 text-xs font-medium', isDark ? 'text-slate-300' : 'text-slate-600')}>
+              <input type="checkbox" checked={logsAutoRefresh} onChange={(e) => setLogsAutoRefresh(e.target.checked)} />
+              {tr.autoRefresh}
+            </label>
+          </div>
+          <div className="overflow-auto flex-1 min-h-0">
+            {logsLoading && !logsContent ? (
+              <div className="flex justify-center py-8 text-slate-400 text-xs">
+                <Icons.Loader2 className="w-5 h-5 animate-spin" />
+              </div>
+            ) : (
+              <pre className={cn('font-mono text-xs whitespace-pre-wrap', isDark ? 'text-slate-300' : 'text-slate-800')}>{logsContent}</pre>
+            )}
+          </div>
         </div>
       </WindowModal>
     </div>
@@ -380,12 +490,14 @@ function ActionBtn({
   onClick,
   icon: Icon,
   color,
+  disabled,
 }: {
   isDark: boolean;
   title: string;
   onClick: () => void;
   icon: typeof Icons.Pencil;
   color?: 'green' | 'blue' | 'amber';
+  disabled?: boolean;
 }) {
   const colorCls =
     color === 'green' ? 'text-green-500' : color === 'blue' ? 'text-blue-500' : color === 'amber' ? 'text-amber-500' : isDark ? 'text-slate-300' : 'text-slate-600';
@@ -394,9 +506,18 @@ function ActionBtn({
       type="button"
       title={title}
       onClick={onClick}
-      className={cn('p-1.5 rounded-lg border transition', isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:bg-slate-100', colorCls)}
+      disabled={disabled}
+      className={cn(
+        'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
+        isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 hover:bg-slate-100',
+        colorCls,
+      )}
     >
-      <Icon className="w-3.5 h-3.5" />
+      {disabled && (color === 'green' || color === 'blue' || color === 'amber') ? (
+        <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : (
+        <Icon className="w-3.5 h-3.5" />
+      )}
     </button>
   );
 }

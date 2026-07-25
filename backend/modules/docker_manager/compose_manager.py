@@ -452,17 +452,66 @@ class ComposeManager:
         except Exception:
             return "unknown"
 
+    def _compose_project_statuses(self) -> Dict[str, str]:
+        """Resolve managed project status via one `docker ps` instead of N× `compose ps`."""
+        docker_bin = shutil.which("docker") or "/usr/bin/docker"
+        try:
+            result = subprocess.run(
+                [
+                    docker_bin,
+                    "ps",
+                    "-a",
+                    "--format",
+                    '{{.Label "com.docker.compose.project"}}\t{{.State}}',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+        except Exception:
+            return {}
+        if result.returncode != 0:
+            return {}
+        by_project: Dict[str, set] = {}
+        for line in (result.stdout or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            project = (parts[0] or "").strip()
+            state = (parts[1] or "").strip().lower()
+            if not project:
+                continue
+            by_project.setdefault(project, set()).add(state)
+        statuses: Dict[str, str] = {}
+        for project, states in by_project.items():
+            if "running" in states and len(states) == 1:
+                statuses[project] = "running"
+            elif "running" in states:
+                statuses[project] = "partial"
+            elif states & {"exited", "dead", "created", "paused"}:
+                statuses[project] = "stopped"
+            else:
+                statuses[project] = "unknown"
+        return statuses
+
     def list_projects(self) -> List[Dict[str, Any]]:
+        status_map = self._compose_project_statuses()
         projects: List[Dict[str, Any]] = []
         for stack in self.list_managed_stacks():
+            stack_id = stack["id"]
+            status = status_map.get(stack_id)
+            if status is None:
+                # No containers labeled with this project yet.
+                status = "stopped"
             projects.append(
                 {
-                    "id": stack["id"],
-                    "name": stack["id"],
+                    "id": stack_id,
+                    "name": stack_id,
                     "path": stack["path"],
                     "compose_file": stack["compose_file"],
                     "source": "managed",
-                    "status": self._project_status(stack["path"]),
+                    "status": status,
                 }
             )
         return projects
