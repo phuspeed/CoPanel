@@ -13,6 +13,7 @@ import DockerManagerSidebar, { type DockerTab } from './components/DockerManager
 import CreateProjectModal from './components/CreateProjectModal';
 import ProjectManagerPanel from './components/ProjectManagerPanel';
 import OperationStatusBanner, { useBusyContainerIds } from './components/OperationStatusBanner';
+import ContainerDetailModal from './components/ContainerDetailModal';
 import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
 
@@ -32,7 +33,11 @@ interface ContainerStats {
   mem_usage: string;
   mem_percent: string;
   net_io: string;
+  block_io?: string;
+  pids?: string;
 }
+
+const COMPACT_LIST_WIDTH = 920;
 
 interface ImageItem {
   repository: string;
@@ -119,6 +124,9 @@ export default function DockerManagerDashboard() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState<string>('all');
+  const [selectedContainer, setSelectedContainer] = useState<ContainerItem | null>(null);
+  const [compactList, setCompactList] = useState(false);
+  const listHostRef = useRef<HTMLDivElement>(null);
   const busyContainerIds = useBusyContainerIds();
   const { jobs } = useJobs();
   const prevJobStatuses = useRef<Record<string, string>>({});
@@ -186,6 +194,8 @@ export default function DockerManagerDashboard() {
           logTail: 'Lines',
           jobQueued: 'Task queued — follow progress in Task Center.',
           actionBusy: 'Busy',
+          clickForStatus: 'Click for status',
+          tapForDetails: 'Tap a container for full status',
           composeColFile: 'Compose file',
           composeColPath: 'Directory',
           composeColAction: 'Action',
@@ -264,6 +274,8 @@ export default function DockerManagerDashboard() {
           logTail: 'Số dòng',
           jobQueued: 'Đã xếp hàng — theo dõi tiến trình ở Task Center.',
           actionBusy: 'Đang xử lý',
+          clickForStatus: 'Bấm để xem trạng thái',
+          tapForDetails: 'Chạm container để xem trạng thái đầy đủ',
           composeColFile: 'Tệp Compose',
           composeColPath: 'Thư mục',
           composeColAction: 'Hành động',
@@ -470,6 +482,39 @@ export default function DockerManagerDashboard() {
     return () => window.clearInterval(timer);
   }, [tab, fetchContainers]);
 
+  // Card layout when the module content (or desktop window) is narrow.
+  useEffect(() => {
+    const el = listHostRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const apply = (width: number) => setCompactList(width < COMPACT_LIST_WIDTH);
+    apply(el.getBoundingClientRect().width);
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect?.width ?? el.getBoundingClientRect().width;
+      apply(width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tab, loading, containers.length]);
+
+  // Keep detail modal container row fresh after list refresh.
+  useEffect(() => {
+    if (!selectedContainer) return;
+    const next = containers.find(
+      (c) => c.id === selectedContainer.id || c.name === selectedContainer.name,
+    );
+    if (!next) {
+      setSelectedContainer(null);
+      return;
+    }
+    if (
+      next.status !== selectedContainer.status ||
+      next.ports !== selectedContainer.ports ||
+      next.image !== selectedContainer.image
+    ) {
+      setSelectedContainer(next);
+    }
+  }, [containers, selectedContainer]);
+
   // When a docker_manager job finishes, refresh lists.
   useEffect(() => {
     const prev = prevJobStatuses.current;
@@ -644,6 +689,88 @@ export default function DockerManagerDashboard() {
     isDark ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200 shadow-sm',
   );
 
+  const renderContainerActionButtons = (item: ContainerItem, busy: boolean, isRunning: boolean) => (
+    <>
+      {isRunning ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleStopContainer(item.id);
+          }}
+          disabled={busy}
+          className={cn(
+            'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
+            isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
+          )}
+          title="Stop"
+        >
+          <Icons.Square className="w-3.5 h-3.5 fill-current" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleStartContainer(item.id);
+          }}
+          disabled={busy}
+          className={cn(
+            'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
+            isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
+          )}
+          title="Start"
+        >
+          <Icons.Play className="w-3.5 h-3.5 fill-current" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleRestartContainer(item.id);
+        }}
+        disabled={busy}
+        className={cn(
+          'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
+          isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
+        )}
+        title="Restart"
+      >
+        <Icons.RefreshCcw className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleViewLogs(item);
+        }}
+        className={cn(
+          'p-1.5 rounded-lg border transition',
+          isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600',
+        )}
+        title="Logs"
+      >
+        <Icons.FileText className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleRemoveContainer(item.id);
+        }}
+        disabled={busy}
+        className={cn(
+          'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
+          isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+        )}
+        title="Remove"
+      >
+        <Icons.Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </>
+  );
+
   const renderContainers = () => (
     <div className="space-y-6">
       <OperationStatusBanner isDark={isDark} language={language || 'en'} />
@@ -721,87 +848,80 @@ export default function DockerManagerDashboard() {
           <span>Error: {error}</span>
         </div>
       ) : (
-        <div className={card}>
-          <div className={cn('flex items-center justify-end gap-2 px-3 py-2 border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
-            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colProject}</label>
-            <select
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              className={cn(
-                'rounded-lg border px-2 py-1 text-xs font-medium focus:outline-none',
-                isDark ? 'border-slate-700 bg-slate-900 text-slate-200' : 'border-slate-200 bg-white text-slate-800',
-              )}
-            >
-              <option value="all">{tr.filterAllProjects}</option>
-              <option value="__standalone__">{tr.filterStandalone}</option>
-              {projectNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr
-                  className={cn(
-                    'border-b text-xs uppercase tracking-wider',
-                    isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600',
-                  )}
-                >
-                  <th className="p-3 font-bold">{tr.colName}</th>
-                  <th className="p-3 font-bold">{tr.colProject}</th>
-                  <th className="p-3 font-bold">{tr.colImage}</th>
-                  <th className="p-3 font-bold">{tr.colStatus}</th>
-                  <th className="p-3 font-bold">{tr.colCpu}</th>
-                  <th className="p-3 font-bold">{tr.colMem}</th>
-                  <th className="p-3 font-bold">{tr.colNet}</th>
-                  <th className="p-3 font-bold">{tr.colPorts}</th>
-                  <th className="p-3 font-bold text-center w-36">{tr.colActions}</th>
-                </tr>
-              </thead>
-              <tbody className={cn('divide-y text-sm', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>
-                {filteredContainers.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="p-10 text-center text-xs text-slate-400">
-                      {tr.noContainers}
-                    </td>
-                  </tr>
+        <div ref={listHostRef} className={card}>
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b',
+              isDark ? 'border-slate-800' : 'border-slate-100',
+            )}
+          >
+            <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.tapForDetails}</p>
+            <div className="flex items-center gap-2">
+              <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colProject}</label>
+              <select
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className={cn(
+                  'rounded-lg border px-2 py-1 text-xs font-medium focus:outline-none',
+                  isDark ? 'border-slate-700 bg-slate-900 text-slate-200' : 'border-slate-200 bg-white text-slate-800',
                 )}
-                {containerGroups.map(([groupKey, items]) => (
-                  <Fragment key={groupKey || 'flat'}>
-                    {projectFilter === 'all' && (
-                      <tr key={`group-${groupKey}`} className={isDark ? 'bg-slate-900/60' : 'bg-slate-50/80'}>
-                        <td colSpan={9} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
-                          {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
-                          <span className="ml-2 font-normal tabular-nums">({items.length})</span>
-                        </td>
-                      </tr>
-                    )}
-                    {items.map((item, idx) => {
+              >
+                <option value="all">{tr.filterAllProjects}</option>
+                <option value="__standalone__">{tr.filterStandalone}</option>
+                {projectNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {filteredContainers.length === 0 ? (
+            <div className="p-10 text-center text-xs text-slate-400">{tr.noContainers}</div>
+          ) : compactList ? (
+            <div className="p-3 space-y-3">
+              {containerGroups.map(([groupKey, items]) => (
+                <div key={groupKey || 'flat'} className="space-y-2">
+                  {projectFilter === 'all' && (
+                    <div className={cn('px-1 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                      {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
+                      <span className="ml-2 font-normal tabular-nums">({items.length})</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 gap-2">
+                    {items.map((item) => {
                       const isRunning = item.status.toLowerCase().includes('running');
                       const busy = isContainerBusy(item.id);
                       const stats = lookupStats(item);
                       return (
-                        <tr key={`${groupKey}-${idx}`} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
-                          <td className="p-3">
-                            <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
-                            <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
-                              {item.id}
+                        <div
+                          key={item.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedContainer(item)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedContainer(item);
+                            }
+                          }}
+                          className={cn(
+                            'w-full text-left rounded-xl border p-3 transition space-y-2 cursor-pointer',
+                            isDark
+                              ? 'bg-slate-950/40 border-slate-800 hover:border-slate-600'
+                              : 'bg-slate-50/80 border-slate-200 hover:border-slate-300 hover:bg-white',
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className={cn('font-bold text-xs truncate', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
+                              <div className={cn('text-[10px] font-mono mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{item.id}</div>
                             </div>
-                          </td>
-                          <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-400' : 'text-slate-600')}>
-                            {item.project || '—'}
-                          </td>
-                          <td className={cn('p-3 font-mono text-xs truncate max-w-[10rem]', isDark ? 'text-slate-300' : 'text-slate-600')} title={item.image}>
-                            {item.image}
-                          </td>
-                          <td className="p-3">
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col items-end gap-1 shrink-0">
                               <span
                                 className={cn(
-                                  'px-2.5 py-0.5 text-xs font-semibold rounded-full border w-fit',
+                                  'px-2 py-0.5 text-[10px] font-semibold rounded-full border',
                                   isRunning
                                     ? 'bg-green-500/10 border-green-500/20 text-green-500'
                                     : isDark
@@ -818,93 +938,160 @@ export default function DockerManagerDashboard() {
                                 </span>
                               )}
                             </div>
-                          </td>
-                          <td className={cn('p-3 font-mono text-xs tabular-nums', isDark ? 'text-slate-300' : 'text-slate-700')}>
-                            {isRunning ? stats?.cpu || '…' : '—'}
-                          </td>
-                          <td className={cn('p-3 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.mem_usage}>
-                            {isRunning ? (
-                              <div>
-                                <div>{stats?.mem_percent || '…'}</div>
-                                <div className="opacity-70 truncate max-w-[7rem]">{stats?.mem_usage || ''}</div>
-                              </div>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td className={cn('p-3 font-mono text-[11px] truncate max-w-[7rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.net_io}>
-                            {isRunning ? stats?.net_io || '…' : '—'}
-                          </td>
-                          <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {isRunning ? (
-                                <button
-                                  onClick={() => handleStopContainer(item.id)}
-                                  disabled={busy}
-                                  className={cn(
-                                    'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
-                                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-amber-600',
-                                  )}
-                                  title="Stop"
-                                >
-                                  <Icons.Square className="w-3.5 h-3.5 fill-current" />
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleStartContainer(item.id)}
-                                  disabled={busy}
-                                  className={cn(
-                                    'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
-                                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-green-600',
-                                  )}
-                                  title="Start"
-                                >
-                                  <Icons.Play className="w-3.5 h-3.5 fill-current" />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleRestartContainer(item.id)}
-                                disabled={busy}
-                                className={cn(
-                                  'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
-                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
-                                )}
-                                title="Restart"
-                              >
-                                <Icons.RefreshCcw className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleViewLogs(item)}
-                                className={cn(
-                                  'p-1.5 rounded-lg border transition',
-                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600',
-                                )}
-                                title="Logs"
-                              >
-                                <Icons.FileText className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleRemoveContainer(item.id)}
-                                disabled={busy}
-                                className={cn(
-                                  'p-1.5 rounded-lg border transition disabled:opacity-40 disabled:pointer-events-none',
-                                  isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
-                                )}
-                                title="Remove"
-                              >
-                                <Icons.Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                          </div>
+                          <div className={cn('text-[11px] font-mono truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={item.image}>
+                            {item.image}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-[10px]">
+                            <div>
+                              <p className={cn('uppercase font-bold tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colCpu}</p>
+                              <p className={cn('font-mono mt-0.5', isDark ? 'text-slate-200' : 'text-slate-700')}>
+                                {isRunning ? stats?.cpu || '…' : '—'}
+                              </p>
                             </div>
-                          </td>
-                        </tr>
+                            <div>
+                              <p className={cn('uppercase font-bold tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colMem}</p>
+                              <p className={cn('font-mono mt-0.5 truncate', isDark ? 'text-slate-200' : 'text-slate-700')} title={stats?.mem_usage}>
+                                {isRunning ? stats?.mem_percent || '…' : '—'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className={cn('uppercase font-bold tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colNet}</p>
+                              <p className={cn('font-mono mt-0.5 truncate', isDark ? 'text-slate-200' : 'text-slate-700')} title={stats?.net_io}>
+                                {isRunning ? stats?.net_io || '…' : '—'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <span className={cn('text-[10px] font-mono truncate', isDark ? 'text-slate-500' : 'text-slate-400')} title={item.ports}>
+                              {item.ports || '—'}
+                            </span>
+                            <span className="text-[10px] font-semibold text-blue-500 shrink-0">{tr.clickForStatus}</span>
+                          </div>
+                          <div
+                            className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-200/50 dark:border-slate-800"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {renderContainerActionButtons(item, busy, isRunning)}
+                          </div>
+                        </div>
                       );
                     })}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr
+                    className={cn(
+                      'border-b text-xs uppercase tracking-wider',
+                      isDark ? 'bg-slate-950/60 border-slate-800/60 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-600',
+                    )}
+                  >
+                    <th className="p-3 font-bold">{tr.colName}</th>
+                    <th className="p-3 font-bold">{tr.colProject}</th>
+                    <th className="p-3 font-bold">{tr.colImage}</th>
+                    <th className="p-3 font-bold">{tr.colStatus}</th>
+                    <th className="p-3 font-bold">{tr.colCpu}</th>
+                    <th className="p-3 font-bold">{tr.colMem}</th>
+                    <th className="p-3 font-bold">{tr.colNet}</th>
+                    <th className="p-3 font-bold">{tr.colPorts}</th>
+                    <th className="p-3 font-bold text-center w-36">{tr.colActions}</th>
+                  </tr>
+                </thead>
+                <tbody className={cn('divide-y text-sm', isDark ? 'divide-slate-800/30' : 'divide-slate-100')}>
+                  {containerGroups.map(([groupKey, items]) => (
+                    <Fragment key={groupKey || 'flat'}>
+                      {projectFilter === 'all' && (
+                        <tr key={`group-${groupKey}`} className={isDark ? 'bg-slate-900/60' : 'bg-slate-50/80'}>
+                          <td colSpan={9} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                            {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
+                            <span className="ml-2 font-normal tabular-nums">({items.length})</span>
+                          </td>
+                        </tr>
+                      )}
+                      {items.map((item, idx) => {
+                        const isRunning = item.status.toLowerCase().includes('running');
+                        const busy = isContainerBusy(item.id);
+                        const stats = lookupStats(item);
+                        return (
+                          <tr
+                            key={`${groupKey}-${idx}`}
+                            onClick={() => setSelectedContainer(item)}
+                            className={cn(
+                              'transition cursor-pointer',
+                              isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50',
+                            )}
+                            title={tr.clickForStatus}
+                          >
+                            <td className="p-3">
+                              <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
+                              <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                                {item.id}
+                              </div>
+                            </td>
+                            <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-400' : 'text-slate-600')}>
+                              {item.project || '—'}
+                            </td>
+                            <td className={cn('p-3 font-mono text-xs truncate max-w-[10rem]', isDark ? 'text-slate-300' : 'text-slate-600')} title={item.image}>
+                              {item.image}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex flex-col gap-1">
+                                <span
+                                  className={cn(
+                                    'px-2.5 py-0.5 text-xs font-semibold rounded-full border w-fit',
+                                    isRunning
+                                      ? 'bg-green-500/10 border-green-500/20 text-green-500'
+                                      : isDark
+                                        ? 'bg-slate-800/60 border-slate-700 text-slate-400'
+                                        : 'bg-slate-100 border-slate-200 text-slate-600',
+                                  )}
+                                >
+                                  {item.status}
+                                </span>
+                                {busy && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                                    <Icons.Loader2 className="w-3 h-3 animate-spin" />
+                                    {tr.actionBusy}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className={cn('p-3 font-mono text-xs tabular-nums', isDark ? 'text-slate-300' : 'text-slate-700')}>
+                              {isRunning ? stats?.cpu || '…' : '—'}
+                            </td>
+                            <td className={cn('p-3 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.mem_usage}>
+                              {isRunning ? (
+                                <div>
+                                  <div>{stats?.mem_percent || '…'}</div>
+                                  <div className="opacity-70 truncate max-w-[7rem]">{stats?.mem_usage || ''}</div>
+                                </div>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className={cn('p-3 font-mono text-[11px] truncate max-w-[7rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.net_io}>
+                              {isRunning ? stats?.net_io || '…' : '—'}
+                            </td>
+                            <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
+                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-center gap-1.5">
+                                {renderContainerActionButtons(item, busy, isRunning)}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1135,6 +1322,24 @@ export default function DockerManagerDashboard() {
         }}
         isDark={isDark}
         language={language || 'en'}
+      />
+
+      <ContainerDetailModal
+        open={!!selectedContainer}
+        container={selectedContainer}
+        stats={selectedContainer ? lookupStats(selectedContainer) : undefined}
+        busy={selectedContainer ? isContainerBusy(selectedContainer.id) : false}
+        isDark={isDark}
+        language={language || 'en'}
+        onClose={() => setSelectedContainer(null)}
+        onStart={handleStartContainer}
+        onStop={handleStopContainer}
+        onRestart={handleRestartContainer}
+        onRemove={handleRemoveContainer}
+        onLogs={(item) => {
+          setSelectedContainer(null);
+          handleViewLogs(item);
+        }}
       />
 
       <WindowModal

@@ -6,8 +6,9 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
-**Fixed / Improved (`docker_manager` 1.0.14)**
+**Fixed / Improved (`docker_manager` 1.0.15)**
 
+- Containers list switches to compact cards when the module/window is narrow; click a container (card or table row) to open a status detail modal (CPU/RAM/network, inspect, actions).
 - Long Docker/Compose work (deploy, build, stop, restart, list, scan) no longer blocks the FastAPI event loop — UI stays responsive while tasks run.
 - Deploy / stop / restart / build compose stacks and container start/stop/restart/remove run as background jobs with progress in Task Center.
 - Containers tab shows live CPU, memory, and network I/O (polled via `GET /stats`).
@@ -16,6 +17,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- Danh sách container dạng thẻ khi thu gọn cửa sổ; bấm vào container để xem trạng thái chi tiết.
 - Build / deploy / stop / restart không còn làm đơ giao diện CoPanel; có tiến trình job rõ ràng.
 - Hiển thị CPU, RAM, network của container; log chi tiết hơn (làm mới / tự làm mới).
 
