@@ -18,6 +18,14 @@ class ContainerRestartPolicyRequest(BaseModel):
     maximum_retry_count: int = Field(default=0, ge=0, le=100)
 
 
+class ImageCheckUpdatesRequest(BaseModel):
+    image_refs: Optional[List[str]] = None
+
+
+class ImageUpdateRequest(BaseModel):
+    image_ref: str
+
+
 class ContainerExecRequest(BaseModel):
     container_id: str
     command: List[str] = Field(default_factory=list)
