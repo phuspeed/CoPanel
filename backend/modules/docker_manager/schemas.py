@@ -12,6 +12,12 @@ class ContainerRenameRequest(BaseModel):
     new_name: str
 
 
+class ContainerRestartPolicyRequest(BaseModel):
+    container_id: str
+    policy: Literal["no", "on-failure", "always", "unless-stopped"] = "unless-stopped"
+    maximum_retry_count: int = Field(default=0, ge=0, le=100)
+
+
 class ContainerExecRequest(BaseModel):
     container_id: str
     command: List[str] = Field(default_factory=list)

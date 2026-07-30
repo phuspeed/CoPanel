@@ -193,6 +193,32 @@ class DockerManagerServiceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["cpu"], "1%")
 
+    def test_update_restart_policy_rejects_invalid(self):
+        service = DockerService()
+        with self.assertRaises(DockerManagerError):
+            service.update_restart_policy("abc", "sometimes")
+
+    @patch("modules.docker_manager.logic.DockerService._client", return_value=None)
+    @patch("modules.docker_manager.logic.DockerService._run")
+    def test_update_restart_policy_cli(self, mock_run, _mock_client):
+        mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        service = DockerService()
+        result = service.update_restart_policy("abc123", "unless-stopped")
+        self.assertEqual(result["restart_policy"], "unless-stopped")
+        args = mock_run.call_args[0][0]
+        self.assertIn("update", args)
+        self.assertIn("--restart", args)
+        self.assertIn("unless-stopped", args)
+
+    @patch("modules.docker_manager.logic.DockerService._client", return_value=None)
+    @patch("modules.docker_manager.logic.DockerService._run")
+    def test_update_restart_policy_on_failure_retries(self, mock_run, _mock_client):
+        mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        service = DockerService()
+        service.update_restart_policy("abc123", "on-failure", maximum_retry_count=5)
+        args = mock_run.call_args[0][0]
+        self.assertIn("on-failure:5", args)
+
 
 if __name__ == "__main__":
     unittest.main()
