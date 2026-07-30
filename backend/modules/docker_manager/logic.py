@@ -2,6 +2,9 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -351,9 +354,239 @@ class DockerService:
         payload = json.loads(out)
         return payload[0] if payload else {}
 
+    @staticmethod
+    def _parse_image_ref(image_ref: str) -> Dict[str, str]:
+        """Split ``registry/repo:tag`` into parts. Defaults to Docker Hub + latest."""
+        ref = (image_ref or "").strip()
+        if not ref or ref.startswith("<none>") or "@sha256:" in ref:
+            raise DockerManagerError("Invalid image reference", code="invalid_image_ref")
+        tag = "latest"
+        if ":" in ref.rsplit("/", 1)[-1]:
+            ref, tag = ref.rsplit(":", 1)
+        registry = "docker.io"
+        repository = ref
+        if "/" in ref:
+            first, rest = ref.split("/", 1)
+            if "." in first or ":" in first or first == "localhost":
+                registry = first
+                repository = rest
+            else:
+                repository = ref
+        else:
+            repository = f"library/{ref}"
+        if registry in {"docker.io", "index.docker.io", "registry-1.docker.io"} and "/" not in repository:
+            repository = f"library/{repository}"
+        return {"registry": registry, "repository": repository, "tag": tag, "name": f"{repository}:{tag}"}
+
+    def local_image_digest(self, image_ref: str) -> Optional[str]:
+        try:
+            info = self.inspect_image(image_ref)
+        except DockerManagerError:
+            return None
+        digests = info.get("RepoDigests") or []
+        for entry in digests:
+            if isinstance(entry, str) and "@" in entry:
+                return entry.split("@", 1)[1]
+        # Fallback: image Id (not comparable to registry digest, but useful as marker)
+        image_id = info.get("Id") or ""
+        return image_id if isinstance(image_id, str) and image_id else None
+
+    def _remote_digest_docker_hub(self, repository: str, tag: str, timeout: int = 20) -> str:
+        """Resolve remote content digest via Docker Hub registry API."""
+        scope = f"repository:{repository}:pull"
+        token_url = (
+            "https://auth.docker.io/token"
+            f"?service=registry.docker.io&scope={urllib.parse.quote(scope)}"
+        )
+        try:
+            with urllib.request.urlopen(token_url, timeout=timeout) as resp:
+                token_payload = json.loads(resp.read().decode("utf-8"))
+            token = token_payload.get("token") or token_payload.get("access_token")
+            if not token:
+                raise DockerManagerError("Docker Hub auth token missing", code="registry_auth_failed")
+        except urllib.error.HTTPError as exc:
+            raise DockerManagerError("Docker Hub authentication failed", code="registry_auth_failed", details=str(exc)) from exc
+        except Exception as exc:
+            raise DockerManagerError("Failed to reach Docker Hub auth", code="registry_unreachable", details=str(exc)) from exc
+
+        manifest_url = f"https://registry-1.docker.io/v2/{repository}/manifests/{urllib.parse.quote(tag)}"
+        accept = (
+            "application/vnd.oci.image.index.v1+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json,"
+            "application/vnd.oci.image.manifest.v1+json,"
+            "application/vnd.docker.distribution.manifest.v2+json"
+        )
+        req = urllib.request.Request(
+            manifest_url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": accept,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                digest = resp.headers.get("Docker-Content-Digest") or resp.headers.get("docker-content-digest")
+                if not digest:
+                    # Some proxies strip headers — hash body is not equivalent; fail clearly.
+                    raise DockerManagerError("Remote digest header missing", code="registry_digest_missing")
+                return digest.strip()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise DockerManagerError(f"Image not found on Docker Hub: {repository}:{tag}", code="registry_not_found") from exc
+            raise DockerManagerError("Failed to fetch remote manifest", code="registry_manifest_failed", details=str(exc)) from exc
+        except DockerManagerError:
+            raise
+        except Exception as exc:
+            raise DockerManagerError("Registry request failed", code="registry_unreachable", details=str(exc)) from exc
+
+    def _remote_digest_manifest_inspect(self, image_ref: str) -> Optional[str]:
+        """Fallback: ``docker manifest inspect`` (works for some registries when logged in)."""
+        result = self._run([self._docker_bin(), "manifest", "inspect", image_ref], timeout=45)
+        if result.returncode != 0:
+            return None
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return None
+        # Single manifest
+        if isinstance(payload.get("config"), dict) and payload.get("mediaType"):
+            # digest not always present in body; try Descriptor
+            pass
+        # Manifest list
+        if isinstance(payload.get("manifests"), list) and payload["manifests"]:
+            # Prefer first linux/amd64 entry digest when present
+            for item in payload["manifests"]:
+                if not isinstance(item, dict):
+                    continue
+                platform = item.get("platform") or {}
+                if platform.get("os") == "linux" and platform.get("architecture") in {"amd64", "arm64", "arm"}:
+                    digest = item.get("digest")
+                    if digest:
+                        return digest
+            digest = payload["manifests"][0].get("digest")
+            if digest:
+                return digest
+        digest = payload.get("digest")
+        return digest if isinstance(digest, str) else None
+
+    def remote_image_digest(self, image_ref: str) -> str:
+        parts = self._parse_image_ref(image_ref)
+        registry = parts["registry"]
+        if registry in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
+            return self._remote_digest_docker_hub(parts["repository"], parts["tag"])
+        fallback = self._remote_digest_manifest_inspect(f"{parts['repository']}:{parts['tag']}" if registry == "docker.io" else image_ref)
+        if fallback:
+            return fallback
+        # Try full ref with registry
+        full = image_ref if image_ref.count("/") >= 1 else f"{parts['repository']}:{parts['tag']}"
+        if not image_ref.startswith(registry) and registry != "docker.io":
+            full = f"{registry}/{parts['repository']}:{parts['tag']}"
+        fallback = self._remote_digest_manifest_inspect(full)
+        if fallback:
+            return fallback
+        raise DockerManagerError(
+            f"Cannot check updates for registry '{registry}'. Only Docker Hub is fully supported.",
+            code="registry_unsupported",
+        )
+
+    def check_image_update(self, image_ref: str) -> Dict[str, Any]:
+        """Compare local vs remote digest for one image reference."""
+        parts = self._parse_image_ref(image_ref)
+        normalized = (
+            f"{parts['repository']}:{parts['tag']}"
+            if parts["registry"] in {"docker.io", "index.docker.io", "registry-1.docker.io"}
+            else f"{parts['registry']}/{parts['repository']}:{parts['tag']}"
+        )
+        # Prefer caller ref for local inspect (may be short name like nginx:alpine)
+        local_ref = image_ref
+        local = self.local_image_digest(local_ref)
+        if local is None and local_ref != normalized:
+            local = self.local_image_digest(normalized)
+        try:
+            remote = self.remote_image_digest(normalized if parts["registry"].startswith("docker") else image_ref)
+        except DockerManagerError as exc:
+            return {
+                "image_ref": image_ref,
+                "normalized": normalized,
+                "local_digest": local,
+                "remote_digest": None,
+                "update_available": False,
+                "status": "error",
+                "error": str(exc),
+                "code": exc.code,
+            }
+        update_available = False
+        status = "unknown"
+        if local and remote:
+            # RepoDigests are sha256:... ; compare normalized
+            local_norm = local if local.startswith("sha256:") else local
+            remote_norm = remote if remote.startswith("sha256:") else remote
+            if local_norm.startswith("sha256:") and remote_norm.startswith("sha256:"):
+                update_available = local_norm != remote_norm
+                status = "update_available" if update_available else "up_to_date"
+            else:
+                status = "unknown"
+        elif remote and not local:
+            update_available = True
+            status = "update_available"
+        return {
+            "image_ref": image_ref,
+            "normalized": normalized,
+            "local_digest": local,
+            "remote_digest": remote,
+            "update_available": update_available,
+            "status": status,
+            "error": None,
+            "code": None,
+        }
+
+    def check_image_updates(self, image_refs: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        refs = image_refs
+        if not refs:
+            refs = []
+            for img in self.list_images():
+                repo = img.get("repository") or ""
+                tag = img.get("tag") or ""
+                if not repo or repo == "<none>" or not tag or tag == "<none>":
+                    continue
+                refs.append(f"{repo}:{tag}")
+        results: List[Dict[str, Any]] = []
+        for ref in refs:
+            try:
+                results.append(self.check_image_update(ref))
+            except DockerManagerError as exc:
+                results.append(
+                    {
+                        "image_ref": ref,
+                        "normalized": ref,
+                        "local_digest": None,
+                        "remote_digest": None,
+                        "update_available": False,
+                        "status": "error",
+                        "error": str(exc),
+                        "code": exc.code,
+                    }
+                )
+        return results
+
     def pull_image(self, image_ref: str) -> str:
-        result = self._run([self._docker_bin(), "pull", image_ref], timeout=300)
+        result = self._run([self._docker_bin(), "pull", image_ref], timeout=600)
         return self._ensure_ok(result, "Failed to pull image.")
+
+    def update_image_to_latest(self, image_ref: str) -> Dict[str, Any]:
+        """Pull image from registry (update local tag to remote latest of that tag)."""
+        before = self.local_image_digest(image_ref)
+        output = self.pull_image(image_ref)
+        after = self.local_image_digest(image_ref)
+        changed = bool(before and after and before != after) or (not before and after)
+        return {
+            "image_ref": image_ref,
+            "changed": changed or ("Downloaded newer image" in output) or ("Pull complete" in output),
+            "local_digest_before": before,
+            "local_digest_after": after,
+            "output": output,
+        }
 
     def remove_image(self, image_ref: str) -> str:
         result = self._run([self._docker_bin(), "rmi", image_ref])

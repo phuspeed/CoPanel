@@ -46,6 +46,16 @@ interface ImageItem {
   size: string;
 }
 
+type ImageUpdateStatus = 'unknown' | 'up_to_date' | 'update_available' | 'error' | 'checking';
+
+interface ImageUpdateInfo {
+  status: ImageUpdateStatus;
+  update_available?: boolean;
+  local_digest?: string | null;
+  remote_digest?: string | null;
+  error?: string | null;
+}
+
 interface NetworkItem {
   id: string;
   name: string;
@@ -109,6 +119,9 @@ export default function DockerManagerDashboard() {
 
   const [loading, setLoading] = useState(false);
   const [imagesLoading, setImagesLoading] = useState(false);
+  const [imageUpdates, setImageUpdates] = useState<Record<string, ImageUpdateInfo>>({});
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updatingImages, setUpdatingImages] = useState<Record<string, boolean>>({});
   const [networksLoading, setNetworksLoading] = useState(false);
   const [volumesLoading, setVolumesLoading] = useState(false);
 
@@ -147,7 +160,7 @@ export default function DockerManagerDashboard() {
           tabComposeTitle: 'Projects & Compose',
           tabComposeDesc: 'Manage panel projects (edit, deploy, logs) and discover external compose files.',
           tabImagesTitle: 'Docker Images',
-          tabImagesDesc: 'View and manage images stored on this host.',
+          tabImagesDesc: 'View images, check Docker Hub for newer digests, and pull updates.',
           tabNetworksTitle: 'Docker Networks',
           tabNetworksDesc: 'Inspect and remove user-defined networks.',
           tabVolumesTitle: 'Docker Volumes',
@@ -213,6 +226,16 @@ export default function DockerManagerDashboard() {
           noVolumes: 'No volumes found.',
           loading: 'Loading...',
           remove: 'Remove',
+          colUpdate: 'Update',
+          checkUpdates: 'Check updates',
+          checkingUpdates: 'Checking…',
+          updateToLatest: 'Update',
+          updatingImage: 'Updating…',
+          upToDate: 'Up to date',
+          updateAvailable: 'New version',
+          updateCheckError: 'Check failed',
+          updateQueued: 'Update queued — follow Task Center.',
+          updateHint: 'Compare local digests with Docker Hub, then pull newer tags.',
         },
         vi: {
           title: 'Docker Manager',
@@ -227,7 +250,7 @@ export default function DockerManagerDashboard() {
           tabComposeTitle: 'Project & Compose',
           tabComposeDesc: 'Quản lý project (sửa, triển khai, log) và quét compose bên ngoài.',
           tabImagesTitle: 'Docker Image',
-          tabImagesDesc: 'Xem và quản lý image trên máy chủ.',
+          tabImagesDesc: 'Xem image, kiểm tra bản mới trên Docker Hub và cập nhật.',
           tabNetworksTitle: 'Docker Network',
           tabNetworksDesc: 'Xem và xóa mạng do người dùng tạo.',
           tabVolumesTitle: 'Docker Volume',
@@ -293,6 +316,16 @@ export default function DockerManagerDashboard() {
           noVolumes: 'Không tìm thấy volume.',
           loading: 'Đang tải...',
           remove: 'Xóa',
+          colUpdate: 'Cập nhật',
+          checkUpdates: 'Kiểm tra cập nhật',
+          checkingUpdates: 'Đang kiểm tra…',
+          updateToLatest: 'Cập nhật',
+          updatingImage: 'Đang cập nhật…',
+          upToDate: 'Mới nhất',
+          updateAvailable: 'Có bản mới',
+          updateCheckError: 'Lỗi kiểm tra',
+          updateQueued: 'Đã xếp hàng cập nhật — theo dõi Task Center.',
+          updateHint: 'So sánh digest local với Docker Hub, rồi pull tag mới hơn.',
         },
       })[language || 'en'],
     [language],
@@ -627,6 +660,102 @@ export default function DockerManagerDashboard() {
       fetchImages();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error');
+    }
+  };
+
+  const imageRefOf = (img: ImageItem) =>
+    img.repository === '<none>' || img.tag === '<none>' ? img.id : `${img.repository}:${img.tag}`;
+
+  const handleCheckImageUpdates = async () => {
+    setCheckingUpdates(true);
+    const refs = images
+      .filter((img) => img.repository && img.repository !== '<none>' && img.tag && img.tag !== '<none>')
+      .map((img) => `${img.repository}:${img.tag}`);
+    const pending: Record<string, ImageUpdateInfo> = {};
+    for (const ref of refs) pending[ref] = { status: 'checking' };
+    setImageUpdates((prev) => ({ ...prev, ...pending }));
+    try {
+      const res = await apiFetch('/api/docker_manager/images/check-updates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_refs: refs }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail?.message || data?.detail || 'Check failed');
+      const next: Record<string, ImageUpdateInfo> = {};
+      for (const row of data.data || []) {
+        const key = row.image_ref as string;
+        next[key] = {
+          status: (row.status as ImageUpdateStatus) || (row.update_available ? 'update_available' : 'up_to_date'),
+          update_available: !!row.update_available,
+          local_digest: row.local_digest,
+          remote_digest: row.remote_digest,
+          error: row.error,
+        };
+      }
+      setImageUpdates((prev) => ({ ...prev, ...next }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : tr.updateCheckError);
+      setImageUpdates((prev) => {
+        const copy = { ...prev };
+        for (const ref of refs) {
+          if (copy[ref]?.status === 'checking') copy[ref] = { status: 'error', error: 'failed' };
+        }
+        return copy;
+      });
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handleUpdateImage = async (imageRef: string) => {
+    setUpdatingImages((prev) => ({ ...prev, [imageRef]: true }));
+    try {
+      const res = await apiFetch('/api/docker_manager/images/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_ref: imageRef }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail?.message || data?.detail || 'Update failed');
+      if (data.job_id) {
+        alert(tr.updateQueued);
+      }
+      // Re-check this image after a short delay so Task Center can finish pull.
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            const check = await apiFetch('/api/docker_manager/images/check-updates', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image_refs: [imageRef] }),
+            });
+            if (check.ok) {
+              const payload = await check.json();
+              const row = (payload.data || [])[0];
+              if (row) {
+                setImageUpdates((prev) => ({
+                  ...prev,
+                  [imageRef]: {
+                    status: (row.status as ImageUpdateStatus) || (row.update_available ? 'update_available' : 'up_to_date'),
+                    update_available: !!row.update_available,
+                    local_digest: row.local_digest,
+                    remote_digest: row.remote_digest,
+                    error: row.error,
+                  },
+                }));
+              }
+            }
+            fetchImages();
+          } catch {
+            fetchImages();
+          }
+        })();
+      }, 2500);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setUpdatingImages((prev) => ({ ...prev, [imageRef]: false }));
     }
   };
 
@@ -1133,41 +1262,105 @@ export default function DockerManagerDashboard() {
     </div>
   );
 
-  const renderImages = () =>
-    renderSimpleTable(
-      imagesLoading && images.length === 0,
-      [tr.colRepo, tr.colTag, tr.colSize],
-      images.length === 0 ? (
-        <tr>
-          <td colSpan={4} className="p-10 text-center text-xs text-slate-400">
-            {tr.noImages}
-          </td>
-        </tr>
-      ) : (
-        images.map((img, idx) => {
-          const ref = img.repository === '<none>' ? img.id : `${img.repository}:${img.tag}`;
-          return (
-            <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
-              <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-200' : 'text-slate-800')}>{img.repository}</td>
-              <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{img.tag}</td>
-              <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{img.size}</td>
-              <td className="p-3 text-center">
-                <button
-                  onClick={() => handleRemoveImage(ref)}
-                  className={cn(
-                    'p-1.5 rounded-lg border transition',
-                    isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+  const renderImages = () => (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.updateHint}</p>
+        <button
+          type="button"
+          onClick={() => void handleCheckImageUpdates()}
+          disabled={checkingUpdates || images.length === 0}
+          className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold transition"
+        >
+          {checkingUpdates ? <Icons.Loader2 className="w-4 h-4 animate-spin" /> : <Icons.CloudDownload className="w-4 h-4" />}
+          {checkingUpdates ? tr.checkingUpdates : tr.checkUpdates}
+        </button>
+      </div>
+      {renderSimpleTable(
+        imagesLoading && images.length === 0,
+        [tr.colRepo, tr.colTag, tr.colSize, tr.colUpdate],
+        images.length === 0 ? (
+          <tr>
+            <td colSpan={5} className="p-10 text-center text-xs text-slate-400">
+              {tr.noImages}
+            </td>
+          </tr>
+        ) : (
+          images.map((img, idx) => {
+            const ref = imageRefOf(img);
+            const canCheck = img.repository !== '<none>' && img.tag !== '<none>';
+            const info = imageUpdates[ref];
+            const busyUpdate = !!updatingImages[ref];
+            return (
+              <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
+                <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-200' : 'text-slate-800')}>{img.repository}</td>
+                <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{img.tag}</td>
+                <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{img.size}</td>
+                <td className="p-3">
+                  {!canCheck ? (
+                    <span className="text-[10px] text-slate-500">—</span>
+                  ) : info?.status === 'checking' ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                      <Icons.Loader2 className="w-3 h-3 animate-spin" />
+                      {tr.checkingUpdates}
+                    </span>
+                  ) : info?.status === 'update_available' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold bg-amber-500/10 border-amber-500/30 text-amber-500">
+                      <Icons.ArrowUpCircle className="w-3 h-3" />
+                      {tr.updateAvailable}
+                    </span>
+                  ) : info?.status === 'up_to_date' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold bg-emerald-500/10 border-emerald-500/30 text-emerald-500">
+                      <Icons.CheckCircle2 className="w-3 h-3" />
+                      {tr.upToDate}
+                    </span>
+                  ) : info?.status === 'error' ? (
+                    <span className="text-[10px] text-red-400" title={info.error || undefined}>
+                      {tr.updateCheckError}
+                    </span>
+                  ) : (
+                    <span className={cn('text-[10px]', isDark ? 'text-slate-600' : 'text-slate-400')}>—</span>
                   )}
-                  title={tr.remove}
-                >
-                  <Icons.Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </td>
-            </tr>
-          );
-        })
-      ),
-    );
+                </td>
+                <td className="p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                    {canCheck && (
+                      <button
+                        type="button"
+                        onClick={() => void handleUpdateImage(ref)}
+                        disabled={busyUpdate || checkingUpdates}
+                        className={cn(
+                          'p-1.5 rounded-lg border transition disabled:opacity-40',
+                          info?.update_available
+                            ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-500'
+                            : isDark
+                              ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400'
+                              : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-blue-600',
+                        )}
+                        title={tr.updateToLatest}
+                      >
+                        {busyUpdate ? <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icons.Download className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRemoveImage(ref)}
+                      className={cn(
+                        'p-1.5 rounded-lg border transition',
+                        isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-red-400' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-red-600',
+                      )}
+                      title={tr.remove}
+                    >
+                      <Icons.Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })
+        ),
+      )}
+    </div>
+  );
 
   const renderNetworks = () =>
     renderSimpleTable(

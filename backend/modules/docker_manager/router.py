@@ -21,6 +21,8 @@ from .schemas import (
     ContainerExecRequest,
     ContainerRenameRequest,
     ContainerRestartPolicyRequest,
+    ImageCheckUpdatesRequest,
+    ImageUpdateRequest,
     ProjectCreateRequest,
     ProjectComposeUpdateByPathRequest,
     ProjectEnvUpdateRequest,
@@ -398,6 +400,62 @@ async def pull_image(image_ref: str) -> Dict[str, Any]:
     try:
         message = await _run_sync(docker_service.pull_image, image_ref)
         return {"status": "success", "message": message}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/images/check-updates")
+async def check_image_updates(req: Optional[ImageCheckUpdatesRequest] = None) -> Dict[str, Any]:
+    """Compare local image digests with Docker Hub (or supported registries)."""
+    try:
+        payload = req or ImageCheckUpdatesRequest()
+        data = await _run_sync(docker_service.check_image_updates, payload.image_refs)
+        updates = sum(1 for row in data if row.get("update_available"))
+        return {"status": "success", "data": data, "updates": updates}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+async def _image_update_job_handler(job, image_ref: str) -> Dict[str, Any]:
+    job.update(progress=10, message=f"Pulling {image_ref}")
+    result = await _run_sync(docker_service.update_image_to_latest, image_ref)
+    job.log((result.get("output") or "")[:4000])
+    job.update(
+        progress=100,
+        message="Image updated" if result.get("changed") else "Image already up to date",
+    )
+    return result
+
+
+@router.post("/images/update")
+async def update_image_to_latest(
+    req: ImageUpdateRequest,
+    user: Dict[str, Any] = Depends(require_user),
+    background: bool = Query(default=True),
+) -> Dict[str, Any]:
+    """Pull the image tag from registry (update to remote latest of that tag)."""
+    try:
+        if background:
+            job = job_manager.submit(
+                kind="docker_manager.image_update",
+                title=f"Update image {req.image_ref}",
+                module="docker_manager",
+                actor=user.get("username"),
+                payload={"image_ref": req.image_ref},
+                handler=_image_update_job_handler,
+                args=(req.image_ref,),
+            )
+            record_audit(
+                "docker.image_update",
+                module="docker_manager",
+                target=req.image_ref,
+                actor=user.get("username"),
+                actor_id=user.get("id"),
+                meta={"job_id": job.id},
+            )
+            return {"status": "success", "job_id": job.id, "message": "Image update job queued."}
+        data = await _run_sync(docker_service.update_image_to_latest, req.image_ref)
+        return {"status": "success", "data": data, "message": "Image updated." if data.get("changed") else "Already up to date."}
     except Exception as exc:
         _raise_http(exc)
 

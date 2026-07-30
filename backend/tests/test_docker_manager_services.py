@@ -219,6 +219,41 @@ class DockerManagerServiceTests(unittest.TestCase):
         args = mock_run.call_args[0][0]
         self.assertIn("on-failure:5", args)
 
+    def test_parse_image_ref_library_and_user(self):
+        service = DockerService()
+        nginx = service._parse_image_ref("nginx:alpine")
+        self.assertEqual(nginx["registry"], "docker.io")
+        self.assertEqual(nginx["repository"], "library/nginx")
+        self.assertEqual(nginx["tag"], "alpine")
+        cf = service._parse_image_ref("cloudflare/cloudflared:latest")
+        self.assertEqual(cf["repository"], "cloudflare/cloudflared")
+        self.assertEqual(cf["tag"], "latest")
+
+    def test_check_image_update_detects_newer_digest(self):
+        service = DockerService()
+        with patch.object(service, "local_image_digest", return_value="sha256:old"), patch.object(
+            service, "remote_image_digest", return_value="sha256:new"
+        ):
+            result = service.check_image_update("nginx:alpine")
+        self.assertTrue(result["update_available"])
+        self.assertEqual(result["status"], "update_available")
+
+    def test_check_image_update_up_to_date(self):
+        service = DockerService()
+        with patch.object(service, "local_image_digest", return_value="sha256:same"), patch.object(
+            service, "remote_image_digest", return_value="sha256:same"
+        ):
+            result = service.check_image_update("nginx:alpine")
+        self.assertFalse(result["update_available"])
+        self.assertEqual(result["status"], "up_to_date")
+
+    @patch("modules.docker_manager.logic.DockerService.pull_image", return_value="Downloaded newer image for nginx:alpine")
+    def test_update_image_to_latest_reports_change(self, _mock_pull):
+        service = DockerService()
+        with patch.object(service, "local_image_digest", side_effect=["sha256:old", "sha256:new"]):
+            result = service.update_image_to_latest("nginx:alpine")
+        self.assertTrue(result["changed"])
+
 
 if __name__ == "__main__":
     unittest.main()
