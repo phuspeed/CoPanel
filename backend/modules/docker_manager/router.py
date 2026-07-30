@@ -20,6 +20,7 @@ from .schemas import (
     ContainerActionRequest,
     ContainerExecRequest,
     ContainerRenameRequest,
+    ContainerRestartPolicyRequest,
     ProjectCreateRequest,
     ProjectComposeUpdateByPathRequest,
     ProjectEnvUpdateRequest,
@@ -316,6 +317,24 @@ async def inspect_container(container_id: str) -> Dict[str, Any]:
     try:
         data = await _run_sync(docker_service.inspect_container, container_id)
         return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_http(exc)
+
+
+@router.post("/containers/restart-policy")
+async def update_container_restart_policy(req: ContainerRestartPolicyRequest) -> Dict[str, Any]:
+    try:
+        data = await _run_sync(
+            docker_service.update_restart_policy,
+            req.container_id,
+            req.policy,
+            req.maximum_retry_count,
+        )
+        return {
+            "status": "success",
+            "message": f"Restart policy updated to '{req.policy}'.",
+            "data": data,
+        }
     except Exception as exc:
         _raise_http(exc)
 

@@ -1,7 +1,7 @@
 /**
- * Container status detail — metrics, ports, and lifecycle actions.
+ * Container status detail — metrics, ports, restart policy, and lifecycle actions.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import WindowModal from '../../../core/shell/WindowModal';
 import { apiFetch } from '../../../core/authHeaders';
 import { cn } from '../../../lib/utils';
@@ -27,6 +27,10 @@ export interface DetailStats {
   block_io?: string;
   pids?: string;
 }
+
+type RestartPolicyName = 'no' | 'on-failure' | 'always' | 'unless-stopped';
+
+const RESTART_OPTIONS: RestartPolicyName[] = ['no', 'on-failure', 'always', 'unless-stopped'];
 
 interface Props {
   open: boolean;
@@ -60,6 +64,10 @@ export default function ContainerDetailModal({
   const [inspect, setInspect] = useState<Record<string, unknown> | null>(null);
   const [inspectLoading, setInspectLoading] = useState(false);
   const [liveStats, setLiveStats] = useState<DetailStats | undefined>(stats);
+  const [policy, setPolicy] = useState<RestartPolicyName>('no');
+  const [retryCount, setRetryCount] = useState(0);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policyMsg, setPolicyMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   const tr = useMemo(
     () =>
@@ -88,6 +96,16 @@ export default function ContainerDetailModal({
           remove: 'Remove',
           close: 'Close',
           loading: 'Loading details…',
+          savePolicy: 'Apply',
+          saving: 'Saving…',
+          policySaved: 'Restart policy updated.',
+          policyFailed: 'Failed to update restart policy.',
+          retryCount: 'Max retries',
+          policyHint: 'Auto-restart when the container exits unexpectedly.',
+          policyNo: 'No (manual only)',
+          policyOnFailure: 'On failure',
+          policyAlways: 'Always',
+          policyUnlessStopped: 'Unless stopped',
         },
         vi: {
           title: 'Trạng thái container',
@@ -113,10 +131,48 @@ export default function ContainerDetailModal({
           remove: 'Xóa',
           close: 'Đóng',
           loading: 'Đang tải chi tiết…',
+          savePolicy: 'Áp dụng',
+          saving: 'Đang lưu…',
+          policySaved: 'Đã cập nhật chính sách restart.',
+          policyFailed: 'Không cập nhật được chính sách restart.',
+          retryCount: 'Số lần thử lại tối đa',
+          policyHint: 'Tự khởi động lại khi container thoát ngoài ý muốn.',
+          policyNo: 'Không (chỉ thủ công)',
+          policyOnFailure: 'Khi lỗi',
+          policyAlways: 'Luôn luôn',
+          policyUnlessStopped: 'Trừ khi dừng thủ công',
         },
       })[language],
     [language],
   );
+
+  const policyLabels: Record<RestartPolicyName, string> = {
+    no: tr.policyNo,
+    'on-failure': tr.policyOnFailure,
+    always: tr.policyAlways,
+    'unless-stopped': tr.policyUnlessStopped,
+  };
+
+  const reloadInspect = useCallback(async () => {
+    if (!container) return;
+    setInspectLoading(true);
+    try {
+      const res = await apiFetch(`/api/docker_manager/containers/${encodeURIComponent(container.id)}/inspect`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const payload = (data.data || null) as Record<string, unknown> | null;
+      setInspect(payload);
+      const hostConfig = (payload?.HostConfig as Record<string, unknown> | undefined) || undefined;
+      const rp = (hostConfig?.RestartPolicy as Record<string, unknown> | undefined) || undefined;
+      const name = String(rp?.Name || 'no').toLowerCase() as RestartPolicyName;
+      setPolicy(RESTART_OPTIONS.includes(name) ? name : 'no');
+      setRetryCount(typeof rp?.MaximumRetryCount === 'number' ? rp.MaximumRetryCount : 0);
+    } catch {
+      setInspect(null);
+    } finally {
+      setInspectLoading(false);
+    }
+  }, [container]);
 
   useEffect(() => {
     setLiveStats(stats);
@@ -125,35 +181,16 @@ export default function ContainerDetailModal({
   useEffect(() => {
     if (!open || !container) {
       setInspect(null);
+      setPolicyMsg(null);
       return;
     }
-    let cancelled = false;
-    setInspectLoading(true);
-    apiFetch(`/api/docker_manager/containers/${encodeURIComponent(container.id)}/inspect`)
-      .then(async (res) => {
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data.data || null;
-      })
-      .then((data) => {
-        if (!cancelled) setInspect(data);
-      })
-      .catch(() => {
-        if (!cancelled) setInspect(null);
-      })
-      .finally(() => {
-        if (!cancelled) setInspectLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, container?.id]);
+    void reloadInspect();
+  }, [open, container?.id, reloadInspect]);
 
-  // Refresh single-container stats while detail is open.
   useEffect(() => {
     if (!open || !container) return;
-    const isRunning = container.status.toLowerCase().includes('running');
-    if (!isRunning) return;
+    const running = container.status.toLowerCase().includes('running');
+    if (!running) return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -173,12 +210,38 @@ export default function ContainerDetailModal({
     };
   }, [open, container?.id, container?.status]);
 
+  const handleSavePolicy = async () => {
+    if (!container) return;
+    setSavingPolicy(true);
+    setPolicyMsg(null);
+    try {
+      const res = await apiFetch('/api/docker_manager/containers/restart-policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          container_id: container.id,
+          policy,
+          maximum_retry_count: policy === 'on-failure' ? retryCount : 0,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.detail;
+        throw new Error(typeof detail === 'string' ? detail : detail?.message || tr.policyFailed);
+      }
+      setPolicyMsg({ text: data.message || tr.policySaved, ok: true });
+      await reloadInspect();
+    } catch (err) {
+      setPolicyMsg({ text: err instanceof Error ? err.message : tr.policyFailed, ok: false });
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
   if (!container) return null;
 
   const isRunning = container.status.toLowerCase().includes('running');
   const state = (inspect?.State as Record<string, unknown> | undefined) || undefined;
-  const hostConfig = (inspect?.HostConfig as Record<string, unknown> | undefined) || undefined;
-  const restartPolicy = (hostConfig?.RestartPolicy as Record<string, unknown> | undefined) || undefined;
   const created = typeof inspect?.Created === 'string' ? inspect.Created : undefined;
   const startedAt = typeof state?.StartedAt === 'string' ? state.StartedAt : undefined;
   const platform = typeof inspect?.Platform === 'string' ? inspect.Platform : undefined;
@@ -272,23 +335,78 @@ export default function ContainerDetailModal({
         )}
 
         {(inspectLoading || inspect) && (
-          <div className={cn('rounded-xl border p-3 space-y-2', isDark ? 'border-slate-800' : 'border-slate-200')}>
+          <div className={cn('rounded-xl border p-3 space-y-3', isDark ? 'border-slate-800' : 'border-slate-200')}>
             {inspectLoading && !inspect ? (
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
                 {tr.loading}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <InfoRow label={tr.created} value={fmtTime(created)} isDark={isDark} />
-                <InfoRow label={tr.started} value={fmtTime(startedAt)} isDark={isDark} />
-                <InfoRow
-                  label={tr.restartPolicy}
-                  value={String(restartPolicy?.Name || '—')}
-                  isDark={isDark}
-                />
-                <InfoRow label={tr.platform} value={platform || '—'} isDark={isDark} />
-              </div>
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <InfoRow label={tr.created} value={fmtTime(created)} isDark={isDark} />
+                  <InfoRow label={tr.started} value={fmtTime(startedAt)} isDark={isDark} />
+                  <InfoRow label={tr.platform} value={platform || '—'} isDark={isDark} />
+                </div>
+
+                <div className="space-y-2">
+                  <div>
+                    <p className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                      {tr.restartPolicy}
+                    </p>
+                    <p className={cn('text-[10px] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.policyHint}</p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <select
+                      value={policy}
+                      onChange={(e) => setPolicy(e.target.value as RestartPolicyName)}
+                      disabled={savingPolicy || busy}
+                      className={cn(
+                        'flex-1 rounded-xl border px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-50',
+                        isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800',
+                      )}
+                    >
+                      {RESTART_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {policyLabels[opt]}
+                        </option>
+                      ))}
+                    </select>
+                    {policy === 'on-failure' && (
+                      <label className="flex items-center gap-2 shrink-0">
+                        <span className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.retryCount}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={retryCount}
+                          onChange={(e) => setRetryCount(Math.max(0, Number(e.target.value) || 0))}
+                          disabled={savingPolicy || busy}
+                          className={cn(
+                            'w-16 rounded-xl border px-2 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-50',
+                            isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800',
+                          )}
+                        />
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleSavePolicy()}
+                      disabled={savingPolicy || busy}
+                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold px-3 py-2 transition"
+                    >
+                      {savingPolicy ? <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icons.Save className="w-3.5 h-3.5" />}
+                      {savingPolicy ? tr.saving : tr.savePolicy}
+                    </button>
+                  </div>
+                  {policyMsg && (
+                    <p className={cn('text-[11px] flex items-center gap-1.5', policyMsg.ok ? 'text-emerald-500' : 'text-red-400')}>
+                      {policyMsg.ok ? <Icons.CheckCircle2 className="w-3.5 h-3.5" /> : <Icons.AlertCircle className="w-3.5 h-3.5" />}
+                      {policyMsg.text}
+                    </p>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}

@@ -197,6 +197,42 @@ class DockerService:
         payload = json.loads(out)
         return payload[0] if payload else {}
 
+    RESTART_POLICIES = {"no", "on-failure", "always", "unless-stopped"}
+
+    def update_restart_policy(
+        self,
+        container_id: str,
+        policy: str,
+        maximum_retry_count: int = 0,
+    ) -> Dict[str, Any]:
+        """Update container restart policy via ``docker update --restart``."""
+        name = (policy or "").strip().lower()
+        if name not in self.RESTART_POLICIES:
+            raise DockerManagerError(
+                f"Invalid restart policy '{policy}'. Allowed: {', '.join(sorted(self.RESTART_POLICIES))}",
+                code="invalid_restart_policy",
+            )
+        if name == "on-failure" and maximum_retry_count > 0:
+            restart_arg = f"on-failure:{int(maximum_retry_count)}"
+        else:
+            restart_arg = name
+
+        client = self._client()
+        if client is not None:
+            try:
+                container = client.containers.get(container_id)
+                kwargs: Dict[str, Any] = {"Name": name}
+                if name == "on-failure" and maximum_retry_count > 0:
+                    kwargs["MaximumRetryCount"] = int(maximum_retry_count)
+                container.update(restart_policy=kwargs)
+                return {"container_id": container_id, "restart_policy": name, "maximum_retry_count": maximum_retry_count}
+            except Exception:
+                pass
+
+        result = self._run([self._docker_bin(), "update", "--restart", restart_arg, container_id])
+        self._ensure_ok(result, "Failed to update restart policy.")
+        return {"container_id": container_id, "restart_policy": name, "maximum_retry_count": maximum_retry_count}
+
     @staticmethod
     def _normalize_stats_row(raw: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize `docker stats --format json` into stable UI fields."""
