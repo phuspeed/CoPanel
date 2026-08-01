@@ -578,8 +578,66 @@ def _staging_dist_dir(frontend_dir: Path) -> Path:
     return frontend_dir / ".build-staging"
 
 
+def _extension_artifacts_dir(pkg_id: str) -> Path:
+    """Durable copy of AppStore extension files (survives dist/ rebuild swaps)."""
+    return get_copanel_home() / "config" / "extension_artifacts" / pkg_id
+
+
+def _cache_extension_artifact(pkg_id: str, src_extension: Path) -> None:
+    dest = _extension_artifacts_dir(pkg_id)
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_extension, dest)
+
+
+def _restore_extensions_into_dist(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> int:
+    """Re-materialize registered extensions into dist/extensions/ after a rebuild.
+
+    Prefer durable ``config/extension_artifacts/<id>/``; fall back to any leftover
+    ``.dist-prev/extensions`` snapshot from the promote step.
+    """
+    registry = _load_extensions_registry()
+    if not registry:
+        return 0
+
+    dist_ext = frontend_dir / "dist" / "extensions"
+    dist_ext.mkdir(parents=True, exist_ok=True)
+    prev_ext = frontend_dir / ".dist-prev" / "extensions"
+    restored = 0
+
+    for pkg_id in list(registry.keys()):
+        if not isinstance(pkg_id, str) or not pkg_id.strip():
+            continue
+        dest = dist_ext / pkg_id
+        artifact = _extension_artifacts_dir(pkg_id)
+        source = None
+        if (artifact / "module.js").is_file() and (artifact / "manifest.json").is_file():
+            source = artifact
+        elif (
+            (prev_ext / pkg_id / "module.js").is_file()
+            and (prev_ext / pkg_id / "manifest.json").is_file()
+        ):
+            source = prev_ext / pkg_id
+        if source is None:
+            if log_lines is not None:
+                log_lines.append(
+                    f"⚠️ Extension «{pkg_id}» registered but artifact missing — reinstall from App Store."
+                )
+            continue
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(source, dest)
+        restored += 1
+
+    _write_extensions_index(frontend_dir)
+    if restored and log_lines is not None:
+        log_lines.append(f"✓ Restored {restored} AppStore extension(s) into dist/extensions/.")
+    return restored
+
+
 def _promote_staging_dist(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
-    """Atomic swap: staging build → live dist/."""
+    """Atomic swap: staging build → live dist/, preserving AppStore extensions."""
     staging = _staging_dist_dir(frontend_dir)
     if not (staging / "index.html").is_file():
         return False
@@ -589,6 +647,12 @@ def _promote_staging_dist(frontend_dir: Path, log_lines: Optional[List[str]] = N
     if dist.exists():
         dist.rename(prev)
     staging.rename(dist)
+    # Staging builds never include /extensions — restore from artifact cache / prev.
+    try:
+        _restore_extensions_into_dist(frontend_dir, log_lines)
+    except Exception as exc:
+        if log_lines is not None:
+            log_lines.append(f"⚠️ Failed to restore AppStore extensions after promote: {exc}")
     shutil.rmtree(prev, ignore_errors=True)
     if log_lines is not None:
         log_lines.append("✓ Frontend dist promoted from staging (panel stayed online during build).")
@@ -639,6 +703,35 @@ def _write_extensions_index(frontend_dir: Path) -> None:
     )
 
 
+def _extension_runtime_ready(frontend_dir: Path) -> bool:
+    """True when dist has an import map so /extensions/*/module.js can resolve react."""
+    dist = frontend_dir / "dist"
+    index = dist / "index.html"
+    if not index.is_file():
+        return False
+    try:
+        html = index.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    if 'type="importmap"' in html or (dist / "importmap.json").is_file():
+        assets = dist / "assets"
+        if assets.is_dir() and any(assets.glob("react-vendor*.js")):
+            return True
+    return False
+
+
+def _warn_extension_importmap(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
+    if _extension_runtime_ready(frontend_dir):
+        return
+    msg = (
+        "⚠️ Panel frontend is missing React import map / vendor chunks — "
+        "AppStore extensions may not appear until you upgrade CoPanel and rebuild the frontend "
+        "(Settings → Upgrade, or install a rebuild package after updating panel source)."
+    )
+    if log_lines is not None:
+        log_lines.append(msg)
+
+
 def _install_frontend_extension(
     pkg_id: str,
     src_extension: Path,
@@ -655,7 +748,13 @@ def _install_frontend_extension(
     dest = frontend_dir / "dist" / "extensions" / pkg_id
     if dest.exists():
         shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src_extension, dest, dirs_exist_ok=True)
+    # Durable cache so later npm rebuilds (which replace dist/) keep extensions loadable.
+    try:
+        _cache_extension_artifact(pkg_id, src_extension)
+    except Exception:
+        pass
 
     manifest = json.loads(manifest_src.read_text(encoding="utf-8"))
     registry = _load_extensions_registry()
@@ -679,6 +778,10 @@ def _remove_extension_install(pkg_id: str, frontend_dir: Path, log_lines: Option
     removed = False
     if dest.exists():
         shutil.rmtree(dest)
+        removed = True
+    artifact = _extension_artifacts_dir(pkg_id)
+    if artifact.exists():
+        shutil.rmtree(artifact, ignore_errors=True)
         removed = True
     registry = _load_extensions_registry()
     if pkg_id in registry:
@@ -1509,9 +1612,15 @@ def _install_package_files(
             task["logs"].append(f"«{pkg_id}» — installing pre-built extension...")
             try:
                 _install_frontend_extension(pkg_id, src_extension, frontend_cwd, task["logs"])
-                if src_frontend.exists():
-                    task["logs"].append(f"«{pkg_id}» — keeping frontend/ source for debug.")
-                    _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
+                # Do NOT copy frontend/ into src/modules for extension installs.
+                # That path is only absorbed on a later Vite rebuild and masks
+                # broken runtime extension loading (import map / vendor chunks).
+                if dst_frontend.exists():
+                    shutil.rmtree(dst_frontend, ignore_errors=True)
+                    task["logs"].append(
+                        f"«{pkg_id}» — removed stale src/modules/{pkg_id} (extension runtime path)."
+                    )
+                _warn_extension_importmap(frontend_cwd, task["logs"])
                 task["frontend_status"] = "success"
                 frontend_updated = True
             except Exception as ext_err:
@@ -2175,14 +2284,13 @@ class AppStoreManager:
                         frontend_cwd,
                         BUILD_TASKS[pkg_id]["logs"],
                     )
-                    if found_frontend and found_frontend.exists():
-                        dst_frontend.parent.mkdir(parents=True, exist_ok=True)
-                        _install_frontend_module_tree(
-                            found_frontend,
-                            dst_frontend,
-                            pkg_id,
-                            BUILD_TASKS[pkg_id]["logs"],
+                    # Runtime extension path only — avoid baking into src/modules.
+                    if dst_frontend.exists():
+                        shutil.rmtree(dst_frontend, ignore_errors=True)
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            f"«{pkg_id}» — removed stale src/modules/{pkg_id} (extension runtime path)."
                         )
+                    _warn_extension_importmap(frontend_cwd, BUILD_TASKS[pkg_id]["logs"])
                     BUILD_TASKS[pkg_id]["frontend_status"] = "success"
                     frontend_updated = True
                 elif install_mode == "rebuild" and found_frontend and found_frontend.exists():

@@ -13,6 +13,14 @@ const VENDOR_CHUNK_NAMES = new Set([
   'lucide-vendor',
 ])
 
+/**
+ * AppStore extensions (`/extensions/<id>/module.js`) import React etc. as bare
+ * specifiers. Browsers need an import map pointing at stable vendor chunks.
+ *
+ * Important: never use Rollup `inlineDynamicImports` here — it prevents
+ * manualChunks / vendor files, so extension modules fail with
+ * "Failed to resolve module specifier \"react\"" and never appear in the UI.
+ */
 function extensionImportMapPlugin(): Plugin {
   const vendorFiles: Record<string, string> = {}
 
@@ -26,11 +34,18 @@ function extensionImportMapPlugin(): Plugin {
       }
     },
     closeBundle() {
-      if (Object.keys(vendorFiles).length === 0) return
+      if (Object.keys(vendorFiles).length === 0) {
+        console.warn(
+          '[copanel-extension-importmap] No vendor chunks emitted — AppStore extensions will fail to load.',
+        )
+        return
+      }
 
       const imports: Record<string, string> = {}
-      if (vendorFiles['react-vendor']) imports['react'] = vendorFiles['react-vendor']
-      if (vendorFiles['react-vendor']) imports['react/jsx-runtime'] = vendorFiles['react-vendor']
+      if (vendorFiles['react-vendor']) {
+        imports['react'] = vendorFiles['react-vendor']
+        imports['react/jsx-runtime'] = vendorFiles['react-vendor']
+      }
       if (vendorFiles['react-dom-vendor']) {
         imports['react-dom'] = vendorFiles['react-dom-vendor']
         imports['react-dom/client'] = vendorFiles['react-dom-vendor']
@@ -39,21 +54,41 @@ function extensionImportMapPlugin(): Plugin {
       if (vendorFiles['lucide-vendor']) imports['lucide-react'] = vendorFiles['lucide-vendor']
 
       const absOut = resolve(outDir)
-      writeFileSync(resolve(absOut, 'importmap.json'), JSON.stringify({ imports }, null, 2) + '\n')
+      const importMap = { imports }
+      writeFileSync(resolve(absOut, 'importmap.json'), JSON.stringify(importMap, null, 2) + '\n')
 
       const indexPath = resolve(absOut, 'index.html')
-      if (existsSync(indexPath)) {
-        let html = readFileSync(indexPath, 'utf8')
-        if (!html.includes('importmap.json')) {
-          html = html.replace(
-            '</head>',
-            '    <script type="importmap" src="/importmap.json"></script>\n  </head>',
-          )
-          writeFileSync(indexPath, html)
-        }
+      if (!existsSync(indexPath)) return
+
+      let html = readFileSync(indexPath, 'utf8')
+      // Prefer inline import map (more reliable than <script src="importmap.json">).
+      const inlineTag =
+        `    <script type="importmap">\n${JSON.stringify(importMap, null, 2)}\n    </script>\n`
+      if (html.includes('type="importmap"')) {
+        html = html.replace(
+          /<script type="importmap"[^>]*>[\s\S]*?<\/script>\s*/i,
+          inlineTag,
+        )
+        html = html.replace(
+          /<script type="importmap" src="\/importmap\.json"><\/script>\s*/i,
+          '',
+        )
+      } else {
+        html = html.replace('</head>', `${inlineTag}  </head>`)
       }
+      writeFileSync(indexPath, html)
     },
   }
+}
+
+function vendorManualChunks(id: string): string | undefined {
+  if (id.includes('node_modules/lucide-react')) return 'lucide-vendor'
+  if (id.includes('node_modules/react-router')) return 'router-vendor'
+  if (id.includes('node_modules/react-dom')) return 'react-dom-vendor'
+  if (id.includes('node_modules/react/') || id.endsWith('node_modules/react')) {
+    return 'react-vendor'
+  }
+  return undefined
 }
 
 export default defineConfig({
@@ -78,27 +113,15 @@ export default defineConfig({
     modulePreload: !lowMemory,
     rollupOptions: {
       maxParallelFileOps: lowMemory ? 1 : undefined,
-      // Rollup rejects manualChunks when inlineDynamicImports is set (no-AVX / low-memory path).
-      output: lowMemory
-        ? {
-            inlineDynamicImports: true,
-            chunkFileNames: 'assets/[name]-[hash].js',
-          }
-        : {
-            manualChunks(id) {
-              if (id.includes('node_modules/lucide-react')) return 'lucide-vendor'
-              if (id.includes('node_modules/react-router')) return 'router-vendor'
-              if (id.includes('node_modules/react-dom')) return 'react-dom-vendor'
-              if (id.includes('node_modules/react/') || id.endsWith('node_modules/react')) {
-                return 'react-vendor'
-              }
-              return undefined
-            },
-            chunkFileNames(chunk) {
-              if (VENDOR_CHUNK_NAMES.has(chunk.name)) return `assets/${chunk.name}.js`
-              return 'assets/[name]-[hash].js'
-            },
-          },
+      output: {
+        // Always emit named vendor chunks so AppStore extension ESM can resolve
+        // react / lucide via import map (including no-AVX / low-memory builds).
+        manualChunks: vendorManualChunks,
+        chunkFileNames(chunk) {
+          if (VENDOR_CHUNK_NAMES.has(chunk.name)) return `assets/${chunk.name}.js`
+          return 'assets/[name]-[hash].js'
+        },
+      },
     },
   },
   esbuild: lowMemory
