@@ -1056,8 +1056,10 @@ restore_nginx_gate_from_settings() {
     fi
 
     log_info "Checking whether to restore nginx access gate from saved settings..."
+    # NOTE: do not put `|| true` on the same line as `<<'PY'` inside $(...);
+    # bash misparses that as a syntax error near `||` (command substitution).
     out="$(
-        cd "${CoPanel_HOME}/backend" && "$py" - <<'PY' 2>/dev/null || true
+        cd "${CoPanel_HOME}/backend" && "$py" - <<'PY' 2>/dev/null
 from modules.panel_settings.logic import maybe_auto_repair_nginx_gate, nginx_gate_needs_auto_repair
 
 if not nginx_gate_needs_auto_repair():
@@ -1066,7 +1068,7 @@ else:
     result = maybe_auto_repair_nginx_gate()
     print("ok" if result else "fail")
 PY
-    )"
+    )" || true
 
     case "$out" in
         *ok*)
