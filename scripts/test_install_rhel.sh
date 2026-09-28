@@ -241,9 +241,56 @@ assert_false "ubuntu docker install does not exclude kernel packages" grep -q --
 unset _docker_argv
 
 reset_env
+saved_command_exists="$(declare -f command_exists)"
+command_exists() {
+    case "$1" in
+        runuser|sudo) return 1 ;;
+        *) return 1 ;;
+    esac
+}
+assert_eq "debian without sudo uses su" "su" "$(copanel_run_as_tool)"
+command_exists() {
+    [[ "$1" == "sudo" ]]
+}
+assert_eq "sudo is the fallback when runuser is missing" "sudo" "$(copanel_run_as_tool)"
+eval "$saved_command_exists"
+
+reset_env
+asdir="$(mktemp -d)"
+cat > "$asdir/runuser" << 'EOF'
+#!/bin/bash
+printf '%s\n' "$*" > "$COPANEL_RUN_AS_LOG"
+exit 0
+EOF
+chmod +x "$asdir/runuser"
+export COPANEL_RUN_AS_LOG="$asdir/log"
+COPANEL_RUN_AS_TOOL=runuser
+PATH="$asdir:$PATH" copanel_run_as copanel env ADMIN_PASSWORD=secret /usr/bin/python3 -c 'init'
+assert_eq "runuser keeps the password env assignment" "-u copanel -- env ADMIN_PASSWORD=secret /usr/bin/python3 -c init" "$(cat "$COPANEL_RUN_AS_LOG")"
+unset COPANEL_RUN_AS_TOOL COPANEL_RUN_AS_LOG
+rm -rf "$asdir"
+
+reset_env
+nodedir="$(mktemp -d)"
+cat > "$nodedir/node" << 'EOF'
+#!/bin/bash
+[[ "$1" == "-p" ]] && printf '18\n'
+EOF
+chmod +x "$nodedir/node"
+assert_eq "node 18 major" "18" "$(PATH="$nodedir:$PATH" copanel_node_major)"
+if PATH="$nodedir:$PATH" copanel_node_meets_lts; then
+    printf 'FAIL node 18 should not count as Node 20\n' >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  node 18 is not Node 20 LTS\n'
+fi
+rm -rf "$nodedir"
+
+reset_env
 pipe_help="$(bash -s -- --help < "$ROOT/scripts/install.sh" 2>/dev/null || true)"
 assert_true "curl | bash still runs the installer" grep -q 'Usage:' <<<"$pipe_help"
 assert_true "help documents the AlmaLinux file install" grep -q 'AlmaLinux' <<<"$pipe_help"
+assert_true "help documents Debian without sudo" grep -q 'apt install -y curl ca-certificates' <<<"$pipe_help"
 
 if [[ "$FAILS" -ne 0 ]]; then
     printf '%s failed\n' "$FAILS" >&2

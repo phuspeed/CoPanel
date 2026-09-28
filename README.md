@@ -114,6 +114,17 @@ Alternate (GitHub raw, no custom domain):
 curl -fsSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 ```
 
+**Debian without `sudo` or `curl`.** A minimal Debian install that set a root password has neither command, so `curl | sudo bash` never starts. Become root, install curl, then pipe the script to bash (you are already root):
+
+```bash
+su -
+apt update
+apt install -y curl ca-certificates
+curl -fsSL https://copanel.io.vn/install.sh | bash
+# Desktop UI:
+curl -fsSL https://copanel.io.vn/install.sh | bash -s -- --desktop
+```
+
 **One-liner — Desktop UI:**
 
 ```bash
