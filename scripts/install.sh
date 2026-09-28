@@ -923,6 +923,10 @@ copanel_is_rhel_family() {
 }
 
 copanel_rpm_mgr() {
+    if [[ -n "${COPANEL_RPM_MGR:-}" ]]; then
+        printf '%s' "$COPANEL_RPM_MGR"
+        return 0
+    fi
     if command_exists dnf; then
         printf 'dnf'
         return 0
@@ -1012,11 +1016,123 @@ module_hotfixes=1
 EOF
 }
 
+# EL10 minimal images omit kernel-modules-extra. dockerd's bridge NAT rule
+# uses iptables -m addrtype, which needs xt_addrtype from that package for the
+# kernel that is running now. An unversioned dnf install pulls the newest
+# kernel instead, and Docker then fails until reboot.
+copanel_running_kernel_release() {
+    if [[ -n "${COPANEL_KERNEL_RELEASE:-}" ]]; then
+        printf '%s' "$COPANEL_KERNEL_RELEASE"
+        return 0
+    fi
+    uname -r 2>/dev/null || true
+}
+
+copanel_rpm_installed() {
+    local pkg="$1"
+    if [[ -n "${COPANEL_RPM_QUERY_BIN:-}" ]]; then
+        "$COPANEL_RPM_QUERY_BIN" "$pkg" >/dev/null 2>&1
+        return
+    fi
+    rpm -q "$pkg" >/dev/null 2>&1
+}
+
+copanel_running_kernel_extra_installed() {
+    local rel
+    rel="$(copanel_running_kernel_release)"
+    [[ -n "$rel" ]] || return 1
+    copanel_rpm_installed "kernel-modules-extra-${rel}"
+}
+
+copanel_modprobe() {
+    if [[ -n "${COPANEL_MODPROBE_BIN:-}" ]]; then
+        "$COPANEL_MODPROBE_BIN" "$@" >/dev/null 2>&1 || true
+        return 0
+    fi
+    modprobe "$@" >/dev/null 2>&1 || true
+}
+
+copanel_load_docker_kernel_modules() {
+    local mod
+    for mod in xt_addrtype br_netfilter ip_tables overlay; do
+        copanel_modprobe "$mod"
+    done
+}
+
+copanel_write_docker_modules_load() {
+    local dest
+    dest="${COPANEL_MODULES_LOAD_FILE:-/etc/modules-load.d/copanel-docker.conf}"
+    mkdir -p "$(dirname "$dest")" || return 1
+    cat > "$dest" << 'EOF'
+xt_addrtype
+br_netfilter
+ip_tables
+overlay
+EOF
+}
+
+copanel_install_running_kernel_modules() {
+    local mgr rel kind pkg failed=0
+    copanel_is_rhel_family || return 0
+    mgr="$(copanel_rpm_mgr)" || return 1
+    rel="$(copanel_running_kernel_release)"
+    [[ -n "$rel" ]] || return 1
+    for kind in kernel-modules-core kernel-modules kernel-modules-extra; do
+        pkg="${kind}-${rel}"
+        if copanel_rpm_installed "$pkg"; then
+            continue
+        fi
+        if ! "$mgr" install -y "$pkg"; then
+            log_warning "Could not install ${pkg}."
+            if [[ "$kind" == "kernel-modules-extra" ]]; then
+                failed=1
+            fi
+        fi
+    done
+    return "$failed"
+}
+
+copanel_prepare_docker_network_modules() {
+    local rel
+    copanel_is_rhel_family || return 0
+    copanel_write_docker_modules_load \
+        || log_warning "Could not write the Docker kernel module list."
+    rel="$(copanel_running_kernel_release)"
+    if ! copanel_install_running_kernel_modules; then
+        log_warning "Docker needs xt_addrtype from kernel-modules-extra for the running kernel (${rel}). Reboot onto a kernel that has that package, then: systemctl start docker"
+        return 0
+    fi
+    copanel_load_docker_kernel_modules
+}
+
+# Keep dnf from installing a newer, not-yet-booted kernel once the running
+# kernel already has kernel-modules-extra.
+copanel_docker_pkg_argv() {
+    local -n _argv=$1
+    local mode="${2:-}"
+    _argv=(install -y)
+    if [[ "$mode" == "erase" ]]; then
+        _argv+=(--allowerasing)
+    fi
+    if copanel_is_rhel_family && copanel_running_kernel_extra_installed; then
+        _argv+=(
+            --exclude=kernel
+            --exclude=kernel-core
+            --exclude=kernel-modules
+            --exclude=kernel-modules-core
+            --exclude=kernel-modules-extra
+        )
+    fi
+    _argv+=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+}
+
 copanel_install_docker_pkgs() {
     local mgr="$1"
     local log rc
+    local -a cmd
     log="$(mktemp)"
-    if "$mgr" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >"$log" 2>&1; then
+    copanel_docker_pkg_argv cmd
+    if "$mgr" "${cmd[@]}" >"$log" 2>&1; then
         cat "$log"
         rm -f "$log"
         return 0
@@ -1027,7 +1143,8 @@ copanel_install_docker_pkgs() {
         rc=2
     else
         log_warning "docker-ce conflicted with installed packages; retrying with --allowerasing (this can remove podman)."
-        if "$mgr" install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        copanel_docker_pkg_argv cmd erase
+        if "$mgr" "${cmd[@]}"; then
             rc=0
         fi
     fi
@@ -1060,6 +1177,25 @@ copanel_install_docker_el_repo() {
         return 1
     done
     return 1
+}
+
+copanel_start_docker_service() {
+    command_exists systemctl || return 0
+    systemctl cat docker.service >/dev/null 2>&1 || return 0
+    copanel_prepare_docker_network_modules || true
+    systemctl enable docker >/dev/null 2>&1 || true
+    systemctl reset-failed docker.service >/dev/null 2>&1 || true
+    if systemctl start docker >/dev/null 2>&1; then
+        return 0
+    fi
+    copanel_load_docker_kernel_modules
+    systemctl reset-failed docker.service >/dev/null 2>&1 || true
+    if systemctl start docker >/dev/null 2>&1; then
+        return 0
+    fi
+    log_warning "Docker service did not start."
+    journalctl -u docker --no-pager -n 20 >&2 || true
+    return 0
 }
 
 copanel_install_docker() {
@@ -1221,6 +1357,7 @@ install_dependencies() {
         copanel_ensure_modern_npm
     fi
 
+    copanel_prepare_docker_network_modules || true
     copanel_install_docker
 
     # Install Rclone using official Rclone convenience script if not installed
@@ -1230,10 +1367,7 @@ install_dependencies() {
     fi
 
     # Ensure Docker daemon is started & enabled
-    if command_exists systemctl && systemctl cat docker.service >/dev/null 2>&1; then
-        systemctl enable docker >/dev/null 2>&1 || true
-        systemctl start docker >/dev/null 2>&1 || log_warning "Docker service did not start."
-    fi
+    copanel_start_docker_service
 
     # Remove CoPanel apt timeout snippet so normal apt behavior returns after install
     copanel_remove_apt_timeouts

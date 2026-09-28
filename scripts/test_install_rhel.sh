@@ -16,7 +16,9 @@ reset_env() {
         COPANEL_ASSUME_FIREWALLD COPANEL_SKIP_FIREWALLD \
         COPANEL_UFW_BIN COPANEL_IPTABLES_BIN COPANEL_IP6TABLES_BIN \
         COPANEL_IPTABLES_RULES_V4 COPANEL_IPTABLES_RULES_V6 \
-        COPANEL_SKIP_FIREWALL_PERSIST || true
+        COPANEL_SKIP_FIREWALL_PERSIST \
+        COPANEL_KERNEL_RELEASE COPANEL_RPM_MGR COPANEL_RPM_QUERY_BIN \
+        COPANEL_MODPROBE_BIN COPANEL_MODULES_LOAD_FILE || true
 }
 
 assert_eq() {
@@ -147,6 +149,96 @@ copanel_install_docker_pkgs "$conflict" || rc=$?
 assert_eq "real conflict retries and succeeds" "0" "$rc"
 assert_true "conflict path uses allowerasing" grep -qx allowerasing "$conflict_log"
 rm -f "$conflict" "$conflict_log"
+
+reset_env
+moddir="$(mktemp -d)"
+dnf_log="$moddir/dnf"
+probe_log="$moddir/modprobe"
+: > "$dnf_log"
+: > "$probe_log"
+cat > "$moddir/dnf" << EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> "$dnf_log"
+exit 0
+EOF
+cat > "$moddir/modprobe" << EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> "$probe_log"
+exit 0
+EOF
+cat > "$moddir/rpmq" << 'EOF'
+#!/bin/bash
+exit 1
+EOF
+chmod +x "$moddir/dnf" "$moddir/modprobe" "$moddir/rpmq"
+COPANEL_OS_ID=almalinux
+COPANEL_OS_ID_LIKE="rhel centos fedora"
+COPANEL_KERNEL_RELEASE="6.12.0-55.el10_2.x86_64"
+COPANEL_RPM_MGR="$moddir/dnf"
+COPANEL_RPM_QUERY_BIN="$moddir/rpmq"
+COPANEL_MODPROBE_BIN="$moddir/modprobe"
+COPANEL_MODULES_LOAD_FILE="$moddir/copanel-docker.conf"
+copanel_prepare_docker_network_modules
+assert_true "installs kernel-modules-extra for the running kernel" grep -qx 'install -y kernel-modules-extra-6.12.0-55.el10_2.x86_64' "$dnf_log"
+assert_false "unversioned kernel-modules-extra is not requested" grep -qx 'install -y kernel-modules-extra' "$dnf_log"
+assert_true "module list contains xt_addrtype" grep -qx xt_addrtype "$moddir/copanel-docker.conf"
+assert_true "loads xt_addrtype" grep -qx xt_addrtype "$probe_log"
+rm -rf "$moddir"
+
+reset_env
+moddir="$(mktemp -d)"
+dnf_log="$moddir/dnf"
+: > "$dnf_log"
+cat > "$moddir/dnf" << EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> "$dnf_log"
+if [[ "\$*" == *kernel-modules-extra* ]]; then
+  echo "No match for argument: \$*" >&2
+  exit 1
+fi
+exit 0
+EOF
+chmod +x "$moddir/dnf"
+COPANEL_OS_ID=almalinux
+COPANEL_KERNEL_RELEASE="6.12.0-55.el10_2.x86_64"
+COPANEL_RPM_MGR="$moddir/dnf"
+COPANEL_RPM_QUERY_BIN="$moddir/rpmq"
+COPANEL_MODULES_LOAD_FILE="$moddir/copanel-docker.conf"
+# rpmq from the previous case was removed; missing query means "not installed"
+cat > "$moddir/rpmq" << 'EOF'
+#!/bin/bash
+exit 1
+EOF
+chmod +x "$moddir/rpmq"
+warn="$(copanel_prepare_docker_network_modules 2>&1 || true)"
+assert_true "missing running-kernel modules ask for a reboot" grep -q 'Reboot onto a kernel' <<<"$warn"
+rm -rf "$moddir"
+
+reset_env
+moddir="$(mktemp -d)"
+cat > "$moddir/rpmq" << 'EOF'
+#!/bin/bash
+[[ "$1" == kernel-modules-extra-* ]]
+EOF
+chmod +x "$moddir/rpmq"
+COPANEL_OS_ID=almalinux
+COPANEL_KERNEL_RELEASE="6.12.0-55.el10_2.x86_64"
+COPANEL_RPM_QUERY_BIN="$moddir/rpmq"
+argv_line=""
+copanel_docker_pkg_argv _docker_argv
+argv_line="${_docker_argv[*]}"
+assert_true "docker install excludes a newer kernel" grep -q -- '--exclude=kernel-core' <<<"$argv_line"
+rm -rf "$moddir"
+unset _docker_argv
+
+reset_env
+COPANEL_OS_ID=ubuntu
+COPANEL_OS_ID_LIKE=debian
+COPANEL_KERNEL_RELEASE="6.8.0-generic"
+copanel_docker_pkg_argv _docker_argv
+argv_line="${_docker_argv[*]}"
+assert_false "ubuntu docker install does not exclude kernel packages" grep -q -- '--exclude=kernel' <<<"$argv_line"
+unset _docker_argv
 
 reset_env
 pipe_help="$(bash -s -- --help < "$ROOT/scripts/install.sh" 2>/dev/null || true)"

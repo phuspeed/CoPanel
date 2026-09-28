@@ -124,7 +124,7 @@ curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 
 `install-desktop-ui.sh` remains as an alias for `--desktop` (backward compatible).
 
-**AlmaLinux, Rocky Linux, and RHEL** use the same `install.sh`. It selects `dnf` packages, writes Nginx to `/etc/nginx/conf.d/copanel.conf` (there is no `sites-available`), opens 8686/80/443 with firewalld, installs Docker CE from the CentOS EL repo on AlmaLinux (Rocky Linux 10 publishes no docker-ce packages), and labels tcp/8686 for SELinux. Hosts with 2 GB RAM or less also get a 2 GB swap file and a Node.js heap cap.
+**AlmaLinux, Rocky Linux, and RHEL** use the same `install.sh`. It selects `dnf` packages, writes Nginx to `/etc/nginx/conf.d/copanel.conf` (there is no `sites-available`), opens 8686/80/443 with firewalld, installs Docker CE from the CentOS EL repo on AlmaLinux (Rocky Linux 10 publishes no docker-ce packages), installs `kernel-modules-extra` for the running kernel so Docker can load `xt_addrtype`, and labels tcp/8686 for SELinux. Hosts with 2 GB RAM or less also get a 2 GB swap file and a Node.js heap cap.
 
 Web UI:
 
