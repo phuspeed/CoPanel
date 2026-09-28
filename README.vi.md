@@ -118,7 +118,7 @@ curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 
 `install-desktop-ui.sh` vẫn là alias `--desktop` (tương thích cũ).
 
-**AlmaLinux, Rocky Linux và RHEL** dùng cùng `install.sh`. Script chọn gói `dnf`, ghi Nginx vào `/etc/nginx/conf.d/copanel.conf` (không có `sites-available`), mở cổng 8686/80/443 bằng firewalld, cài Docker CE từ repo CentOS EL trên AlmaLinux (repo Rocky Linux 10 không có gói docker-ce), và gán nhãn SELinux cho cổng 8686. Máy có RAM từ 2 GB trở xuống được thêm swap 2 GB và giới hạn heap Node.js.
+**AlmaLinux, Rocky Linux và RHEL** dùng cùng `install.sh`. Script chọn gói `dnf`, ghi Nginx vào `/etc/nginx/conf.d/copanel.conf` (không có `sites-available`), mở cổng 8686/80/443 bằng firewalld, cài Docker CE từ repo CentOS EL trên AlmaLinux (repo Rocky Linux 10 không có gói docker-ce), cài `kernel-modules-extra` đúng kernel đang chạy để Docker nạp được `xt_addrtype`, và gán nhãn SELinux cho cổng 8686. Máy có RAM từ 2 GB trở xuống được thêm swap 2 GB và giới hạn heap Node.js.
 
 Web UI:
 
