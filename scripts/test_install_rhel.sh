@@ -106,6 +106,10 @@ copanel_configure_firewall
 assert_eq "firewalld path does not insert iptables rules" "0" "$(grep -c . "$mock_log" || true)"
 rm -rf "$tmpdir"
 
+reset_env
+pipe_help="$(bash -s -- --help < "$ROOT/scripts/install.sh" 2>/dev/null || true)"
+assert_true "curl | bash still runs the installer" grep -q 'Usage:' <<<"$pipe_help"
+
 if [[ "$FAILS" -ne 0 ]]; then
     printf '%s failed\n' "$FAILS" >&2
     exit 1

@@ -2006,7 +2006,8 @@ EOF
     print_summary
 }
 
-# Run main installation when executed. Tests source this file and call helpers.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    main "$@"
-fi
+# Run main when executed, including `curl | bash`. Tests source this file.
+# A BASH_SOURCE==$0 check skips main on a pipe: bash leaves BASH_SOURCE empty,
+# the script exits 0, and the terminal shows nothing.
+# `return` succeeds only while sourced, so the caller keeps running.
+return 0 2>/dev/null || main "$@"
