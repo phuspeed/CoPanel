@@ -27,7 +27,7 @@
 # - Idempotent (safe to run multiple times)
 # - Low-RAM hosts (<=2 GB, including Oracle Cloud free tier): 2 GB swap + Node heap cap
 # - Firewall: UFW plus iptables/ip6tables for 8686/80/443 (Oracle INPUT REJECT)
-# - Alma/RHEL/Rocky: conf.d nginx site, dnf package names, Rocky Docker CE repo
+# - Alma/RHEL/Rocky: conf.d nginx site, dnf package names, CentOS Docker CE repo
 ###############################################################################
 
 set -e  # Exit on error
@@ -974,27 +974,92 @@ copanel_try_rhel_optional_packages() {
     fi
 }
 
-# get.docker.com accepts rocky/rhel/centos, not almalinux. Rocky's EL repo
-# uses $releasever, which is 10 on AlmaLinux 10, and Docker publishes that path.
+# get.docker.com rejects the almalinux ID. Rocky Linux 10's Docker stable repo
+# is empty, so AlmaLinux 10 reports "No match for argument: docker-ce".
+# CentOS and RHEL publish docker-ce for the same EL major version.
 copanel_docker_install_method() {
     case "$(copanel_os_release_id 2>/dev/null || true)" in
-        almalinux) printf 'rocky-repo' ;;
+        almalinux) printf 'el-repo' ;;
         *) printf 'convenience-script' ;;
     esac
 }
 
-copanel_install_docker_rocky_repo() {
-    local mgr
-    mgr="$(copanel_rpm_mgr)" || return 1
-    log_info "AlmaLinux is not in get.docker.com; using the Rocky Linux Docker CE repo."
-    curl -fsSL https://download.docker.com/linux/rocky/gpg -o /tmp/docker-rocky.gpg || return 1
-    rpm --import /tmp/docker-rocky.gpg || return 1
-    rm -f /tmp/docker-rocky.gpg
-    curl -fsSL https://download.docker.com/linux/rocky/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo || return 1
-    if ! "$mgr" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-        log_warning "docker-ce conflicted with installed packages; retrying with --allowerasing (this can remove podman)."
-        "$mgr" install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+copanel_el_major() {
+    local ver="${COPANEL_OS_VERSION_ID:-}"
+    if [[ -z "$ver" && -r /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        ver="${VERSION_ID:-}"
     fi
+    ver="${ver%%.*}"
+    [[ "$ver" =~ ^[0-9]+$ ]] || ver=10
+    printf '%s' "$ver"
+}
+
+copanel_write_docker_el_repo() {
+    local dist="$1"
+    local dest="$2"
+    local major
+    major="$(copanel_el_major)"
+    cat > "$dest" << EOF
+[docker-ce-stable]
+name=Docker CE Stable
+baseurl=https://download.docker.com/linux/${dist}/${major}/\$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://download.docker.com/linux/${dist}/gpg
+module_hotfixes=1
+EOF
+}
+
+copanel_install_docker_pkgs() {
+    local mgr="$1"
+    local log rc
+    log="$(mktemp)"
+    if "$mgr" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >"$log" 2>&1; then
+        cat "$log"
+        rm -f "$log"
+        return 0
+    fi
+    cat "$log" >&2
+    rc=1
+    if grep -Eq 'No match for argument|Unable to find a match' "$log"; then
+        rc=2
+    else
+        log_warning "docker-ce conflicted with installed packages; retrying with --allowerasing (this can remove podman)."
+        if "$mgr" install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+            rc=0
+        fi
+    fi
+    rm -f "$log"
+    return "$rc"
+}
+
+copanel_install_docker_el_repo() {
+    local mgr dest dist major rc
+    mgr="$(copanel_rpm_mgr)" || return 1
+    major="$(copanel_el_major)"
+    dest="/etc/yum.repos.d/docker-ce.repo"
+    log_info "AlmaLinux is not in get.docker.com. Rocky EL${major} has no docker-ce packages."
+    for dist in centos rhel; do
+        log_info "Installing Docker CE from the ${dist} EL${major} repository..."
+        curl -fsSL "https://download.docker.com/linux/${dist}/gpg" -o "/tmp/docker-${dist}.gpg" || continue
+        rpm --import "/tmp/docker-${dist}.gpg" || continue
+        rm -f "/tmp/docker-${dist}.gpg"
+        copanel_write_docker_el_repo "$dist" "$dest" || continue
+        "$mgr" clean metadata >/dev/null 2>&1 || true
+        rc=0
+        copanel_install_docker_pkgs "$mgr" || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            return 0
+        fi
+        if [[ "$rc" -eq 2 ]]; then
+            log_warning "docker-ce is not in the ${dist} EL${major} repo."
+            continue
+        fi
+        return 1
+    done
+    return 1
 }
 
 copanel_install_docker() {
@@ -1002,8 +1067,8 @@ copanel_install_docker() {
         return 0
     fi
     log_info "Installing Docker..."
-    if [[ "$(copanel_docker_install_method)" == "rocky-repo" ]]; then
-        copanel_install_docker_rocky_repo \
+    if [[ "$(copanel_docker_install_method)" == "el-repo" ]]; then
+        copanel_install_docker_el_repo \
             || log_warning "Docker was not installed. The panel still runs; install docker-ce later to use Docker modules."
         return 0
     fi
