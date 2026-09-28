@@ -11,7 +11,7 @@ source "$ROOT/scripts/install.sh"
 FAILS=0
 
 reset_env() {
-    unset COPANEL_OS_ID COPANEL_OS_ID_LIKE COPANEL_NGINX_LAYOUT \
+    unset COPANEL_OS_ID COPANEL_OS_ID_LIKE COPANEL_OS_VERSION_ID COPANEL_NGINX_LAYOUT \
         COPANEL_NGINX_FORCE_NO_IPV6 COPANEL_NGINX_FORCE_IPV6 \
         COPANEL_ASSUME_FIREWALLD COPANEL_SKIP_FIREWALLD \
         COPANEL_UFW_BIN COPANEL_IPTABLES_BIN COPANEL_IP6TABLES_BIN \
@@ -56,7 +56,7 @@ COPANEL_OS_ID=almalinux
 COPANEL_OS_ID_LIKE="rhel centos fedora"
 assert_true "almalinux is a rhel-family distro" copanel_is_rhel_family
 assert_eq "almalinux nginx file is conf.d" "/etc/nginx/conf.d/copanel.conf" "$(copanel_nginx_conf_path)"
-assert_eq "almalinux docker method" "rocky-repo" "$(copanel_docker_install_method)"
+assert_eq "almalinux docker method" "el-repo" "$(copanel_docker_install_method)"
 
 reset_env
 COPANEL_OS_ID=ubuntu
@@ -105,6 +105,48 @@ COPANEL_UFW_BIN="$tmpdir/iptables"
 copanel_configure_firewall
 assert_eq "firewalld path does not insert iptables rules" "0" "$(grep -c . "$mock_log" || true)"
 rm -rf "$tmpdir"
+
+reset_env
+COPANEL_OS_VERSION_ID=10.2
+assert_eq "Alma 10.2 major is 10" "10" "$(copanel_el_major)"
+repo="$(mktemp)"
+copanel_write_docker_el_repo centos "$repo"
+assert_true "docker repo uses CentOS EL10" grep -Fq 'https://download.docker.com/linux/centos/10/$basearch/stable' "$repo"
+assert_false "docker repo does not use the empty Rocky 10 path" grep -q '/rocky/' "$repo"
+rm -f "$repo"
+
+reset_env
+nomatch="$(mktemp)"
+cat > "$nomatch" << 'EOF'
+#!/bin/bash
+echo "No match for argument: docker-ce" >&2
+echo "Error: Unable to find a match: docker-ce docker-ce-cli" >&2
+exit 1
+EOF
+chmod +x "$nomatch"
+rc=0
+copanel_install_docker_pkgs "$nomatch" || rc=$?
+assert_eq "missing docker-ce is not a package conflict" "2" "$rc"
+rm -f "$nomatch"
+
+reset_env
+conflict_log="$(mktemp)"
+conflict="$(mktemp)"
+cat > "$conflict" << EOF
+#!/bin/bash
+if [[ "\$*" == *allowerasing* ]]; then
+  echo allowerasing >> "$conflict_log"
+  exit 0
+fi
+echo "package docker-ce conflicts with podman-docker" >&2
+exit 1
+EOF
+chmod +x "$conflict"
+rc=0
+copanel_install_docker_pkgs "$conflict" || rc=$?
+assert_eq "real conflict retries and succeeds" "0" "$rc"
+assert_true "conflict path uses allowerasing" grep -qx allowerasing "$conflict_log"
+rm -f "$conflict" "$conflict_log"
 
 reset_env
 pipe_help="$(bash -s -- --help < "$ROOT/scripts/install.sh" 2>/dev/null || true)"
