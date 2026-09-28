@@ -21,6 +21,7 @@ CoPanel_USER="copanel"
 CoPanel_HOME="/opt/copanel"
 NGINX_CONF="/etc/nginx/sites-available/copanel"
 NGINX_ENABLED="/etc/nginx/sites-enabled/copanel"
+NGINX_CONF_D="/etc/nginx/conf.d/copanel.conf"
 
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -94,9 +95,9 @@ if [[ -f "$NGINX_ENABLED" ]]; then
     rm -f "$NGINX_ENABLED"
 fi
 
-if [[ -f "$NGINX_CONF" ]]; then
+if [[ -f "$NGINX_CONF" || -f "$NGINX_CONF_D" ]]; then
     log_info "Removing Nginx configuration file..."
-    rm -f "$NGINX_CONF"
+    rm -f "$NGINX_CONF" "$NGINX_CONF_D"
     
     # Reload Nginx if it still exists
     if command -v nginx &>/dev/null; then

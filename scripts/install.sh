@@ -24,6 +24,7 @@
 # - Idempotent (safe to run multiple times)
 # - Low-RAM hosts (<=2 GB, including Oracle Cloud free tier): 2 GB swap + Node heap cap
 # - Firewall: UFW plus iptables/ip6tables for 8686/80/443 (Oracle INPUT REJECT)
+# - Alma/RHEL/Rocky: conf.d nginx site, dnf package names, Rocky Docker CE repo
 ###############################################################################
 
 set -e  # Exit on error
@@ -716,7 +717,25 @@ copanel_configure_firewalld() {
     log_success "firewalld allows 8686, 80, 443"
 }
 
+copanel_firewalld_active() {
+    if [[ "${COPANEL_ASSUME_FIREWALLD:-}" == "1" ]]; then
+        return 0
+    fi
+    if [[ "${COPANEL_ASSUME_FIREWALLD:-}" == "0" ]]; then
+        return 1
+    fi
+    command -v firewall-cmd >/dev/null 2>&1 || return 1
+    command -v systemctl >/dev/null 2>&1 || return 1
+    systemctl is-active --quiet firewalld
+}
+
 copanel_configure_firewall() {
+    # Alma/RHEL use firewalld. Raw iptables inserts fight that backend.
+    if copanel_firewalld_active; then
+        copanel_configure_firewalld
+        return 0
+    fi
+
     local ufw_bin="" iptables_bin="" ip6tables_bin="" port
     if ufw_bin="$(copanel_ufw_bin)"; then
         log_info "Allowing CoPanel ports in UFW..."
@@ -858,6 +877,230 @@ apt_update_or_recover() {
 }
 
 ###############################################################################
+# Distro helpers. Debian uses sites-available; Alma/RHEL/Rocky use conf.d.
+# One unknown RPM name fails the whole dnf transaction, so ufw/certbot are
+# never mixed into the required Alma package list.
+###############################################################################
+
+copanel_os_release_id() {
+    if [[ -n "${COPANEL_OS_ID:-}" ]]; then
+        printf '%s' "$COPANEL_OS_ID"
+        return 0
+    fi
+    [[ -r /etc/os-release ]] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID:-}"
+}
+
+copanel_os_id_like() {
+    if [[ -n "${COPANEL_OS_ID_LIKE+x}" ]]; then
+        printf '%s' "$COPANEL_OS_ID_LIKE"
+        return 0
+    fi
+    [[ -r /etc/os-release ]] || return 0
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID_LIKE:-}"
+}
+
+copanel_is_rhel_family() {
+    local id like
+    id="$(copanel_os_release_id 2>/dev/null || true)"
+    like="$(copanel_os_id_like 2>/dev/null || true)"
+    case "$id" in
+        almalinux|rocky|rhel|centos|fedora|ol|amzn) return 0 ;;
+    esac
+    [[ "$like" == *rhel* || "$like" == *fedora* || "$like" == *centos* ]]
+}
+
+copanel_rpm_mgr() {
+    if command_exists dnf; then
+        printf 'dnf'
+        return 0
+    fi
+    if command_exists yum; then
+        printf 'yum'
+        return 0
+    fi
+    return 1
+}
+
+# Packages that exist on Alma/Rocky/RHEL 8+. ufw and certbot are not among them.
+copanel_rpm_required_packages() {
+    printf '%s\n' \
+        python3 python3-pip nginx cronie \
+        curl wget git unzip zip rsync \
+        gcc gcc-c++ make
+}
+
+copanel_rpm_install_required() {
+    local mgr="$1"
+    local -a pkgs=()
+    local p
+    while IFS= read -r p; do
+        [[ -n "$p" ]] && pkgs+=("$p")
+    done < <(copanel_rpm_required_packages)
+    log_info "Installing required packages (${mgr})..."
+    "$mgr" install -y "${pkgs[@]}"
+}
+
+copanel_enable_rhel_crb() {
+    command_exists dnf || return 0
+    dnf config-manager --set-enabled crb >/dev/null 2>&1 \
+        || dnf config-manager --set-enabled powertools >/dev/null 2>&1 \
+        || true
+}
+
+copanel_try_rhel_optional_packages() {
+    local mgr="$1"
+    copanel_enable_rhel_crb
+    if ! rpm -q inotify-tools >/dev/null 2>&1; then
+        "$mgr" install -y inotify-tools >/dev/null 2>&1 \
+            || log_warning "inotify-tools was not installed (optional)."
+    fi
+    if ! command_exists certbot; then
+        "$mgr" install -y epel-release >/dev/null 2>&1 || true
+        "$mgr" install -y certbot >/dev/null 2>&1 \
+            || log_warning "certbot was not installed (optional). Enable EPEL, then: ${mgr} install certbot"
+    fi
+}
+
+# get.docker.com accepts rocky/rhel/centos, not almalinux. Rocky's EL repo
+# uses $releasever, which is 10 on AlmaLinux 10, and Docker publishes that path.
+copanel_docker_install_method() {
+    case "$(copanel_os_release_id 2>/dev/null || true)" in
+        almalinux) printf 'rocky-repo' ;;
+        *) printf 'convenience-script' ;;
+    esac
+}
+
+copanel_install_docker_rocky_repo() {
+    local mgr
+    mgr="$(copanel_rpm_mgr)" || return 1
+    log_info "AlmaLinux is not in get.docker.com; using the Rocky Linux Docker CE repo."
+    curl -fsSL https://download.docker.com/linux/rocky/gpg -o /tmp/docker-rocky.gpg || return 1
+    rpm --import /tmp/docker-rocky.gpg || return 1
+    rm -f /tmp/docker-rocky.gpg
+    curl -fsSL https://download.docker.com/linux/rocky/docker-ce.repo -o /etc/yum.repos.d/docker-ce.repo || return 1
+    if ! "$mgr" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        log_warning "docker-ce conflicted with installed packages; retrying with --allowerasing (this can remove podman)."
+        "$mgr" install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    fi
+}
+
+copanel_install_docker() {
+    if command_exists docker; then
+        return 0
+    fi
+    log_info "Installing Docker..."
+    if [[ "$(copanel_docker_install_method)" == "rocky-repo" ]]; then
+        copanel_install_docker_rocky_repo \
+            || log_warning "Docker was not installed. The panel still runs; install docker-ce later to use Docker modules."
+        return 0
+    fi
+    local script
+    script="$(mktemp)"
+    if curl -fsSL https://get.docker.com -o "$script"; then
+        sh "$script" || log_warning "Docker install script failed. The panel still runs without Docker."
+    else
+        log_warning "Could not download https://get.docker.com"
+    fi
+    rm -f "$script"
+}
+
+copanel_nginx_conf_path() {
+    if [[ "${COPANEL_NGINX_LAYOUT:-}" == "conf.d" ]]; then
+        printf '%s' "/etc/nginx/conf.d/copanel.conf"
+        return 0
+    fi
+    if [[ "${COPANEL_NGINX_LAYOUT:-}" == "sites" ]]; then
+        printf '%s' "/etc/nginx/sites-available/copanel"
+        return 0
+    fi
+    # Stock Alma/RHEL/Rocky nginx never includes sites-enabled. Prefer conf.d
+    # even if a previous run created an empty sites-available directory.
+    if copanel_is_rhel_family; then
+        printf '%s' "/etc/nginx/conf.d/copanel.conf"
+        return 0
+    fi
+    if [[ -d /etc/nginx/sites-available || -d /etc/nginx/sites-enabled ]]; then
+        printf '%s' "/etc/nginx/sites-available/copanel"
+        return 0
+    fi
+    if [[ -d /etc/nginx/conf.d ]]; then
+        printf '%s' "/etc/nginx/conf.d/copanel.conf"
+        return 0
+    fi
+    printf '%s' "/etc/nginx/sites-available/copanel"
+}
+
+copanel_host_has_ipv6() {
+    if [[ "${COPANEL_NGINX_FORCE_NO_IPV6:-}" == "1" ]]; then
+        return 1
+    fi
+    if [[ "${COPANEL_NGINX_FORCE_IPV6:-}" == "1" ]]; then
+        return 0
+    fi
+    [[ -f /proc/net/if_inet6 ]]
+}
+
+copanel_strip_nginx_ipv6_if_needed() {
+    local file="$1"
+    if copanel_host_has_ipv6; then
+        return 0
+    fi
+    sed -i '/listen \[::\]:8686;/d' "$file"
+}
+
+copanel_ensure_nginx_package() {
+    if command_exists nginx && [[ -d /etc/nginx ]]; then
+        return 0
+    fi
+    log_info "Installing nginx..."
+    if command_exists apt-get; then
+        apt-get install -y nginx
+        return $?
+    fi
+    local mgr
+    if mgr="$(copanel_rpm_mgr)"; then
+        "$mgr" install -y nginx
+        return $?
+    fi
+    log_error "No supported package manager to install nginx"
+    return 1
+}
+
+copanel_allow_nginx_selinux() {
+    if ! command_exists getenforce; then
+        return 0
+    fi
+    local mode
+    mode="$(getenforce 2>/dev/null || true)"
+    if [[ "$mode" != "Enforcing" && "$mode" != "Permissive" ]]; then
+        return 0
+    fi
+    log_info "SELinux is ${mode}; allowing nginx to bind :8686 and proxy to the backend..."
+    if command_exists setsebool; then
+        setsebool -P httpd_can_network_connect 1 \
+            || log_warning "Could not set httpd_can_network_connect. API calls through nginx may return 502."
+    fi
+    if ! command_exists semanage; then
+        local mgr
+        if mgr="$(copanel_rpm_mgr)"; then
+            "$mgr" install -y policycoreutils-python-utils >/dev/null 2>&1 || true
+        fi
+    fi
+    if command_exists semanage; then
+        semanage port -a -t http_port_t -p tcp 8686 >/dev/null 2>&1 \
+            || semanage port -m -t http_port_t -p tcp 8686 >/dev/null 2>&1 \
+            || log_warning "Could not label tcp/8686 as http_port_t. Nginx may fail to bind that port."
+    else
+        log_warning "semanage is missing; if nginx cannot bind :8686, install policycoreutils-python-utils."
+    fi
+}
+
+###############################################################################
 # Step 1: System Dependencies
 ###############################################################################
 
@@ -875,14 +1118,12 @@ install_dependencies() {
             ufw inotify-tools certbot python3-certbot-nginx \
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
         
-    elif command_exists yum; then
-        yum install -y \
-            python3 python3-pip \
-            nginx cronie \
-            curl wget git unzip zip \
-            gcc gcc-c++ make \
-            ufw inotify-tools certbot \
-            2>&1 | grep -v "^Loaded plugins\|^Resolving\|^Running" || true
+    elif mgr="$(copanel_rpm_mgr)"; then
+        # Do not pass ufw/certbot here. dnf aborts the entire transaction when
+        # any one package name is unknown, which skipped nginx and unzip.
+        copanel_rpm_install_required "$mgr" \
+            || { log_error "Required packages failed to install."; exit 1; }
+        copanel_try_rhel_optional_packages "$mgr"
     fi
 
     # Cron daemon (required by cron_manager, backup_manager, cloudflare_ddns, etc.)
@@ -891,27 +1132,23 @@ install_dependencies() {
     fi
 
     # NodeSource 20 LTS — distro apt npm 9.2 rejects npm: alias overrides.
-    if command_exists apt-get || command_exists yum; then
+    if command_exists apt-get || command_exists dnf || command_exists yum; then
         log_info "Installing Node.js 20 LTS via NodeSource..."
         if command_exists apt-get; then
             curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
             apt-get install -y nodejs || true
-        elif command_exists yum; then
+        else
             curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - || true
-            yum install -y nodejs || true
+            if command_exists dnf; then
+                dnf install -y nodejs || true
+            else
+                yum install -y nodejs || true
+            fi
         fi
         copanel_ensure_modern_npm
     fi
 
-    # Install Docker using official Docker convenience script if not installed
-    if ! command_exists docker; then
-        log_info "Installing Docker via official installation script..."
-        curl -fsSL https://get.docker.com -o install-docker.sh || true
-        if [[ -f install-docker.sh ]]; then
-            sh install-docker.sh || true
-            rm -f install-docker.sh
-        fi
-    fi
+    copanel_install_docker
 
     # Install Rclone using official Rclone convenience script if not installed
     if ! command_exists rclone; then
@@ -920,9 +1157,9 @@ install_dependencies() {
     fi
 
     # Ensure Docker daemon is started & enabled
-    if command_exists systemctl; then
-        systemctl start docker || true
-        systemctl enable docker || true
+    if command_exists systemctl && systemctl cat docker.service >/dev/null 2>&1; then
+        systemctl enable docker >/dev/null 2>&1 || true
+        systemctl start docker >/dev/null 2>&1 || log_warning "Docker service did not start."
     fi
 
     # Remove CoPanel apt timeout snippet so normal apt behavior returns after install
@@ -1385,6 +1622,20 @@ copanel_write_ui_track() {
 
 setup_nginx() {
     log_info "Configuring Nginx reverse proxy..."
+
+    copanel_ensure_nginx_package || { log_error "nginx is required."; exit 1; }
+
+    # Debian/Ubuntu: sites-available + sites-enabled.
+    # Alma/RHEL/Rocky: nginx only includes /etc/nginx/conf.d/*.conf.
+    NGINX_CONF="$(copanel_nginx_conf_path)"
+    if [[ "$NGINX_CONF" == /etc/nginx/sites-available/* ]]; then
+        NGINX_ENABLED="/etc/nginx/sites-enabled/copanel"
+        mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+    else
+        NGINX_ENABLED=""
+        mkdir -p /etc/nginx/conf.d
+    fi
+    log_info "Nginx site file: ${NGINX_CONF}"
     
     # Create Nginx configuration
     cat > "$NGINX_CONF" << 'EOF'
@@ -1393,6 +1644,7 @@ upstream copanel_backend {
 }
 
 upstream php_fpm {
+    server unix:/run/php-fpm/www.sock max_fails=1 fail_timeout=1s;
     server unix:/run/php/php8.3-fpm.sock max_fails=1 fail_timeout=1s;
     server unix:/run/php/php8.2-fpm.sock max_fails=1 fail_timeout=1s;
     server unix:/run/php/php8.1-fpm.sock max_fails=1 fail_timeout=1s;
@@ -1451,16 +1703,25 @@ server {
     }
 }
 EOF
+
+    copanel_strip_nginx_ipv6_if_needed "$NGINX_CONF"
     
-    # Enable site
-    if [[ ! -L "$NGINX_ENABLED" ]]; then
+    # Enable site (Debian layout only; conf.d is included by nginx.conf)
+    if [[ -n "$NGINX_ENABLED" && ! -L "$NGINX_ENABLED" ]]; then
         ln -s "$NGINX_CONF" "$NGINX_ENABLED"
     fi
+
+    copanel_allow_nginx_selinux
     
     # Test configuration
     if nginx -t >/dev/null 2>&1; then
         systemctl enable nginx || true
-        systemctl restart nginx
+        if ! systemctl restart nginx; then
+            log_error "Nginx failed to start"
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx -n 40 --no-pager || true
+            exit 1
+        fi
         log_success "Nginx configured, enabled, and restarted"
     else
         log_error "Nginx configuration error"
