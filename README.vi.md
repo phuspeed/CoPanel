@@ -108,6 +108,17 @@ Dự phòng (GitHub raw, không cần domain riêng):
 curl -fsSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 ```
 
+**Debian không có `sudo` hoặc `curl`.** Bản Debian tối giản có mật khẩu root thì không có hai lệnh này, nên `curl | sudo bash` không chạy. Vào root, cài curl, rồi pipe script vào bash (đang là root, không cần sudo):
+
+```bash
+su -
+apt update
+apt install -y curl ca-certificates
+curl -fsSL https://copanel.io.vn/install.sh | bash
+# Desktop UI:
+curl -fsSL https://copanel.io.vn/install.sh | bash -s -- --desktop
+```
+
 **One-liner — Desktop UI:**
 
 ```bash

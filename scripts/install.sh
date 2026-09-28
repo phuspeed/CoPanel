@@ -202,7 +202,7 @@ copanel_resolve_panel_version() {
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log_error "This script must be run as root (use sudo)"
+        log_error "This script must be run as root. If sudo is not installed (Debian): su - , then bash install.sh"
         exit 1
     fi
 }
@@ -251,6 +251,13 @@ AlmaLinux — if the pipe exits with no output, run the file:
   curl -fsSL https://copanel.io.vn/install.sh -o /tmp/copanel-install.sh
   sudo bash /tmp/copanel-install.sh
   sudo bash /tmp/copanel-install.sh --desktop
+
+Debian without sudo or curl (root password was set at install):
+  su -
+  apt update
+  apt install -y curl ca-certificates
+  curl -fsSL https://copanel.io.vn/install.sh | bash
+  curl -fsSL https://copanel.io.vn/install.sh | bash -s -- --desktop
 EOF
 }
 
@@ -326,6 +333,43 @@ copanel_ui_track_label() {
 
 command_exists() {
     command -v "$1" &> /dev/null
+}
+
+# Debian minimal installs often have no sudo binary. runuser is in util-linux
+# (Essential). Fall back to sudo, then su.
+copanel_run_as_tool() {
+    if [[ -n "${COPANEL_RUN_AS_TOOL:-}" ]]; then
+        printf '%s' "$COPANEL_RUN_AS_TOOL"
+        return 0
+    fi
+    if command_exists runuser; then
+        printf 'runuser'
+        return 0
+    fi
+    if command_exists sudo; then
+        printf 'sudo'
+        return 0
+    fi
+    printf 'su'
+}
+
+copanel_run_as() {
+    local user="$1"
+    shift
+    local tool cmd
+    tool="$(copanel_run_as_tool)"
+    case "$tool" in
+        runuser)
+            runuser -u "$user" -- "$@"
+            ;;
+        sudo)
+            sudo -u "$user" -- "$@"
+            ;;
+        *)
+            printf -v cmd '%q ' "$@"
+            su -s /bin/bash "$user" -c "$cmd"
+            ;;
+    esac
 }
 
 ###############################################################################
@@ -1322,7 +1366,7 @@ install_dependencies() {
         apt-get install -y \
             python3 python3-pip python3-venv \
             nginx cron \
-            curl wget git unzip zip rsync \
+            curl ca-certificates wget git unzip zip rsync \
             build-essential \
             ufw inotify-tools certbot python3-certbot-nginx \
             2>&1 | grep -v "^Reading state\|^Building\|^Setting up" || true
@@ -1354,6 +1398,11 @@ install_dependencies() {
                 yum install -y nodejs || true
             fi
         fi
+        # Debian 13 rejects a NodeSource key signed with SHA-1. Distro nodejs
+        # there is already 20.x, so use it when NodeSource did not.
+        if command_exists apt-get && ! copanel_node_meets_lts; then
+            copanel_apt_install_distro_nodejs
+        fi
         copanel_ensure_modern_npm
     fi
 
@@ -1363,7 +1412,7 @@ install_dependencies() {
     # Install Rclone using official Rclone convenience script if not installed
     if ! command_exists rclone; then
         log_info "Installing Rclone via official installation script..."
-        curl https://rclone.org/install.sh | sudo bash || true
+        curl -fsSL https://rclone.org/install.sh | bash || true
     fi
 
     # Ensure Docker daemon is started & enabled
@@ -1612,7 +1661,7 @@ setup_backend() {
 
     log_info "Initializing CoPanel database..."
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
-    if ! sudo -u "$CoPanel_USER" ADMIN_PASSWORD="${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
+    if ! copanel_run_as "$CoPanel_USER" env "ADMIN_PASSWORD=${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
         log_error "Database initialization failed (core.user_model.init_db)."
         deactivate 2>/dev/null || true
         exit 1
@@ -1636,6 +1685,32 @@ copanel_npm_major_version() {
         return
     fi
     npm -v 2>/dev/null | cut -d. -f1 | tr -cd '0-9'
+}
+
+copanel_node_major() {
+    local v
+    command_exists node || return 1
+    v="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
+    [[ "$v" =~ ^[0-9]+$ ]] || return 1
+    printf '%s' "$v"
+}
+
+copanel_node_meets_lts() {
+    local major
+    major="$(copanel_node_major 2>/dev/null || true)"
+    [[ -n "$major" && "$major" -ge 20 ]]
+}
+
+copanel_apt_install_distro_nodejs() {
+    log_warning "NodeSource did not install Node.js 20. Installing nodejs from the distro archive."
+    rm -f /etc/apt/sources.list.d/nodesource.list \
+        /etc/apt/sources.list.d/nodesource.sources \
+        /etc/apt/preferences.d/nodejs \
+        /etc/apt/preferences.d/nsolid
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y nodejs npm >/dev/null 2>&1 \
+        || apt-get install -y nodejs >/dev/null 2>&1 \
+        || log_warning "Distro nodejs package was not installed."
 }
 
 copanel_ensure_modern_npm() {
