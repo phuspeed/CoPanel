@@ -22,6 +22,8 @@
 # - Systemd service installation
 # - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
+# - Low-RAM hosts (<=2 GB, including Oracle Cloud free tier): 2 GB swap + Node heap cap
+# - Firewall: UFW plus iptables/ip6tables for 8686/80/443 (Oracle INPUT REJECT)
 ###############################################################################
 
 set -e  # Exit on error
@@ -231,6 +233,11 @@ Environment:
   COPANEL_UI_TRACK=classic|desktop     Skip prompt
   COPANEL_NONINTERACTIVE=1             Non-interactive (default UI: classic)
   COPANEL_GIT_BRANCH=main              Git branch to clone/update
+  COPANEL_LOW_MEM_MB=2048              RAM at or below this (MB) is low-memory
+  COPANEL_SWAP_SIZE_MB=2048            Swap file created on low-memory hosts
+  COPANEL_NODE_HEAP_MB=1536            Node --max-old-space-size on those hosts
+  COPANEL_SKIP_SWAP=1                  Do not create /swapfile
+  COPANEL_SKIP_NODE_HEAP=1             Do not set NODE_OPTIONS
 
 One-liner:
   curl -fsSL https://copanel.io.vn/install.sh | sudo bash
@@ -310,6 +317,433 @@ copanel_ui_track_label() {
 
 command_exists() {
     command -v "$1" &> /dev/null
+}
+
+###############################################################################
+# Low-RAM hosts (Oracle Cloud free tier is 1 GB) cannot finish `npm run build`
+# unless swap exists and Node's heap is capped. Oracle Ubuntu also leaves UFW
+# inactive and REJECTs new INPUT in iptables, so :8686 stays closed.
+###############################################################################
+
+copanel_mem_total_mb() {
+    if [[ -n "${COPANEL_MEM_TOTAL_MB:-}" ]]; then
+        printf '%s' "$COPANEL_MEM_TOTAL_MB"
+        return 0
+    fi
+    awk '/^MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || printf '0'
+}
+
+copanel_swap_total_mb() {
+    if [[ -n "${COPANEL_SWAP_TOTAL_MB:-}" ]]; then
+        printf '%s' "$COPANEL_SWAP_TOTAL_MB"
+        return 0
+    fi
+    awk '/^SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || printf '0'
+}
+
+copanel_root_free_mb() {
+    if [[ -n "${COPANEL_DISK_FREE_MB:-}" ]]; then
+        printf '%s' "$COPANEL_DISK_FREE_MB"
+        return 0
+    fi
+    df -BM --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9'
+}
+
+# Unknown / unreadable memory is not treated as low, so a missing meminfo
+# does not create a swap file.
+copanel_is_low_memory() {
+    local mb
+    mb="$(copanel_mem_total_mb)"
+    [[ "$mb" =~ ^[0-9]+$ ]] || return 1
+    [[ "$mb" -gt 0 ]] || return 1
+    [[ "$mb" -le "${COPANEL_LOW_MEM_MB:-2048}" ]]
+}
+
+copanel_is_oracle_cloud() {
+    if [[ "${COPANEL_FORCE_ORACLE:-}" == "1" ]]; then
+        return 0
+    fi
+    if [[ "${COPANEL_FORCE_ORACLE:-}" == "0" ]]; then
+        return 1
+    fi
+    if [[ -d /usr/lib/oracle-cloud-agent || -d /etc/oracle-cloud-agent || -d /var/lib/oracle-cloud-agent ]]; then
+        return 0
+    fi
+    local f blob=""
+    for f in /sys/class/dmi/id/sys_vendor \
+             /sys/class/dmi/id/chassis_asset_tag \
+             /sys/class/dmi/id/bios_vendor \
+             /sys/class/dmi/id/product_name; do
+        [[ -r "$f" ]] || continue
+        blob+=" $(<"$f")"
+    done
+    grep -qi 'oracle' <<<"$blob"
+}
+
+# fallocate on some filesystems leaves a sparse file; swapon rejects holes.
+copanel_swapfile_is_sparse() {
+    local path="$1"
+    local size blocks
+    size="$(stat -c %s "$path" 2>/dev/null || echo 0)"
+    blocks="$(stat -c %b "$path" 2>/dev/null || echo 0)"
+    [[ "$size" =~ ^[0-9]+$ && "$blocks" =~ ^[0-9]+$ ]] || return 1
+    [[ "$size" -gt 0 ]] || return 1
+    [[ $((blocks * 512)) -lt "$size" ]]
+}
+
+# skip-disabled | skip-enough | skip-nospace | activate | create
+copanel_swap_plan() {
+    if [[ "${COPANEL_SKIP_SWAP:-}" == "1" ]]; then
+        printf 'skip-disabled'
+        return 0
+    fi
+    local target current swapfile free_mb
+    target="${COPANEL_SWAP_SIZE_MB:-2048}"
+    [[ "$target" =~ ^[0-9]+$ ]] || target=2048
+    current="$(copanel_swap_total_mb)"
+    current="${current:-0}"
+    if [[ "$current" =~ ^[0-9]+$ && "$current" -ge "$target" ]]; then
+        printf 'skip-enough'
+        return 0
+    fi
+    swapfile="${COPANEL_SWAPFILE:-/swapfile}"
+    if [[ -e "$swapfile" ]]; then
+        printf 'activate'
+        return 0
+    fi
+    free_mb="$(copanel_root_free_mb)"
+    if [[ -n "$free_mb" && "$free_mb" =~ ^[0-9]+$ && "$free_mb" -lt $((target + 256)) ]]; then
+        printf 'skip-nospace'
+        return 0
+    fi
+    printf 'create'
+}
+
+copanel_persist_swap_fstab() {
+    local swapfile="$1"
+    local fstab="${2:-${COPANEL_FSTAB_FILE:-/etc/fstab}}"
+    if [[ ! -f "$fstab" ]]; then
+        log_warning "No $fstab — swap will not come back after reboot"
+        return 0
+    fi
+    if awk -v p="$swapfile" '$1 == p { found = 1 } END { exit !found }' "$fstab"; then
+        return 0
+    fi
+    printf '%s\n' "$swapfile swap swap defaults 0 0" >> "$fstab"
+}
+
+copanel_write_swapfile() {
+    local path="$1"
+    local mb="$2"
+    local wrote=0
+    rm -f "$path"
+    if command -v fallocate >/dev/null 2>&1; then
+        if fallocate -l "${mb}M" "$path" 2>/dev/null && ! copanel_swapfile_is_sparse "$path"; then
+            wrote=1
+        else
+            rm -f "$path"
+        fi
+    fi
+    if [[ "$wrote" -ne 1 ]]; then
+        if ! dd if=/dev/zero of="$path" bs=1M count="$mb" status=none 2>/dev/null; then
+            dd if=/dev/zero of="$path" bs=1M count="$mb"
+        fi
+    fi
+    chmod 600 "$path"
+    mkswap "$path" >/dev/null
+}
+
+copanel_ensure_swap() {
+    local plan swapfile target err
+    plan="$(copanel_swap_plan)"
+    swapfile="${COPANEL_SWAPFILE:-/swapfile}"
+    target="${COPANEL_SWAP_SIZE_MB:-2048}"
+    case "$plan" in
+        skip-disabled)
+            log_info "COPANEL_SKIP_SWAP=1 — leaving swap unchanged"
+            ;;
+        skip-enough)
+            log_info "Swap already $(copanel_swap_total_mb) MB (>= ${target} MB)"
+            ;;
+        skip-nospace)
+            log_warning "Not enough free disk ($(copanel_root_free_mb) MB) to add ${target} MB swap. The frontend build may be killed."
+            ;;
+        activate)
+            log_info "Enabling existing swapfile $swapfile"
+            chmod 600 "$swapfile" || true
+            err="$(swapon "$swapfile" 2>&1)" || true
+            if swapon --show=NAME --noheadings 2>/dev/null | grep -Fxq "$swapfile"; then
+                copanel_persist_swap_fstab "$swapfile"
+                log_success "Swap enabled ($swapfile)"
+            else
+                log_warning "Could not enable $swapfile${err:+: $err}"
+            fi
+            ;;
+        create)
+            log_info "Creating ${target} MB swap at $swapfile"
+            if copanel_write_swapfile "$swapfile" "$target" && swapon "$swapfile"; then
+                copanel_persist_swap_fstab "$swapfile"
+                log_success "Swap enabled (${target} MB) and saved in fstab"
+            else
+                log_warning "Could not create swap at $swapfile. The frontend build may run out of memory."
+                swapoff "$swapfile" 2>/dev/null || true
+                rm -f "$swapfile"
+            fi
+            ;;
+        *)
+            log_warning "Unknown swap plan: $plan"
+            ;;
+    esac
+}
+
+# /etc/environment is KEY=VALUE for pam_env. A line that starts with `export`
+# is not applied on login or sudo.
+copanel_persist_node_options() {
+    local heap="$1"
+    local envfile="${2:-${COPANEL_ENVIRONMENT_FILE:-/etc/environment}}"
+    local desired mode tmp
+    [[ "$heap" =~ ^[0-9]+$ ]] || return 0
+    desired="NODE_OPTIONS=\"--max-old-space-size=${heap}\""
+    if [[ ! -e "$envfile" ]]; then
+        if ! touch "$envfile" 2>/dev/null; then
+            log_warning "Cannot write $envfile; Node heap applies to this install only"
+            return 0
+        fi
+    elif [[ ! -w "$envfile" ]]; then
+        log_warning "Cannot update $envfile; Node heap applies to this install only"
+        return 0
+    fi
+    mode="$(stat -c %a "$envfile" 2>/dev/null || echo 644)"
+    if grep -qE '^[[:space:]]*export[[:space:]]+NODE_OPTIONS=' "$envfile"; then
+        tmp="$(mktemp)"
+        grep -vE '^[[:space:]]*export[[:space:]]+NODE_OPTIONS=' "$envfile" > "$tmp" || true
+        cat "$tmp" > "$envfile"
+        rm -f "$tmp"
+        chmod "$mode" "$envfile" || true
+    fi
+    if grep -qE '^[[:space:]]*NODE_OPTIONS=' "$envfile"; then
+        return 0
+    fi
+    printf '%s\n' "$desired" >> "$envfile"
+}
+
+copanel_ensure_node_heap() {
+    local heap envfile
+    if [[ "${COPANEL_SKIP_NODE_HEAP:-}" == "1" ]]; then
+        return 0
+    fi
+    if ! copanel_is_low_memory; then
+        return 0
+    fi
+    heap="${COPANEL_NODE_HEAP_MB:-1536}"
+    if [[ -z "${NODE_OPTIONS:-}" ]]; then
+        export NODE_OPTIONS="--max-old-space-size=${heap}"
+        log_info "NODE_OPTIONS=${NODE_OPTIONS} (Node heap cap for <=${COPANEL_LOW_MEM_MB:-2048} MB RAM)"
+    elif [[ "${NODE_OPTIONS}" =~ max-old-space-size=([0-9]+) ]]; then
+        heap="${BASH_REMATCH[1]}"
+    else
+        export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=${heap}"
+        log_info "NODE_OPTIONS=${NODE_OPTIONS}"
+    fi
+    envfile="${COPANEL_ENVIRONMENT_FILE:-/etc/environment}"
+    copanel_persist_node_options "$heap" "$envfile"
+}
+
+prepare_low_memory_host() {
+    local mem swap
+    mem="$(copanel_mem_total_mb)"
+    swap="$(copanel_swap_total_mb)"
+    log_info "Host memory: ${mem:-unknown} MB RAM, ${swap:-0} MB swap"
+    if ! copanel_is_low_memory; then
+        return 0
+    fi
+    COPANEL_LOWMEM_ACTIVE=1
+    log_warning "Low RAM (${mem} MB). Adding swap and capping the Node.js heap so the frontend build can finish."
+    copanel_ensure_swap
+    copanel_ensure_node_heap
+    if [[ -z "${VITE_BUILD_LOW_MEMORY:-}" ]]; then
+        export VITE_BUILD_LOW_MEMORY=1
+    fi
+}
+
+copanel_ufw_bin() {
+    if [[ -n "${COPANEL_UFW_BIN:-}" ]]; then
+        printf '%s' "$COPANEL_UFW_BIN"
+        return 0
+    fi
+    if command -v ufw >/dev/null 2>&1; then
+        command -v ufw
+        return 0
+    fi
+    if [[ -x /usr/sbin/ufw ]]; then
+        printf '%s' /usr/sbin/ufw
+        return 0
+    fi
+    return 1
+}
+
+copanel_iptables_bin() {
+    local override="$1"
+    local fallback="$2"
+    if [[ -n "$override" ]]; then
+        printf '%s' "$override"
+        return 0
+    fi
+    if command -v "$fallback" >/dev/null 2>&1; then
+        command -v "$fallback"
+        return 0
+    fi
+    if [[ -x "/usr/sbin/${fallback}" ]]; then
+        printf '%s' "/usr/sbin/${fallback}"
+        return 0
+    fi
+    if [[ -x "/sbin/${fallback}" ]]; then
+        printf '%s' "/sbin/${fallback}"
+        return 0
+    fi
+    return 1
+}
+
+copanel_iptables_allow_dport() {
+    local bin="$1"
+    local port="$2"
+    if [[ ! -x "$bin" ]] && ! command -v "$bin" >/dev/null 2>&1; then
+        return 0
+    fi
+    if "$bin" -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! "$bin" -I INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+        log_warning "Could not open tcp/${port} via $(basename "$bin")"
+    fi
+}
+
+# Insert an ACCEPT before Oracle's catch-all INPUT REJECT, and before COMMIT
+# so the line stays inside the filter table. A full `iptables-save` is avoided
+# once Docker is running, because that would persist Docker's chains.
+copanel_insert_iptables_dport() {
+    local file="$1"
+    local port="$2"
+    local rule tmp
+    [[ -f "$file" ]] || return 1
+    if grep -E -q -- "--dport ${port}([^0-9]|\$).*-j ACCEPT" "$file"; then
+        return 0
+    fi
+    rule="-A INPUT -p tcp -m tcp --dport ${port} -j ACCEPT"
+    tmp="$(mktemp)"
+    awk -v rule="$rule" '
+        !inserted && ($0 ~ /^(-A INPUT ).*(-j REJECT|-j DROP)/ || $0 ~ /^COMMIT[[:space:]]*$/) {
+            print rule
+            inserted = 1
+        }
+        { print }
+        END {
+            if (!inserted) print rule
+        }
+    ' "$file" > "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
+copanel_persist_iptables() {
+    local v4 v6 port patched=0 persist=""
+    if [[ "${COPANEL_SKIP_FIREWALL_PERSIST:-}" == "1" ]]; then
+        return 0
+    fi
+    v4="${COPANEL_IPTABLES_RULES_V4:-/etc/iptables/rules.v4}"
+    v6="${COPANEL_IPTABLES_RULES_V6:-/etc/iptables/rules.v6}"
+    for port in 8686 80 443; do
+        if [[ -f "$v4" ]]; then
+            copanel_insert_iptables_dport "$v4" "$port" || true
+            patched=1
+        fi
+        if [[ -f "$v6" ]]; then
+            copanel_insert_iptables_dport "$v6" "$port" || true
+            patched=1
+        fi
+    done
+    if [[ "$patched" -eq 1 ]]; then
+        log_success "Firewall allow rules saved for reboot (8686, 80, 443)"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+        log_info "iptables allows 8686, 80, 443 until reboot. No /etc/iptables rules file to update."
+        return 0
+    fi
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        persist="$(command -v netfilter-persistent)"
+    elif [[ -x /usr/sbin/netfilter-persistent ]]; then
+        persist=/usr/sbin/netfilter-persistent
+    elif [[ -x /sbin/netfilter-persistent ]]; then
+        persist=/sbin/netfilter-persistent
+    elif copanel_is_oracle_cloud && command -v apt-get >/dev/null 2>&1; then
+        log_info "Installing iptables-persistent so Oracle firewall rules survive reboot..."
+        echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | debconf-set-selections || true
+        echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | debconf-set-selections || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent || \
+            log_warning "iptables-persistent install failed; rules may reset on reboot"
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            persist="$(command -v netfilter-persistent)"
+        elif [[ -x /usr/sbin/netfilter-persistent ]]; then
+            persist=/usr/sbin/netfilter-persistent
+        fi
+    fi
+    if [[ -n "$persist" ]]; then
+        if "$persist" save; then
+            log_success "iptables rules saved (netfilter-persistent)"
+        else
+            log_warning "netfilter-persistent save failed; rules may reset on reboot"
+        fi
+        return 0
+    fi
+    log_info "iptables allows 8686, 80, 443 for this boot."
+}
+
+copanel_configure_firewalld() {
+    local port
+    if [[ "${COPANEL_SKIP_FIREWALLD:-}" == "1" ]]; then
+        return 0
+    fi
+    command -v firewall-cmd >/dev/null 2>&1 || return 0
+    if ! command -v systemctl >/dev/null 2>&1 || ! systemctl is-active --quiet firewalld; then
+        return 0
+    fi
+    for port in 8686 80 443 22; do
+        firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || \
+            log_warning "firewalld could not allow ${port}/tcp"
+    done
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    log_success "firewalld allows 8686, 80, 443"
+}
+
+copanel_configure_firewall() {
+    local ufw_bin="" iptables_bin="" ip6tables_bin="" port
+    if ufw_bin="$(copanel_ufw_bin)"; then
+        log_info "Allowing CoPanel ports in UFW..."
+        for port in 8686 8000 22 80 443; do
+            "$ufw_bin" allow "${port}/tcp" >/dev/null 2>&1 || "$ufw_bin" allow "${port}/tcp" || true
+        done
+        "$ufw_bin" reload >/dev/null 2>&1 || true
+        log_success "UFW allows 8686, 80, 443 (and 22, 8000)"
+    fi
+
+    if iptables_bin="$(copanel_iptables_bin "${COPANEL_IPTABLES_BIN:-}" iptables)"; then
+        log_info "Opening 8686, 80, 443 on iptables (Oracle Cloud rejects these when UFW is off)..."
+        for port in 8686 80 443; do
+            copanel_iptables_allow_dport "$iptables_bin" "$port"
+        done
+    fi
+    if ip6tables_bin="$(copanel_iptables_bin "${COPANEL_IP6TABLES_BIN:-}" ip6tables)"; then
+        if "$ip6tables_bin" -L INPUT >/dev/null 2>&1; then
+            for port in 8686 80 443; do
+                copanel_iptables_allow_dport "$ip6tables_bin" "$port"
+            done
+        fi
+    fi
+    if [[ -n "$iptables_bin" ]]; then
+        copanel_persist_iptables
+    fi
+    copanel_configure_firewalld
 }
 
 # -----------------------------------------------------------------------------
@@ -840,11 +1274,15 @@ copanel_frontend_npm_install_wasm() {
 }
 
 copanel_run_vite_build_noavx() {
-    local log
+    local log heap_default
     log="$(mktemp)"
     local code=0
+    heap_default=2048
+    if copanel_is_low_memory; then
+        heap_default="${COPANEL_NODE_HEAP_MB:-1536}"
+    fi
     set +e
-    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}" \
+    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=${heap_default}}" \
         VITE_BUILD_LOW_MEMORY=1 npm run build:appstore 2>&1 | tee "$log"
     code="${PIPESTATUS[0]}"
     set -e
@@ -900,6 +1338,12 @@ setup_frontend() {
             npm install || npm install --legacy-peer-deps
         fi
 
+        if copanel_is_low_memory; then
+            export VITE_BUILD_LOW_MEMORY="${VITE_BUILD_LOW_MEMORY:-1}"
+            copanel_ensure_node_heap
+            log_info "Low-memory frontend build (NODE_OPTIONS=${NODE_OPTIONS:-unset})"
+        fi
+
         log_info "Building frontend..."
         if ! copanel_cpu_has_avx; then
             if ! copanel_frontend_build_noavx; then
@@ -910,7 +1354,11 @@ setup_frontend() {
             fi
         else
             rm -rf dist
-            npm run build
+            if ! npm run build; then
+                log_error "Frontend build failed. On a 1 GB VPS, confirm swap is active (swapon --show) and re-run install.sh."
+                cd - >/dev/null || true
+                return 1
+            fi
         fi
         
         log_success "Frontend built and ready"
@@ -1026,15 +1474,9 @@ EOF
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
 
-    # Open necessary ports if UFW is installed
-    if command_exists ufw; then
-        log_info "Configuring UFW rules for CoPanel..."
-        ufw allow 8686/tcp || true
-        ufw allow 8000/tcp || true
-        ufw allow 22/tcp || true
-        ufw allow 80/tcp || true
-        ufw allow 443/tcp || true
-    fi
+    # UFW alone does not open the panel on Oracle Cloud Ubuntu: UFW is often
+    # inactive, and iptables REJECTs new connections to 8686/80/443.
+    copanel_configure_firewall
 }
 
 ###############################################################################
@@ -1187,6 +1629,10 @@ print_summary() {
     if [[ -f "${CoPanel_HOME}/config/admin_password.txt" ]]; then
         ADMIN_PWD=$(cat "${CoPanel_HOME}/config/admin_password.txt")
     fi
+    LOWMEM_SUMMARY=""
+    if [[ "${COPANEL_LOWMEM_ACTIVE:-}" == "1" ]]; then
+        LOWMEM_SUMMARY="🧠 Low-memory mode:  ${COPANEL_SWAP_SIZE_MB:-2048} MB swap, Node heap ${COPANEL_NODE_HEAP_MB:-1536} MB"
+    fi
 
     cat <<EOF
 
@@ -1205,7 +1651,7 @@ ${BLUE}Installation Summary:${NC}
 📊 Backend API:       http://localhost:${BACKEND_PORT}
 📜 phpMyAdmin:        http://localhost:${NGINX_PORT}/phpmyadmin
    ${YELLOW}(Install MariaDB + phpMyAdmin via Package Manager inside CoPanel)${NC}
-
+${LOWMEM_SUMMARY}
 ${BLUE}Useful Commands:${NC}
 
 Start service:        systemctl start copanel
@@ -1264,6 +1710,9 @@ EOF
     check_root
     check_os
     copanel_prompt_ui_mode
+
+    log_step "Check memory and swap"
+    prepare_low_memory_host
     
     log_step "Step 1: Check & Install Dependencies"
     install_dependencies
@@ -1296,5 +1745,7 @@ EOF
     print_summary
 }
 
-# Run main installation
-main "$@"
+# Run main installation when executed. Tests source this file and call helpers.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
