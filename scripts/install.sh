@@ -10,9 +10,12 @@
 #   sudo bash install.sh --desktop    # Desktop UI (dock + windows)
 #   COPANEL_UI_TRACK=desktop sudo bash install.sh
 #
-# One-liner (curl):
+# One-liner (curl), Ubuntu/Debian and AlmaLinux/Rocky/RHEL:
 #   curl -fsSL https://copanel.io.vn/install.sh | sudo bash
 #   curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
+# If a pipe prints nothing, save the file first (AlmaLinux sudo):
+#   curl -fsSL https://copanel.io.vn/install.sh -o /tmp/copanel-install.sh
+#   sudo bash /tmp/copanel-install.sh
 # Alternate (GitHub raw):
 #   curl -fsSL https://raw.githubusercontent.com/phuspeed/CoPanel/main/scripts/install.sh | sudo bash
 # 
@@ -240,9 +243,14 @@ Environment:
   COPANEL_SKIP_SWAP=1                  Do not create /swapfile
   COPANEL_SKIP_NODE_HEAP=1             Do not set NODE_OPTIONS
 
-One-liner:
+One-liner (Ubuntu/Debian and AlmaLinux/Rocky/RHEL):
   curl -fsSL https://copanel.io.vn/install.sh | sudo bash
   curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
+
+AlmaLinux — if the pipe exits with no output, run the file:
+  curl -fsSL https://copanel.io.vn/install.sh -o /tmp/copanel-install.sh
+  sudo bash /tmp/copanel-install.sh
+  sudo bash /tmp/copanel-install.sh --desktop
 EOF
 }
 

@@ -78,7 +78,7 @@ Cùng module, cùng ZIP AppStore. Module dùng `ModuleViewport` + `windowMode` t
 ## 🚀 Khởi Động Nhanh
 
 ### Yêu Cầu Hệ Thống
-- **Linux** (Ubuntu 20.04+, CentOS 8+, Debian 11+)
+- **Linux** (Ubuntu 20.04+, Debian 11+, AlmaLinux 8+, Rocky Linux 8+, RHEL 8+)
 - Quyền truy cập **Root** hoặc sudo
 - **Python** 3.10+
 - **Node.js** 18+
@@ -117,6 +117,28 @@ curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 **Tham số:** `--classic` / `--webui` · `--desktop` · `COPANEL_UI_TRACK=classic|desktop`
 
 `install-desktop-ui.sh` vẫn là alias `--desktop` (tương thích cũ).
+
+**AlmaLinux, Rocky Linux và RHEL** dùng cùng `install.sh`. Script chọn gói `dnf`, ghi Nginx vào `/etc/nginx/conf.d/copanel.conf` (không có `sites-available`), mở cổng 8686/80/443 bằng firewalld, cài Docker CE từ repo Rocky Linux trên AlmaLinux, và gán nhãn SELinux cho cổng 8686. Máy có RAM từ 2 GB trở xuống được thêm swap 2 GB và giới hạn heap Node.js.
+
+Web UI:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash
+```
+
+Desktop UI:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
+```
+
+Nếu pipe không in gì rồi trả về dấu nhắc lệnh, chạy script như file:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh -o /tmp/copanel-install.sh
+sudo bash /tmp/copanel-install.sh
+# Desktop UI: sudo bash /tmp/copanel-install.sh --desktop
+```
 
 **Nâng cấp** server đã có `/opt/copanel`:
 

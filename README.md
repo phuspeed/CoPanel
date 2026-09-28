@@ -86,7 +86,7 @@ Both modes share the **same modules** and **same AppStore ZIPs**. Modules use `M
 ## 🚀 Quick Start
 
 ### Prerequisites
-- **Linux** (Ubuntu 20.04+, CentOS 8+, Debian 11+)
+- **Linux** (Ubuntu 20.04+, Debian 11+, AlmaLinux 8+, Rocky Linux 8+, RHEL 8+)
 - **Root** or sudo access
 - **Python** 3.10+
 - **Node.js** 18+
@@ -123,6 +123,28 @@ curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
 **Flags:** `--classic` / `--webui` · `--desktop` · `COPANEL_UI_TRACK=classic|desktop`
 
 `install-desktop-ui.sh` remains as an alias for `--desktop` (backward compatible).
+
+**AlmaLinux, Rocky Linux, and RHEL** use the same `install.sh`. It selects `dnf` packages, writes Nginx to `/etc/nginx/conf.d/copanel.conf` (there is no `sites-available`), opens 8686/80/443 with firewalld, installs Docker CE from the Rocky Linux repo on AlmaLinux, and labels tcp/8686 for SELinux. Hosts with 2 GB RAM or less also get a 2 GB swap file and a Node.js heap cap.
+
+Web UI:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash
+```
+
+Desktop UI:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh | sudo bash -s -- --desktop
+```
+
+If the pipe returns to the prompt with no output, run the script as a file:
+
+```bash
+curl -fsSL https://copanel.io.vn/install.sh -o /tmp/copanel-install.sh
+sudo bash /tmp/copanel-install.sh
+# Desktop UI: sudo bash /tmp/copanel-install.sh --desktop
+```
 
 **Short URL on your domain** (e.g. `https://copanel.io.vn/install.sh`): nginx `proxy_pass` to GitHub raw — see [`website/nginx.copanel.io.vn.example.conf`](website/nginx.copanel.io.vn.example.conf).
 
