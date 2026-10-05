@@ -15,6 +15,13 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List
 
+from core.validators import (
+    escape_mysql_literal,
+    validate_db_name,
+    validate_db_username,
+    validate_mysql_host,
+)
+
 _DB_NAME_SAFE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 _FORBIDDEN_DUMPS = frozenset(
     {"information_schema", "performance_schema", "mysql", "sys"}
@@ -23,6 +30,25 @@ _FORBIDDEN_DUMPS = frozenset(
 IS_WINDOWS = os.name == 'nt'
 MOCK_DB_FILE = Path("./test_nginx/databases.json") if IS_WINDOWS else Path("/var/lib/copanel/databases.json")
 MOCK_USER_FILE = Path("./test_nginx/database_users.json") if IS_WINDOWS else Path("/var/lib/copanel/database_users.json")
+
+def _mysql_stdin(sql: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run SQL as root via stdin so statements never appear in process argv."""
+    return subprocess.run(
+        ["sudo", "mysql", "-u", "root", "--batch"],
+        input=sql,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        shell=False,
+    )
+
+
+def _mysql_ok(res: subprocess.CompletedProcess) -> None:
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or "mysql failed").strip()
+        raise RuntimeError(detail or "mysql failed")
+
 
 def _format_storage_size(size_bytes: float) -> str:
     """Human-readable size from bytes (MySQL data_length + index_length)."""
@@ -236,7 +262,11 @@ GROUP BY s.schema_name;
     @staticmethod
     def create_database(name: str) -> Dict[str, Any]:
         """Create a new MySQL/MariaDB database."""
-        if not name or not name.replace('_', '').isalnum():
+        try:
+            name = validate_db_name(name)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not DBManager.validate_mysql_db_name(name):
             return {"status": "error", "message": "Database name must be valid."}
 
         if IS_WINDOWS:
@@ -256,8 +286,11 @@ GROUP BY s.schema_name;
             return {"status": "success", "message": f"Database '{name}' created successfully (Mock fallback)."}
 
         try:
-            cmd = ["sudo", "mysql", "-u", "root", "-e", f"CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            sql = (
+                f"CREATE DATABASE IF NOT EXISTS `{name}` "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+            )
+            _mysql_ok(_mysql_stdin(sql))
             return {"status": "success", "message": f"Database '{name}' created successfully."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -265,6 +298,13 @@ GROUP BY s.schema_name;
     @staticmethod
     def delete_database(name: str) -> Dict[str, Any]:
         """Delete an existing MySQL/MariaDB database."""
+        try:
+            name = validate_db_name(name)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not DBManager.validate_mysql_db_name(name):
+            return {"status": "error", "message": "Database name must be valid."}
+
         if IS_WINDOWS:
             dbs = DBManager._load_mock_dbs()
             new_dbs = [db for db in dbs if db["name"] != name]
@@ -278,8 +318,7 @@ GROUP BY s.schema_name;
             return {"status": "success", "message": f"Database '{name}' deleted successfully (Mock fallback)."}
 
         try:
-            cmd = ["sudo", "mysql", "-u", "root", "-e", f"DROP DATABASE IF EXISTS `{name}`;"]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            _mysql_ok(_mysql_stdin(f"DROP DATABASE IF EXISTS `{name}`;"))
             return {"status": "success", "message": f"Database '{name}' deleted successfully."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -315,7 +354,14 @@ GROUP BY s.schema_name;
     @staticmethod
     def create_user(username: str, host: str, password: str, dbname: str) -> Dict[str, Any]:
         """Create a database user and assign privileges."""
-        if not username or not password:
+        try:
+            username = validate_db_username(username)
+            host = validate_mysql_host(host)
+            if dbname and dbname != "all_databases":
+                dbname = validate_db_name(dbname)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not password or "\x00" in password:
             return {"status": "error", "message": "Username and password are required."}
 
         if IS_WINDOWS:
@@ -335,23 +381,25 @@ GROUP BY s.schema_name;
             return {"status": "success", "message": f"User '{username}' created successfully (Mock fallback)."}
 
         try:
-            safe_pwd = password.replace("\\", "\\\\").replace("'", "''")
+            safe_pwd = escape_mysql_literal(password)
             hosts = [host]
             if host == "localhost":
                 hosts.append("127.0.0.1")
             elif host == "127.0.0.1":
                 hosts.append("localhost")
 
+            statements = []
             for user_host in dict.fromkeys(hosts):
-                sql_user_cmd = (
+                statements.append(
                     f"CREATE USER IF NOT EXISTS '{username}'@'{user_host}' IDENTIFIED BY '{safe_pwd}';"
                     f"ALTER USER '{username}'@'{user_host}' IDENTIFIED BY '{safe_pwd}';"
                 )
-                subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_user_cmd], check=True)
                 if dbname and dbname != "all_databases":
-                    sql_grant_cmd = f"GRANT ALL PRIVILEGES ON `{dbname}`.* TO '{username}'@'{user_host}';"
-                    subprocess.run(["sudo", "mysql", "-u", "root", "-e", sql_grant_cmd], check=True)
-            subprocess.run(["sudo", "mysql", "-u", "root", "-e", "FLUSH PRIVILEGES;"], check=True)
+                    statements.append(
+                        f"GRANT ALL PRIVILEGES ON `{dbname}`.* TO '{username}'@'{user_host}';"
+                    )
+            statements.append("FLUSH PRIVILEGES;")
+            _mysql_ok(_mysql_stdin("".join(statements)))
 
             return {"status": "success", "message": f"User '{username}' created and linked to '{dbname}' successfully."}
         except Exception as e:
@@ -360,6 +408,12 @@ GROUP BY s.schema_name;
     @staticmethod
     def delete_user(username: str, host: str) -> Dict[str, Any]:
         """Delete an existing MySQL database user."""
+        try:
+            username = validate_db_username(username)
+            host = validate_mysql_host(host)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+
         if IS_WINDOWS:
             users = DBManager._load_mock_users()
             new_users = [u for u in users if u["user"] != username]
@@ -373,15 +427,19 @@ GROUP BY s.schema_name;
             return {"status": "success", "message": f"User '{username}' deleted successfully (Mock fallback)."}
 
         try:
-            cmd = f"DROP USER IF EXISTS '{username}'@'{host}';"
-            subprocess.run(["sudo", "mysql", "-u", "root", "-e", cmd], check=True, capture_output=True, text=True)
+            _mysql_ok(_mysql_stdin(f"DROP USER IF EXISTS '{username}'@'{host}';"))
             return {"status": "success", "message": f"User '{username}' deleted successfully."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
     @staticmethod
     def set_user_password(username: str, host: str, password: str) -> Dict[str, Any]:
-        if not username or not password:
+        try:
+            username = validate_db_username(username)
+            host = validate_mysql_host(host)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not password or "\x00" in password:
             return {"status": "error", "message": "Username and password are required."}
         if IS_WINDOWS or not shutil.which("mysql"):
             users = DBManager._load_mock_users()
@@ -389,9 +447,12 @@ GROUP BY s.schema_name;
                 return {"status": "error", "message": "User not found."}
             return {"status": "success", "message": f"Password updated for '{username}' (mock)."}
         try:
-            safe_pwd = password.replace("'", "\\'")
-            cmd = f"ALTER USER '{username}'@'{host}' IDENTIFIED BY '{safe_pwd}'; FLUSH PRIVILEGES;"
-            subprocess.run(["sudo", "mysql", "-u", "root", "-e", cmd], check=True, capture_output=True, text=True)
+            safe_pwd = escape_mysql_literal(password)
+            sql = (
+                f"ALTER USER '{username}'@'{host}' IDENTIFIED BY '{safe_pwd}'; "
+                "FLUSH PRIVILEGES;"
+            )
+            _mysql_ok(_mysql_stdin(sql))
             return {"status": "success", "message": f"Password updated for '{username}'."}
         except Exception as e:
             return {"status": "error", "message": str(e)}

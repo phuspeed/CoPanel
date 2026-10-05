@@ -26,7 +26,8 @@
 # - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
 # - Low-RAM hosts (<=2 GB, including Oracle Cloud free tier): 2 GB swap + Node heap cap
-# - Firewall: UFW plus iptables/ip6tables for 8686/80/443 (Oracle INPUT REJECT)
+# - Firewall: UFW plus iptables/ip6tables for 8686/80/443 (Oracle INPUT REJECT).
+#   The API port 8000 stays on localhost and is not opened.
 # - Alma/RHEL/Rocky: conf.d nginx site, dnf package names, CentOS Docker CE repo
 ###############################################################################
 
@@ -752,6 +753,33 @@ copanel_persist_iptables() {
     log_info "iptables allows 8686, 80, 443 for this boot."
 }
 
+copanel_revoke_firewalld_backend_port() {
+    # Drop a leftover public rule for the API port. firewall-cmd errors when
+    # the port was never opened; that is success for this step.
+    if [[ "${COPANEL_SKIP_FIREWALLD:-}" == "1" ]]; then
+        return 0
+    fi
+    command -v firewall-cmd >/dev/null 2>&1 || return 0
+    firewall-cmd --permanent --remove-port=8000/tcp >/dev/null 2>&1 || true
+    if copanel_firewalld_active; then
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+}
+
+copanel_revoke_ufw_backend_port() {
+    local ufw_bin="" _
+    ufw_bin="$(copanel_ufw_bin)" || return 0
+    # Test harnesses sometimes point COPANEL_UFW_BIN at an iptables mock.
+    case "${ufw_bin##*/}" in
+        ufw) ;;
+        *) return 0 ;;
+    esac
+    for _ in 1 2 3 4; do
+        "$ufw_bin" --force delete allow 8000/tcp >/dev/null 2>&1 || \
+            "$ufw_bin" delete allow 8000/tcp >/dev/null 2>&1 || true
+    done
+}
+
 copanel_configure_firewalld() {
     local port
     if [[ "${COPANEL_SKIP_FIREWALLD:-}" == "1" ]]; then
@@ -761,6 +789,7 @@ copanel_configure_firewalld() {
     if ! command -v systemctl >/dev/null 2>&1 || ! systemctl is-active --quiet firewalld; then
         return 0
     fi
+    firewall-cmd --permanent --remove-port=8000/tcp >/dev/null 2>&1 || true
     for port in 8686 80 443 22; do
         firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || \
             log_warning "firewalld could not allow ${port}/tcp"
@@ -782,6 +811,11 @@ copanel_firewalld_active() {
 }
 
 copanel_configure_firewall() {
+    # The backend listens on 127.0.0.1:8000. Remove any old public 8000 rule
+    # left by earlier CoPanel releases, on both UFW and firewalld.
+    copanel_revoke_ufw_backend_port
+    copanel_revoke_firewalld_backend_port
+
     # Alma/RHEL use firewalld. Raw iptables inserts fight that backend.
     if copanel_firewalld_active; then
         copanel_configure_firewalld
@@ -791,11 +825,11 @@ copanel_configure_firewall() {
     local ufw_bin="" iptables_bin="" ip6tables_bin="" port
     if ufw_bin="$(copanel_ufw_bin)"; then
         log_info "Allowing CoPanel ports in UFW..."
-        for port in 8686 8000 22 80 443; do
+        for port in 8686 22 80 443; do
             "$ufw_bin" allow "${port}/tcp" >/dev/null 2>&1 || "$ufw_bin" allow "${port}/tcp" || true
         done
         "$ufw_bin" reload >/dev/null 2>&1 || true
-        log_success "UFW allows 8686, 80, 443 (and 22, 8000)"
+        log_success "UFW allows 8686, 80, 443 (and 22). API port 8000 stays on localhost."
     fi
 
     if iptables_bin="$(copanel_iptables_bin "${COPANEL_IPTABLES_BIN:-}" iptables)"; then
@@ -1614,8 +1648,49 @@ setup_user_and_dirs() {
     # Secure permissions and ownership
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
     chmod -R u+rwX,go+rX "$CoPanel_HOME"
+    # The recursive chmod above makes secrets world-readable. Lock them down
+    # again when a previous install already created them.
+    copanel_lock_down_secrets
     
     log_success "Directories ready"
+}
+
+copanel_lock_down_secrets() {
+    local f
+    for f in \
+        "${CoPanel_HOME}/config/jwt_secret" \
+        "${CoPanel_HOME}/config/copanel.env" \
+        "${CoPanel_HOME}/config/admin_password.txt" \
+        "${CoPanel_HOME}/config/mysql_credentials.txt"
+    do
+        if [[ -f "$f" ]]; then
+            chmod 600 "$f" || true
+        fi
+    done
+}
+
+# Create the JWT secret once and point systemd at it. Reinstalls keep the
+# existing file so sessions stay valid across upgrades.
+ensure_panel_secrets() {
+    local cfg="${CoPanel_HOME}/config"
+    local secret_file="${cfg}/jwt_secret"
+    local env_file="${cfg}/copanel.env"
+    local tmp secret
+    mkdir -p "$cfg"
+    if [[ ! -s "$secret_file" ]]; then
+        ( umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' > "$secret_file" )
+    fi
+    chmod 600 "$secret_file" || true
+    secret="$(tr -d '\r\n' < "$secret_file")"
+    tmp="$(mktemp)"
+    if [[ -f "$env_file" ]]; then
+        grep -v '^JWT_SECRET_KEY=' "$env_file" > "$tmp" || true
+    fi
+    printf 'JWT_SECRET_KEY=%s\n' "$secret" >> "$tmp"
+    ( umask 077; cat "$tmp" > "$env_file" )
+    rm -f "$tmp"
+    chmod 600 "$env_file" || true
+    copanel_lock_down_secrets
 }
 
 ###############################################################################
@@ -2074,6 +2149,7 @@ PY
 
 setup_systemd_service() {
     log_info "Creating Systemd service..."
+    ensure_panel_secrets
     
     cat > /etc/systemd/system/copanel.service << 'EOF'
 [Unit]
@@ -2088,7 +2164,8 @@ Group=root
 WorkingDirectory=/opt/copanel/backend
 
 Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
-ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+EnvironmentFile=-/opt/copanel/config/copanel.env
+ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 # Allow slow first boot (module scan) without blocking forever on nginx hooks.
 TimeoutStartSec=120
@@ -2191,7 +2268,7 @@ ${BLUE}Installation Summary:${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
 🌐 Access URL:        http://localhost:${NGINX_PORT}
-📊 Backend API:       http://localhost:${BACKEND_PORT}
+📊 Backend API:       http://127.0.0.1:${BACKEND_PORT} (localhost only)
 📜 phpMyAdmin:        http://localhost:${NGINX_PORT}/phpmyadmin
    ${YELLOW}(Install MariaDB + phpMyAdmin via Package Manager inside CoPanel)${NC}
 ${LOWMEM_SUMMARY}

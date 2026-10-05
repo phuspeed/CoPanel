@@ -452,10 +452,11 @@ export default function Layout({
         body: JSON.stringify({ old_password: oldPwdInput, new_password: newPwdInput })
       });
       if (r.ok) {
-        setPwdMsg('Password updated successfully.');
+        setPwdMsg('Password updated successfully. Sign in again.');
         setOldPwdInput('');
         setNewPwdInput('');
-        setTimeout(() => setChangePwdOpen(false), 1500);
+        // The old token is no longer valid.
+        onLogout?.();
       } else {
         const d = await r.json();
         setPwdMsg(d.detail || 'Failed to change password.');

@@ -6,6 +6,17 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**Security**
+
+- JWT signing no longer falls back to a hard-coded secret. The installer writes a random secret to `/opt/copanel/config/jwt_secret` (mode 0600) and loads it with systemd `EnvironmentFile=-/opt/copanel/config/copanel.env`. Reinstall keeps the existing secret. A missing secret is created on first process start. Password changes and `POST /api/auth/logout` bump `token_version`, so older tokens stop working.
+- The API process binds to `127.0.0.1:8000` in the systemd unit. `install.sh` no longer opens port 8000, and a reinstall removes a leftover UFW or firewalld allow rule for `8000/tcp`.
+- phpMyAdmin credential save no longer builds a shell command. The MySQL user and password are checked, SQL is passed on stdin, and the credentials file is mode 0600. `GET /api/web_manager/phpmyadmin` and `GET /api/package_manager/credentials/mysql` return `has_password` and do not return the password. (`package_manager` **1.0.6**)
+- Database user, host, and schema names are allow-listed before they are placed in SQL. Passwords are sent to `mysql` / `psql` on stdin. (`database_manager` **1.0.9**)
+- Custom SSL install and certificate renewal reject domains that are not a real hostname, so a domain cannot escape `/etc/nginx/ssl`. The private key is written mode 0600. (`ssl_manager` **1.1.3**)
+- New sites reject a document root or server name that could break out of the nginx config. Document roots must sit under `/var/www` or `/home` (override with `COPANEL_ALLOWED_WEB_ROOTS`). Site Wizard uses the same checks. (`web_manager` **1.2.5**, `site_wizard` **1.1.7**)
+- Login is limited to 10 failures per IP and per username in 15 minutes (`429`). No new dependencies. (`auth` **1.0.2**)
+- `config/admin_password.txt` is no longer tracked. It is listed in `.gitignore`.
+
 **Fixed / Improved (`docker_manager` 1.0.15)**
 
 - Containers list switches to compact cards when the module/window is narrow; click a container (card or table row) to open a status detail modal (CPU/RAM/network, inspect, actions).
@@ -17,6 +28,10 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
+- API chỉ nghe `127.0.0.1:8000`; cài lại sẽ gỡ rule firewall cổng 8000.
+- phpMyAdmin không chạy lệnh qua shell và không trả mật khẩu ở GET. Tên database/user được kiểm tra trước khi đưa vào SQL.
+- Chặn domain và document root nguy hiểm (SSL, tạo site). Giới hạn đăng nhập sai (429).
 - Danh sách container dạng thẻ khi thu gọn cửa sổ; bấm vào container để xem trạng thái chi tiết.
 - Build / deploy / stop / restart không còn làm đơ giao diện CoPanel; có tiến trình job rõ ràng.
 - Hiển thị CPU, RAM, network của container; log chi tiết hơn (làm mới / tự làm mới).

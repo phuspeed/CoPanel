@@ -521,8 +521,11 @@ def remove_package(pkg_id: str) -> Dict[str, Any]:
 
 
 def get_mysql_credentials() -> Dict[str, Any]:
-    """Return MySQL credentials."""
-    creds_file = Path("/opt/copanel/config/mysql_credentials.txt")
+    """Return MySQL account metadata. The password is never included."""
+    from core.paths import config_dir
+
+    creds_file = config_dir() / "mysql_credentials.txt"
+    url = "/phpmyadmin/index.php"
     if creds_file.exists():
         try:
             user, password = "", ""
@@ -533,10 +536,15 @@ def get_mysql_credentials() -> Dict[str, Any]:
                         user = line.split("=", 1)[1]
                     elif line.startswith("MYSQL_PASS="):
                         password = line.split("=", 1)[1]
-            return {"status": "success", "user": user, "password": password, "url": "/phpmyadmin/index.php"}
+            return {
+                "status": "success",
+                "user": user,
+                "has_password": bool(password),
+                "url": url,
+            }
         except Exception:
             pass
-    return {"status": "success", "user": "root", "password": "", "url": "/phpmyadmin/index.php"}
+    return {"status": "success", "user": "root", "has_password": False, "url": url}
 
 
 def get_postgres_credentials() -> Dict[str, Any]:
