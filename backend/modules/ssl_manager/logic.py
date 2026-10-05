@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from core import sysexec
 from core.paths import write_private_text
 from core.validators import validate_domain
 
@@ -16,6 +17,17 @@ IS_WINDOWS = os.name == 'nt'
 
 def _checked_domain(domain: str) -> str:
     return validate_domain(domain)
+
+
+def _certbot(args: list, timeout: int = 180) -> subprocess.CompletedProcess:
+    return sysexec.run(["certbot", *args], timeout=timeout, as_root=True)
+
+
+def _reload_nginx() -> None:
+    if not shutil.which("nginx"):
+        return
+    sysexec.run(["nginx", "-t"], timeout=30, as_root=True)
+    sysexec.run(["systemctl", "reload", "nginx"], timeout=30, as_root=True)
 
 class SSLManager:
     @staticmethod
@@ -171,14 +183,12 @@ class SSLManager:
 
         try:
             # Run certbot renew
-            res = subprocess.run(["sudo", "certbot", "renew", "--non-interactive"], capture_output=True, text=True)
+            res = _certbot(["renew", "--non-interactive"])
             if res.returncode != 0:
                 return {"status": "error", "message": f"Certbot renewal failed: {res.stderr or res.stdout}"}
 
             # Reload Nginx after a successful renewal
-            if shutil.which("nginx"):
-                subprocess.run(["sudo", "nginx", "-t"], shell=False, capture_output=True, text=True)
-                subprocess.run(["sudo", "systemctl", "reload", "nginx"], shell=False, capture_output=True, text=True)
+            _reload_nginx()
 
             return {"status": "success", "message": "All Let's Encrypt certificates successfully renewed and Nginx reloaded."}
         except Exception as e:
@@ -196,15 +206,13 @@ class SSLManager:
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
         try:
-            cmd = ["sudo", "certbot", "renew", "--cert-name", domain, "--non-interactive"]
+            args = ["renew", "--cert-name", domain, "--non-interactive"]
             if force:
-                cmd.append("--force-renewal")
-            res = subprocess.run(cmd, capture_output=True, text=True)
+                args.append("--force-renewal")
+            res = _certbot(args)
             if res.returncode != 0:
                 return {"status": "error", "message": f"Certbot renewal failed: {res.stderr or res.stdout}"}
-            if shutil.which("nginx"):
-                subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-                subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+            _reload_nginx()
             return {"status": "success", "message": f"Certificate for {domain} renewed and Nginx reloaded."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -227,13 +235,12 @@ class SSLManager:
 
         try:
             # Generate cert via certbot
-            cmd = [
-                "sudo", "certbot", "certonly", "--nginx",
+            res = _certbot([
+                "certonly", "--nginx",
                 "-d", domain,
                 "-m", email,
-                "--agree-tos", "--non-interactive"
-            ]
-            res = subprocess.run(cmd, shell=False, capture_output=True, text=True)
+                "--agree-tos", "--non-interactive",
+            ])
             if res.returncode != 0:
                 return {"status": "error", "message": f"Certbot execution failed: {res.stderr or res.stdout}"}
 
@@ -279,21 +286,16 @@ class SSLManager:
             return {"status": "error", "message": str(e)}
 
     @staticmethod
-    def find_nginx_vhost_path(domain: str) -> Optional[Path]:
-        """Resolve the nginx vhost file for a domain (handles ``{domain}.conf`` naming)."""
-        try:
-            domain = _checked_domain(domain)
-        except ValueError:
-            return None
-        sites_dir = Path("/etc/nginx/sites-available") if not IS_WINDOWS else Path("./test_nginx/sites-available")
+    def _search_vhost_dir(sites_dir: Path, domain: str) -> Optional[Path]:
         if not sites_dir.is_dir():
             return None
         for candidate in (f"{domain}.conf", domain):
             path = sites_dir / candidate
             if path.is_file():
                 return path
+        skip = {"default", "copanel", "default.conf", "php-fpm.conf", "ssl.conf"}
         for path in sites_dir.iterdir():
-            if not path.is_file() or path.name in ("default", "copanel"):
+            if not path.is_file() or path.name in skip or path.name.endswith(".disabled"):
                 continue
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")
@@ -301,6 +303,34 @@ class SSLManager:
                 continue
             if f"server_name {domain}" in content or f"server_name {domain} " in content:
                 return path
+        return None
+
+    @staticmethod
+    def find_nginx_vhost_path(domain: str) -> Optional[Path]:
+        """Resolve the nginx vhost file (sites-available or conf.d)."""
+        try:
+            domain = _checked_domain(domain)
+        except ValueError:
+            return None
+        directories: List[Path] = []
+        if IS_WINDOWS:
+            directories.append(Path("./test_nginx/sites-available"))
+        else:
+            try:
+                from modules.web_manager.logic import get_nginx_paths
+
+                paths = get_nginx_paths()
+                directories.append(Path(paths.sites_available))
+                conf_d = Path("/etc/nginx/conf.d")
+                if conf_d not in directories:
+                    directories.append(conf_d)
+            except Exception:
+                directories.append(Path("/etc/nginx/sites-available"))
+                directories.append(Path("/etc/nginx/conf.d"))
+        for sites_dir in directories:
+            found = SSLManager._search_vhost_dir(sites_dir, domain)
+            if found:
+                return found
         return None
 
     @staticmethod
@@ -339,6 +369,4 @@ class SSLManager:
         vhost_path.write_text(content, encoding="utf-8")
 
         if not IS_WINDOWS:
-            if shutil.which("nginx"):
-                subprocess.run(["sudo", "nginx", "-t"], shell=False, capture_output=True, text=True)
-                subprocess.run(["sudo", "systemctl", "reload", "nginx"], shell=False, capture_output=True, text=True)
+            _reload_nginx()

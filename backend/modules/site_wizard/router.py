@@ -37,9 +37,12 @@ class WizardCreateRequest(BaseModel):
 
 
 @router.get("/preflight")
-def preflight(user: Dict[str, Any] = Depends(require_module("site_wizard"))) -> Dict[str, Any]:
-    """Stack readiness for 1-click install UI."""
-    return ok(get_preflight_status())
+def preflight(
+    domain: Optional[str] = None,
+    user: Dict[str, Any] = Depends(require_module("site_wizard")),
+) -> Dict[str, Any]:
+    """Stack readiness for 1-click install UI. Optional domain adds a DNS check."""
+    return ok(get_preflight_status(domain))
 
 
 @router.post("/run")
@@ -61,8 +64,17 @@ def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(requir
     if req.create_database and req.database_password and len(req.database_password) < 8:
         raise ApiError("VALIDATION_ERROR", "Database password must be at least 8 characters.", http_status=422)
 
+    domain = req.domain.strip().lower()
+    active = jobs.find_active(kind="site_wizard.run", payload_key="domain", payload_value=domain)
+    if active:
+        raise ApiError(
+            "JOB_CONFLICT",
+            f"A provisioning job for {domain} is already running ({active}).",
+            http_status=409,
+        )
+
     payload = WizardRequest(
-        domain=req.domain.strip().lower(),
+        domain=domain,
         document_root=resolved["document_root"],
         template_id=resolved["template_id"],
         php_version=resolved["php_version"],
@@ -91,10 +103,10 @@ def start_wizard(req: WizardCreateRequest, user: Dict[str, Any] = Depends(requir
 
     job = jobs.submit(
         kind="site_wizard.run",
-        title=f"Provision {resolved['template_id']}: {req.domain}",
+        title=f"Provision {resolved['template_id']}: {domain}",
         module="site_wizard",
         actor=user.get("username"),
-        payload={**req.dict(exclude={"database_password"}), **resolved},
+        payload={**req.dict(exclude={"database_password"}), **resolved, "domain": domain},
         handler=_handler,
         args=(payload,),
     )

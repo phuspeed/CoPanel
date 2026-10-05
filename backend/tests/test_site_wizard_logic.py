@@ -103,14 +103,12 @@ class SSLVhostLookupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sites = Path(tmp)
             (sites / "example.com.conf").write_text("server { server_name example.com; }", encoding="utf-8")
-            real_path = Path
+            from modules.web_manager.logic import NginxPaths
 
-            def patched_path(value):
-                if str(value) == "/etc/nginx/sites-available":
-                    return sites
-                return real_path(value)
-
-            with patch.object(ssl_logic, "IS_WINDOWS", False), patch.object(ssl_logic, "Path", side_effect=patched_path):
+            paths = NginxPaths(sites_available=str(sites), sites_enabled=str(sites), style="debian")
+            with patch.object(ssl_logic, "IS_WINDOWS", False), patch(
+                "modules.web_manager.logic.get_nginx_paths", return_value=paths
+            ):
                 found = SSLManager.find_nginx_vhost_path("example.com")
                 self.assertEqual(found, sites / "example.com.conf")
 
@@ -137,7 +135,7 @@ class WordPressInstallScriptTests(unittest.TestCase):
     @patch("modules.site_wizard.logic._run_wordpress_via_wp_cli", return_value=None)
     @patch("modules.site_wizard.logic._find_php_bin", return_value="/usr/bin/php")
     @patch("modules.site_wizard.logic._resolve_wp_db_host", return_value="127.0.0.1")
-    @patch("modules.site_wizard.logic.subprocess.run")
+    @patch("modules.site_wizard.logic.sysexec.run")
     def test_install_script_seeds_http_host(self, mock_run, _host, _php, _cli):
         from modules.site_wizard.logic import _run_wordpress_db_install
 

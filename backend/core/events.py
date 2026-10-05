@@ -32,6 +32,11 @@ class EventBus:
     def __init__(self, queue_size: int = 256) -> None:
         self._queue_size = queue_size
         self._subscribers: Dict[str, Set[asyncio.Queue]] = {}
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Remember the server loop so worker threads can publish progress."""
+        self._loop = loop
 
     def _topic_set(self, topic: str) -> Set[asyncio.Queue]:
         return self._subscribers.setdefault(topic, set())
@@ -50,15 +55,27 @@ class EventBus:
                 logger.debug("Dropping event for slow subscriber on topic %s", topic)
 
     def publish_sync(self, topic: str, payload: Dict[str, Any]) -> None:
-        """Publish from synchronous code by scheduling onto the running loop.
+        """Publish from synchronous code, including a worker thread.
 
-        Falls back to a fire-and-forget if no loop is running (e.g. in tests).
+        Uses the running loop when called on it, otherwise the loop bound at
+        startup. Drops the event when no loop is running (typical in tests).
         """
         try:
-            loop = asyncio.get_running_loop()
+            running = asyncio.get_running_loop()
         except RuntimeError:
+            running = None
+        loop = running or self._loop
+        if loop is None or loop.is_closed() or not loop.is_running():
             return
-        loop.create_task(self.publish(topic, payload))
+        if running is loop:
+            loop.create_task(self.publish(topic, payload))
+            return
+
+        def _kick() -> None:
+            if not loop.is_closed():
+                loop.create_task(self.publish(topic, payload))
+
+        loop.call_soon_threadsafe(_kick)
 
     async def subscribe(self, topics: List[str]) -> AsyncIterator[Dict[str, Any]]:
         queue: asyncio.Queue = asyncio.Queue(maxsize=self._queue_size)

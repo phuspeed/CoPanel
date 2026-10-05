@@ -186,7 +186,105 @@ class JobManager:
         """Register a default handler for ``kind`` so it can be re-run by id."""
         self._handlers[kind] = handler
 
+    def fail_orphaned_jobs(self) -> List[str]:
+        """Mark queued/running rows left behind by a dead process as failed.
+
+        The queue itself is in memory, so a service restart cannot resume it.
+        Leaving those rows as ``running`` makes the UI poll forever.
+        """
+        message = "Interrupted: CoPanel restarted while job was running"
+        now = time.time()
+        ids: List[str] = []
+        try:
+            conn = get_db_connection()
+        except sqlite3.Error:
+            logger.exception("Could not open job database to sweep orphaned jobs")
+            return []
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM jobs WHERE status IN ('queued', 'running')")
+            ids = [str(row["id"]) for row in cur.fetchall()]
+            if not ids:
+                return []
+            cur.execute(
+                """
+                UPDATE jobs
+                   SET status = ?, error = ?, message = ?, finished_at = ?
+                 WHERE status IN ('queued', 'running')
+                """,
+                (JOB_STATUS_FAILED, message, message, now),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            logger.exception("Failed to mark orphaned jobs")
+            return []
+        finally:
+            conn.close()
+        for job_id in ids:
+            job = self._jobs.get(job_id)
+            if job and job.status not in _TERMINAL_STATUSES:
+                job.status = JOB_STATUS_FAILED
+                job.error = message
+                job.message = message
+                job.finished_at = now
+            bus.publish_sync(
+                "jobs",
+                {"event": "fail", "job": {"id": job_id, "status": JOB_STATUS_FAILED, "error": message}},
+            )
+        return ids
+
+    def find_active(self, *, kind: str, payload_key: str, payload_value: str) -> Optional[str]:
+        """Return the id of a queued/running job whose payload matches."""
+        for job in self._jobs.values():
+            if job.kind != kind or job.status not in (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING):
+                continue
+            if str((job.payload or {}).get(payload_key) or "") == payload_value:
+                return job.id
+        try:
+            conn = get_db_connection()
+        except sqlite3.Error:
+            return None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, payload FROM jobs WHERE kind = ? AND status IN ('queued', 'running')",
+                (kind,),
+            )
+            for row in cur.fetchall():
+                try:
+                    payload = json.loads(row["payload"] or "{}")
+                except json.JSONDecodeError:
+                    payload = {}
+                if str(payload.get(payload_key) or "") == payload_value:
+                    return str(row["id"])
+            return None
+        finally:
+            conn.close()
+
+    def has_running_work(self) -> bool:
+        """True when this process still has a queued or running job."""
+        for job in self._jobs.values():
+            if job.status in (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING):
+                return True
+        try:
+            conn = get_db_connection()
+        except sqlite3.Error:
+            return False
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM jobs WHERE status IN ('queued', 'running') LIMIT 1"
+            )
+            return cur.fetchone() is not None
+        finally:
+            conn.close()
+
     async def start(self, app=None) -> None:
+        self.fail_orphaned_jobs()
+        try:
+            bus.bind_loop(asyncio.get_running_loop())
+        except RuntimeError:
+            pass
         if self._workers:
             return
         for i in range(self._worker_count):

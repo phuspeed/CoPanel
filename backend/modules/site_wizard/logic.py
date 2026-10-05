@@ -17,6 +17,8 @@ mutation so the panel never leaves dangling configuration on disk.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import re
@@ -25,8 +27,9 @@ import shutil
 import socket
 import ssl
 import string
-import subprocess
+import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -34,7 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from core.validators import validate_doc_root, validate_domain
+from core import sysexec
+from core.validators import validate_db_name, validate_db_username, validate_doc_root, validate_domain
 
 from .templates import get_template, resolve_wizard_defaults
 
@@ -82,7 +86,26 @@ def _generate_password(length: int = 18) -> str:
 
 
 def _slug(domain: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9_]", "_", domain.replace(".", "_"))
+    return re.sub(r"[^a-zA-Z0-9_]", "_", domain.replace(".", "_")).lower()
+
+
+def derive_db_identifiers(
+    domain: str,
+    database_name: Optional[str] = None,
+    database_user: Optional[str] = None,
+) -> tuple[str, str]:
+    """Build a database name and a user that will not collide on a 14-char prefix.
+
+    The user is ``slug[:23] + '_' + 8 hex chars of sha1(domain)``, at most 32.
+    """
+    slug = _slug(domain) or "site"
+    db_name = (database_name or slug)[:48]
+    if database_user:
+        db_user = database_user
+    else:
+        digest = hashlib.sha1(domain.encode("utf-8")).hexdigest()[:8]
+        db_user = f"{slug[:23]}_{digest}"[:32]
+    return validate_db_name(db_name), validate_db_username(db_user)
 
 
 def _safe_call(label: str, fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
@@ -139,57 +162,210 @@ def _http_verify(domain: str, timeout: float = 6.0, use_https: bool = False) -> 
         return {"reachable": False, "ip": ip, "port": port, "error": str(exc), "https": use_https}
 
 
-def get_preflight_status() -> Dict[str, Any]:
+def _local_ips() -> set[str]:
+    found: set[str] = set()
+    try:
+        result = sysexec.run(["ip", "-j", "addr"], timeout=5)
+        if result.returncode == 0 and result.stdout:
+            payload = json.loads(result.stdout)
+            for iface in payload:
+                for addr in iface.get("addr_info") or []:
+                    local = addr.get("local")
+                    if local:
+                        found.add(local)
+    except Exception:
+        pass
+    if not found:
+        try:
+            result = sysexec.run(["hostname", "-I"], timeout=5)
+            for part in (result.stdout or "").split():
+                found.add(part)
+        except Exception:
+            pass
+    found.discard("127.0.0.1")
+    found.discard("::1")
+    return found
+
+
+def _public_ip() -> str:
+    try:
+        req = urllib.request.Request(
+            "https://api.ipify.org",
+            headers={"User-Agent": "copanel-site-wizard"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read(64).decode("ascii", errors="ignore").strip()
+    except Exception:
+        return ""
+    if re.fullmatch(r"[0-9a-fA-F:.]+", text):
+        return text
+    return ""
+
+
+def dns_points_here(domain: str) -> Dict[str, Any]:
+    """True when an A/AAAA record for ``domain`` is an address of this server."""
+    records: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(domain, None):
+            records.add(info[4][0])
+    except OSError as exc:
+        return {
+            "dns_ok": False,
+            "reason": f"DNS lookup failed: {exc}",
+            "records": [],
+            "server_ips": sorted(_local_ips()),
+        }
+    server_ips = _local_ips()
+    public = _public_ip()
+    if public:
+        server_ips.add(public)
+    return {
+        "dns_ok": bool(records and (records & server_ips)),
+        "reason": "",
+        "records": sorted(records),
+        "server_ips": sorted(server_ips),
+    }
+
+
+def _nginx_ready() -> bool:
+    binary = bool(shutil.which("nginx") or Path("/usr/sbin/nginx").is_file())
+    return binary and sysexec.service_is_active("nginx")
+
+
+def _mysql_server_active() -> bool:
+    return (
+        sysexec.service_is_active("mariadb")
+        or sysexec.service_is_active("mysql")
+        or sysexec.service_is_active("mysqld")
+    )
+
+
+def _mysql_accepts_root() -> bool:
+    if not (shutil.which("mysql") or shutil.which("mariadb")):
+        return False
+    if not _mysql_server_active():
+        return False
+    try:
+        result = sysexec.run(
+            ["mysql", "-u", "root", "-N", "-B", "-e", "SELECT 1"],
+            timeout=10,
+            as_root=True,
+        )
+    except sysexec.CommandError:
+        return False
+    return result.returncode == 0 and (result.stdout or "").strip() == "1"
+
+
+def _enable_database_service() -> None:
+    last = ""
+    for unit in ("mariadb", "mysql", "mysqld"):
+        try:
+            sysexec.service_enable_now(unit)
+            return
+        except sysexec.CommandError as exc:
+            last = str(exc)
+    raise RuntimeError(last or "Could not start MariaDB or MySQL.")
+
+
+def get_preflight_status(domain: Optional[str] = None) -> Dict[str, Any]:
     """Report stack readiness for the wizard UI."""
     from modules.web_manager import logic as wm_logic
 
-    nginx_ok = bool(shutil.which("nginx") or Path("/usr/sbin/nginx").is_file())
-    mysql_ok = bool(shutil.which("mysql") or shutil.which("mariadb") or Path("/usr/bin/mysql").is_file())
+    nginx_bin = bool(shutil.which("nginx") or Path("/usr/sbin/nginx").is_file())
+    nginx_ok = _nginx_ready()
+    mysql_bin = bool(shutil.which("mysql") or shutil.which("mariadb") or Path("/usr/bin/mysql").is_file())
+    mysql_ok = _mysql_accepts_root()
     php_meta = wm_logic.get_php_versions_meta()
     php_versions = php_meta.get("versions") or []
     php_active = php_meta.get("active") or ""
     fpm_rows = wm_logic.list_php_fpm_versions()
-    return {
-        "nginx": {"installed": nginx_ok, "ready": nginx_ok},
-        "mysql": {"installed": mysql_ok, "ready": mysql_ok},
+    suggested = ""
+    php_note = ""
+    try:
+        suggested = wm_logic.resolve_php_version("auto")
+    except Exception as exc:
+        php_note = str(exc)
+    payload: Dict[str, Any] = {
+        "nginx": {"installed": nginx_bin, "ready": nginx_ok},
+        "mysql": {"installed": mysql_bin, "ready": mysql_ok},
         "php": {
             "installed_versions": php_versions,
             "active": php_active,
+            "suggested": suggested,
             "fpm": fpm_rows,
-            "ready": bool(php_versions or fpm_rows),
+            "ready": bool(php_versions or fpm_rows or suggested),
+            "note": php_note,
         },
-        "ready_for_lemp": nginx_ok and mysql_ok and bool(php_versions or fpm_rows),
+        "ready_for_lemp": nginx_ok and mysql_ok and bool(php_versions or fpm_rows or suggested),
         "ready_for_static": nginx_ok,
     }
+    if domain:
+        try:
+            payload["dns"] = dns_points_here(domain)
+        except Exception as exc:
+            payload["dns"] = {"dns_ok": False, "reason": str(exc), "records": [], "server_ips": []}
+    return payload
 
 
-def _ensure_stack(job, template_id: Optional[str], php_version: Optional[str]) -> None:
-    """Install missing stack packages when template needs LEMP/LAMP."""
-    tpl = get_template(template_id or "static") or {}
-    preset = tpl.get("stack_preset")
-    if preset not in ("lemp", "lamp"):
-        return
+def _install_packages(packages: List[str], label: str) -> None:
+    result = sysexec.pkg_install(packages)
+    if not result.get("ok"):
+        missing = ", ".join(result.get("missing") or packages)
+        tail = result.get("output_tail") or ""
+        raise RuntimeError(f"{label} failed ({missing}). {tail}".strip())
+
+
+def _ensure_stack(job, template_id: Optional[str], php_version: Optional[str], php_modules: Optional[List[str]] = None) -> str:
+    """Install the stack the template needs and return the PHP version in use.
+
+    Returns an empty string when the template does not use PHP. A missing
+    package or a PHP build that does not load the required extensions fails
+    the job instead of being logged and ignored.
+    """
     from modules.web_manager import logic as wm_logic
 
-    pre = get_preflight_status()
-    if preset == "lemp" and pre.get("ready_for_lemp"):
-        job.log("Stack preflight OK (LEMP)")
-        return
-    ver = (php_version or tpl.get("php_version") or "8.2").strip()
-    job.log(f"Ensuring LEMP stack (PHP {ver})")
-    pm = wm_logic.pkg_manager()
-    if not pre["nginx"]["ready"] and pm == "apt-get":
-        subprocess.run(["sudo", "apt-get", "install", "-y", "nginx"], check=False, capture_output=True, text=True)
-    elif not pre["nginx"]["ready"] and pm == "yum":
-        subprocess.run(["sudo", "yum", "install", "-y", "nginx"], check=False, capture_output=True, text=True)
-    if ver not in (pre["php"].get("installed_versions") or []):
-        res = wm_logic.install_php_version(ver)
-        if res.get("status") == "error":
-            job.log(f"PHP install note: {res.get('message')}")
-    if not pre["mysql"]["ready"] and pm == "apt-get":
-        subprocess.run(["sudo", "apt-get", "install", "-y", "mariadb-server"], check=False, capture_output=True, text=True)
-    elif not pre["mysql"]["ready"] and pm == "yum":
-        subprocess.run(["sudo", "yum", "install", "-y", "mariadb-server"], check=False, capture_output=True, text=True)
+    tpl = get_template(template_id or "static") or {}
+    preset = tpl.get("stack_preset")
+    if not _nginx_ready():
+        job.log("Installing nginx")
+        _install_packages(["nginx"], "nginx install")
+        try:
+            sysexec.service_enable_now("nginx")
+        except sysexec.CommandError as exc:
+            raise RuntimeError(f"nginx did not start. {exc}") from exc
+    if preset not in ("lemp", "lamp"):
+        job.log("Stack preflight OK (nginx)")
+        return ""
+
+    version = wm_logic.resolve_php_version(php_version or tpl.get("php_version") or "auto")
+    job.log(f"Using PHP {version}")
+    if not wm_logic._is_php_version_installed(version):
+        job.log(f"Installing PHP {version}")
+        res = wm_logic.install_php_version(version)
+        if res.get("status") != "success":
+            raise RuntimeError(f"PHP {version} install failed: {res.get('message')}")
+    unit = wm_logic.php_fpm_unit(version)
+    try:
+        sysexec.service_enable_now(unit)
+    except sysexec.CommandError as exc:
+        raise RuntimeError(
+            f"PHP-FPM service {unit} did not start. {exc}"
+        ) from exc
+    modules = list(php_modules if php_modules is not None else (tpl.get("php_modules") or []))
+    if modules:
+        job.log("Installing PHP extensions: " + ", ".join(modules))
+        wm_logic.install_php_extensions(version, modules)
+    if not _mysql_accepts_root():
+        job.log("Installing MariaDB")
+        _install_packages(["mariadb-server"], "MariaDB install")
+        _enable_database_service()
+        if not _mysql_accepts_root():
+            raise RuntimeError(
+                "MariaDB/MySQL is not accepting connections. "
+                "Check `systemctl status mariadb` and that root can run `mysql -u root -e 'SELECT 1'`."
+            )
+    job.log(f"Stack preflight OK (PHP {version}, MariaDB)")
+    return version
 
 
 def _update_wordpress_site_urls(doc_root: str, domain: str, use_https: bool) -> bool:
@@ -215,12 +391,10 @@ echo 'OK';
     )
     try:
         php_bin = _find_php_bin()
-        res = subprocess.run(
+        res = sysexec.run(
             [php_bin, "-d", "display_errors=0", str(script)],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
             timeout=30,
+            cwd=str(root),
         )
         return (res.stdout or "").strip().endswith("OK")
     except Exception:
@@ -308,17 +482,35 @@ def _apply_wp_config_db_defines(cfg: str, database: Dict[str, Any]) -> str:
     return updated
 
 
+def _mysql_user_query(database: Dict[str, Any], sql: str, timeout: int = 15, schema: str = "") -> Any:
+    """Query MySQL as the site user. The password stays in a 0600 defaults file."""
+    fd, path = tempfile.mkstemp(prefix="copanel-my-")
+    os.close(fd)
+    try:
+        password = str(database.get("password") or "").replace("\n", "").replace("\r", "")
+        Path(path).write_text(
+            "[client]\n"
+            f"user={database['user']}\n"
+            f"password={password}\n"
+            f"host={database.get('host', 'localhost')}\n",
+            encoding="utf-8",
+        )
+        os.chmod(path, 0o600)
+        cmd = ["mysql", f"--defaults-extra-file={path}", "-N", "-B", "-e", sql]
+        if schema:
+            cmd.append(schema)
+        return sysexec.run(cmd, timeout=timeout)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _verify_mysql_connection(database: Dict[str, Any]) -> bool:
     try:
-        cmd = [
-            "mysql", "-N", "-B",
-            "-u", database["user"],
-            f"-p{database['password']}",
-            "-h", database.get("host", "localhost"),
-            "-e", "SELECT 1;",
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        return res.returncode == 0 and res.stdout.strip() == "1"
+        res = _mysql_user_query(database, "SELECT 1;", timeout=10)
+        return res.returncode == 0 and (res.stdout or "").strip() == "1"
     except Exception:
         return False
 
@@ -394,16 +586,8 @@ def _wordpress_db_installed(database: Dict[str, Any]) -> bool:
     if not db_name:
         return False
     try:
-        cmd = [
-            "mysql", "-N", "-B",
-            "-u", database["user"],
-            f"-p{database['password']}",
-            "-h", database.get("host", "localhost"),
-            db_name,
-            "-e", "SHOW TABLES LIKE 'wp_options';",
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        return res.returncode == 0 and res.stdout.strip() == "wp_options"
+        res = _mysql_user_query(database, "SHOW TABLES LIKE 'wp_options';", timeout=15, schema=db_name)
+        return res.returncode == 0 and (res.stdout or "").strip() == "wp_options"
     except Exception:
         return False
 
@@ -436,21 +620,68 @@ def _wp_cli_path() -> Optional[str]:
     return None
 
 
-def _ensure_wp_cli_phar() -> Optional[str]:
-    """Download wp-cli.phar once for reliable core install."""
-    phar = Path("/tmp/copanel-wp-cli.phar")
-    if phar.is_file() and phar.stat().st_size > 100_000:
-        return str(phar)
+def _download_https(url: str, dest: Path, *, timeout: int = 60, max_bytes: int = 80_000_000) -> None:
+    if not str(url).startswith("https://"):
+        raise RuntimeError(f"Refusing non-HTTPS download: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "copanel-site-wizard"})
     try:
-        urllib.request.urlretrieve(
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            total = 0
+            with dest.open("wb") as handle:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError(f"Download exceeded {max_bytes} bytes: {url}")
+                    handle.write(chunk)
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Download failed for {url}: {exc}") from exc
+
+
+def _download_text(url: str, *, timeout: int = 30, max_bytes: int = 4096) -> str:
+    dest_dir = Path(tempfile.mkdtemp(prefix="copanel-dl-"))
+    dest = dest_dir / "body"
+    try:
+        _download_https(url, dest, timeout=timeout, max_bytes=max_bytes)
+        return dest.read_text(encoding="utf-8", errors="ignore")
+    finally:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+
+
+def _checksum_token(text: str) -> str:
+    token = (text or "").strip().split()
+    return token[0].lower() if token else ""
+
+
+def _ensure_wp_cli_phar(job_id: str) -> Optional[str]:
+    """Download wp-cli.phar into a per-job directory and check its sha512."""
+    directory = Path(tempfile.mkdtemp(prefix=f"copanel-wpcli-{job_id}-"))
+    phar = directory / "wp-cli.phar"
+    try:
+        _download_https(
             "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar",
             phar,
+            timeout=60,
+            max_bytes=20_000_000,
         )
-        if phar.is_file() and phar.stat().st_size > 100_000:
-            return str(phar)
+        digest_text = _download_text(
+            "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar.sha512",
+            timeout=30,
+        )
+        expected = _checksum_token(digest_text)
+        actual = hashlib.sha512(phar.read_bytes()).hexdigest()
+        if not expected or actual != expected:
+            raise RuntimeError(
+                f"wp-cli.phar checksum mismatch (expected {expected or 'missing'}, got {actual})."
+            )
+        if phar.stat().st_size < 100_000:
+            raise RuntimeError("wp-cli.phar download was incomplete.")
+        return str(phar)
     except Exception:
-        pass
-    return None
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
 
 
 def _run_wordpress_via_wp_cli(
@@ -459,15 +690,17 @@ def _run_wordpress_via_wp_cli(
     admin_user: str,
     admin_pass: str,
     admin_email: str,
+    job_id: str = "wizard",
 ) -> Optional[Dict[str, Any]]:
     """Try WP-CLI core install. Returns result dict on success, None to fall back."""
     php_bin = _find_php_bin()
     wp_bin = _wp_cli_path()
     cmd: List[str]
+    phar: Optional[str] = None
     if wp_bin:
         cmd = [wp_bin]
     else:
-        phar = _ensure_wp_cli_phar()
+        phar = _ensure_wp_cli_phar(job_id)
         if not phar:
             return None
         cmd = [php_bin, phar]
@@ -484,16 +717,14 @@ def _run_wordpress_via_wp_cli(
         "--skip-email",
         "--allow-root",
     ]
+    phar_dir = Path(phar).parent if phar and "copanel-wpcli-" in str(phar) else None
     try:
-        res = subprocess.run(
-            full_cmd,
-            cwd=doc_root,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        res = sysexec.run(full_cmd, timeout=180, cwd=doc_root)
     except Exception:
         return None
+    finally:
+        if phar_dir and phar_dir.is_dir():
+            shutil.rmtree(phar_dir, ignore_errors=True)
     combined = ((res.stdout or "") + "\n" + (res.stderr or "")).lower()
     if res.returncode == 0 or "already installed" in combined or "success" in combined:
         return {
@@ -521,7 +752,7 @@ def _run_wordpress_db_install(doc_root: str, domain: str, database: Dict[str, An
     admin_pass = _generate_password()
     admin_email = f"admin@{domain}"
 
-    cli_result = _run_wordpress_via_wp_cli(doc_root, domain, admin_user, admin_pass, admin_email)
+    cli_result = _run_wordpress_via_wp_cli(doc_root, domain, admin_user, admin_pass, admin_email, job_id=domain)
     if cli_result and _wordpress_db_installed(database):
         cli_result["db_host"] = working_host
         cli_result["db_installed"] = True
@@ -609,20 +840,17 @@ try {{
         encoding="utf-8",
     )
     try:
-        res = subprocess.run(
+        res = sysexec.run(
             [
                 php_bin,
                 "-d", "display_errors=0",
                 "-d", "log_errors=1",
-                f"-d", f"error_log={log_file}",
+                "-d", f"error_log={log_file}",
                 str(install_script),
             ],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
             timeout=180,
-            env={
-                **os.environ,
+            cwd=str(root),
+            env_extra={
                 "HTTP_HOST": domain,
                 "SERVER_NAME": domain,
             },
@@ -676,28 +904,70 @@ try {{
                 pass
 
 
-def _download_wordpress_core(root: Path) -> None:
-    tmp_tar = Path("/tmp/copanel-wp-latest.tar.gz")
-    url = "https://wordpress.org/latest.tar.gz"
-    urllib.request.urlretrieve(url, tmp_tar)
-    with tarfile.open(tmp_tar, "r:gz") as tar:
-        tar.extractall(path="/tmp")
-    wp_src = Path("/tmp/wordpress")
-    if not wp_src.is_dir():
-        raise RuntimeError("WordPress archive extraction failed")
-    for item in wp_src.iterdir():
+def _safe_extract_tar(tar_path: Path, dest: Path) -> None:
+    dest_resolved = dest.resolve()
+    with tarfile.open(tar_path, "r:gz") as tar:
+        for member in tar.getmembers():
+            name = member.name.replace("\\", "/")
+            if not name or name.startswith("/") or ".." in Path(name).parts:
+                raise RuntimeError(f"WordPress archive contains an unsafe path: {member.name}")
+            target = (dest_resolved / name).resolve()
+            if dest_resolved != target and dest_resolved not in target.parents:
+                raise RuntimeError(f"WordPress archive escapes the extract directory: {member.name}")
+            if member.issym() or member.islnk():
+                link_target = (Path(name).parent / member.linkname)
+                if link_target.is_absolute() or ".." in link_target.parts:
+                    raise RuntimeError(f"WordPress archive contains an unsafe link: {member.name}")
+        kwargs: Dict[str, Any] = {}
+        if sys.version_info >= (3, 12):
+            kwargs["filter"] = "data"
+        tar.extractall(path=dest, **kwargs)
+
+
+def _copy_wordpress_tree(src: Path, root: Path) -> None:
+    if _wordpress_files_present(root):
+        return
+    markers = ("wp-includes", "wp-admin", "wp-load.php", "index.php", "wp-config.php")
+    if any((root / marker).exists() for marker in markers):
+        raise RuntimeError(
+            "Document root has a partial WordPress tree (missing wp-includes/version.php). "
+            "Remove the incomplete files or choose an empty document root. "
+            "CoPanel will not mix two WordPress versions."
+        )
+    for item in src.iterdir():
         dest = root / item.name
         if dest.exists():
-            continue
+            raise RuntimeError(
+                f"Refusing to overwrite existing {item.name} while copying WordPress. "
+                "The document root is not empty."
+            )
         if item.is_dir():
-            shutil.copytree(item, dest)
+            shutil.copytree(item, dest, symlinks=False)
         else:
             shutil.copy2(item, dest)
+
+
+def _download_wordpress_core(root: Path, job_id: str = "wizard") -> None:
+    if _wordpress_files_present(root):
+        return
+    tmp = Path(tempfile.mkdtemp(prefix=f"copanel-wp-{job_id}-"))
     try:
-        tmp_tar.unlink(missing_ok=True)
-        shutil.rmtree(wp_src, ignore_errors=True)
-    except Exception:
-        pass
+        tar_path = tmp / "wordpress.tar.gz"
+        _download_https("https://wordpress.org/latest.tar.gz", tar_path, timeout=60, max_bytes=80_000_000)
+        digest_text = _download_text("https://wordpress.org/latest.tar.gz.sha1", timeout=30)
+        expected = _checksum_token(digest_text)
+        actual = hashlib.sha1(tar_path.read_bytes()).hexdigest()
+        if not expected or actual != expected:
+            raise RuntimeError(
+                f"WordPress tarball checksum mismatch (expected {expected or 'missing'}, got {actual})."
+            )
+        _safe_extract_tar(tar_path, tmp)
+        wp_src = tmp / "wordpress"
+        if not wp_src.is_dir():
+            raise RuntimeError("WordPress archive extraction failed.")
+        _copy_wordpress_tree(wp_src, root)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
@@ -705,7 +975,7 @@ def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]
     root.mkdir(parents=True, exist_ok=True)
     files_present = _wordpress_files_present(root)
     if not files_present:
-        _download_wordpress_core(root)
+        _download_wordpress_core(root, job_id=domain)
         files_present = _wordpress_files_present(root)
         if not files_present:
             raise RuntimeError("WordPress core download failed")
@@ -802,11 +1072,91 @@ def _deploy_template_app(
     return {"template": tid, "deployed": "none"}
 
 
-async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
-    """Drive the multi-step wizard. ``job`` is a :class:`core.jobs.Job`."""
-    from modules.web_manager import router as web_router
+def _site_kind(template_id: str, proxy_port: Optional[int], php_version: Optional[str]) -> str:
+    if proxy_port:
+        return "proxy"
+    if php_version or template_id in ("wordpress", "laravel"):
+        return "php"
+    return "static"
+
+
+def _vhost_matches(content: str, doc_root: str, kind: str) -> bool:
+    if kind == "proxy":
+        return "proxy_pass" in content and "fastcgi_pass" not in content
+    roots = re.findall(r"^\s*root\s+([^;]+);", content, re.M)
+    root = roots[0].strip().strip("'\"") if roots else ""
+    if root.rstrip("/") != str(doc_root).rstrip("/"):
+        return False
+    has_php = "fastcgi_pass" in content
+    has_proxy = "proxy_pass" in content
+    if kind == "php":
+        return has_php and not has_proxy
+    return not has_php and not has_proxy
+
+
+def _protected_web_parent(path: str) -> bool:
+    resolved = Path(path).resolve()
+    return resolved in {Path("/"), Path("/var/www"), Path("/home"), Path("/var")}
+
+
+class _Rollback:
+    def __init__(self) -> None:
+        self._steps: List[tuple[str, Callable[[], None]]] = []
+
+    def add(self, label: str, fn: Callable[[], None]) -> None:
+        self._steps.append((label, fn))
+
+    def run(self, job) -> List[str]:
+        done: List[str] = []
+        for label, fn in reversed(self._steps):
+            try:
+                fn()
+                done.append(label)
+                job.log(f"Rolled back: {label}")
+            except Exception as exc:
+                job.log(f"Rollback failed for {label}: {exc}")
+        return done
+
+
+def _apply_site_ownership(doc_root: str, php_version: str) -> str:
+    """chown only this site's document root to the PHP-FPM pool user."""
+    import grp
+    import pwd
+
+    from modules.web_manager.logic import php_fpm_identity
+
+    if _protected_web_parent(doc_root):
+        raise RuntimeError(f"Refusing to change ownership of {doc_root}")
+    user, group = php_fpm_identity(php_version)
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError as exc:
+        raise RuntimeError(
+            f"PHP-FPM user '{user}' (group '{group}') does not exist, so site files would stay owned by root."
+        ) from exc
+    root = Path(doc_root).resolve()
+    for dirpath, dirnames, filenames in os.walk(root):
+        os.chown(dirpath, uid, gid)
+        os.chmod(dirpath, 0o755)
+        for name in filenames:
+            path = Path(dirpath) / name
+            try:
+                os.chown(path, uid, gid)
+                os.chmod(path, 0o640 if name == "wp-config.php" else 0o644)
+            except OSError:
+                continue
+    return user
+
+
+def _run_wizard_sync(job, req: WizardRequest) -> Dict[str, Any]:
+    """Drive the multi-step wizard. Blocking work stays in this function."""
+    from fastapi import HTTPException
+
     from modules.database_manager.logic import DBManager
     from modules.ssl_manager.logic import SSLManager
+    from modules.web_manager import logic as wm_logic
+    from modules.web_manager import router as web_router
 
     defaults = resolve_wizard_defaults(
         req.template_id,
@@ -830,102 +1180,188 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
 
     domain = _validate_domain(req.domain)
     doc_root = _validate_doc_root(req.document_root)
+    rollback = _Rollback()
+    try:
+        return _provision(job, req, template_id, domain, doc_root, rollback, DBManager, SSLManager, wm_logic, web_router, HTTPException)
+    except Exception as exc:
+        undone = rollback.run(job)
+        message = str(exc)
+        if undone:
+            message = f"{message} Rolled back: {', '.join(undone)}."
+        raise RuntimeError(message) from exc
+
+
+def _provision(job, req, template_id, domain, doc_root, rollback, DBManager, SSLManager, wm_logic, web_router, HTTPException) -> Dict[str, Any]:
     job.update(progress=2, message=f"Provisioning {domain} ({template_id})")
     job.log(f"Validated inputs for {domain} [template={template_id}]")
-
     result = WizardResult(domain=domain, document_root=doc_root, site_filename=f"{domain}.conf")
 
     job.update(progress=8, message="Checking web stack")
-    _ensure_stack(job, template_id, req.php_version)
-    job.log("Stack check complete")
+    resolved_php = _ensure_stack(job, template_id, req.php_version, req.php_modules)
+    if resolved_php:
+        req.php_version = resolved_php
+        job.log(f"PHP {resolved_php}")
+    else:
+        job.log("Stack check complete")
 
     job.update(progress=12, message="Creating document root")
+    root_existed = os.path.isdir(doc_root)
     try:
         os.makedirs(doc_root, exist_ok=True)
     except Exception as exc:
-        raise RuntimeError(f"Failed to create document root: {exc}")
+        raise RuntimeError(f"Failed to create document root: {exc}") from exc
+    if not root_existed:
+        rollback.add("document root", lambda: _remove_created_root(doc_root))
     job.log(f"Document root ready: {doc_root}")
 
-    job.update(progress=28, message="Creating Nginx vhost")
-    create_payload = web_router.CreateSiteRequest(
-        domain=domain,
-        root=doc_root,
-        php_version=req.php_version,
-        php_modules=req.php_modules,
-        proxy_port=req.proxy_port,
-    )
-    try:
-        res = await web_router.create_site(create_payload)  # type: ignore[arg-type]
+    kind = _site_kind(template_id, req.proxy_port, req.php_version)
+    existing = SSLManager.find_nginx_vhost_path(domain)
+    created_vhost = False
+    if existing and existing.is_file():
+        content = existing.read_text(encoding="utf-8", errors="ignore")
+        if not _vhost_matches(content, doc_root, kind):
+            raise RuntimeError(
+                f"vhost {domain} already exists with a different document root or site type. "
+                "Remove it in Web Manager or choose another domain."
+            )
+        job.log(f"Reusing nginx vhost {existing.name}")
+        result.warnings.append(f"Reused existing nginx vhost {existing.name}")
+    else:
+        job.update(progress=28, message="Creating Nginx vhost")
+        create_payload = web_router.CreateSiteRequest(
+            domain=domain,
+            root=doc_root,
+            php_version=req.php_version,
+            php_modules=req.php_modules,
+            proxy_port=req.proxy_port,
+        )
+        try:
+            res = web_router.create_site(create_payload)
+        except HTTPException as exc:
+            raise RuntimeError(f"Web vhost creation failed: {exc.detail}") from exc
         if not isinstance(res, dict) or res.get("status") != "success":
             raise RuntimeError(f"Web vhost creation failed: {res}")
-        result.rollback.append(f"web_manager:{result.site_filename}")
+        created_vhost = True
+        rollback.add("nginx vhost", lambda: _rollback_vhost(domain))
         job.log("Nginx vhost created and activated")
-    except Exception as exc:
-        detail = str(getattr(exc, "detail", "") or exc)
-        if "already exists" in detail.lower():
-            job.log(f"Nginx vhost already exists — reusing {result.site_filename}")
-            result.warnings.append(f"Reused existing nginx vhost {result.site_filename}")
-        else:
-            raise RuntimeError(f"Web vhost creation failed: {detail}") from exc
 
-    if req.php_version or template_id in ("wordpress", "laravel"):
+    needs_php = bool(req.php_version) or template_id in ("wordpress", "laravel")
+    if needs_php:
         _ensure_vhost_php_fpm(domain, req.php_version, job, result)
+
+    needs_db = bool(req.create_database) or template_id in ("wordpress", "laravel")
+    if needs_db:
         job.update(progress=48, message="Provisioning database")
-        db_name = req.database_name or _slug(domain)
-        db_user = req.database_user or db_name[:14]
+        try:
+            db_name, db_user = derive_db_identifiers(domain, req.database_name, req.database_user)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        db_existed = DBManager.database_exists(db_name)
+        if not db_existed:
+            db_res = DBManager.create_database(db_name)
+            if db_res.get("status") != "success":
+                raise RuntimeError(db_res.get("message") or f"Database create failed for {db_name}")
+            rollback.add("database", lambda: DBManager.delete_database(db_name))
+            job.log(f"Database created: {db_name}")
+        else:
+            job.log(f"Database {db_name} already exists; leaving it in place")
         db_pass = req.database_password or _generate_password()
-        db_res = _safe_call("database.create", lambda: DBManager.create_database(db_name))
-        if db_res.get("status") != "success":
-            raise RuntimeError(db_res.get("message", "DB creation failed"))
-        result.rollback.append(f"db:{db_name}")
-        job.log(f"Database created: {db_name}")
-        usr_res = _safe_call(
-            "database.create_user",
-            lambda: DBManager.create_user(db_user, "localhost", db_pass, db_name),
-        )
+        usr_res = DBManager.ensure_site_user(db_user, "localhost", db_pass, db_name)
         if usr_res.get("status") != "success":
-            raise RuntimeError(usr_res.get("message", "DB user creation failed"))
-        result.database = {
-            "name": db_name,
-            "user": db_user,
-            "password": db_pass,
-            "host": "localhost",
-        }
-        job.log(f"Database user created: {db_user}")
+            raise RuntimeError(usr_res.get("message") or f"Database user create failed for {db_user}")
+        if usr_res.get("created"):
+            rollback.add(
+                "database user",
+                lambda: (DBManager.delete_user(db_user, "localhost"), DBManager.delete_user(db_user, "127.0.0.1")),
+            )
+            result.database = {"name": db_name, "user": db_user, "password": db_pass, "host": "localhost"}
+            job.log(f"Database user created: {db_user}")
+        else:
+            job.log(usr_res.get("message") or f"Database user {db_user} kept")
+            if req.database_password:
+                result.database = {
+                    "name": db_name,
+                    "user": db_user,
+                    "password": req.database_password,
+                    "host": "localhost",
+                    "password_unchanged": True,
+                }
+            elif _wordpress_files_present(Path(doc_root)) and (Path(doc_root) / "wp-config.php").is_file():
+                result.database = {
+                    "name": db_name,
+                    "user": db_user,
+                    "password": None,
+                    "host": "localhost",
+                    "password_unchanged": True,
+                }
+            else:
+                raise RuntimeError(
+                    f"Database user '{db_user}' already exists and its password was not changed. "
+                    "Enter the existing database password and run the wizard again."
+                )
 
     job.update(progress=58, message="Deploying application")
-    deploy_info = _deploy_template_app(template_id, doc_root, domain, result.database)
-    job.log(json.dumps(deploy_info))
+    deploy_info = _deploy_template_app(template_id, doc_root, domain, result.database if result.database and result.database.get("password") else result.database)
+    if deploy_info.get("status") == "partial":
+        detail = deploy_info.get("install_error") or deploy_info.get("message") or "application install failed"
+        raise RuntimeError(f"Deploy failed: {detail}")
+    safe_log = dict(deploy_info)
+    if safe_log.get("admin_password"):
+        safe_log["admin_password"] = "***"
+    job.log(json.dumps(safe_log))
     for warn in (deploy_info.get("warnings") or []):
         if warn and warn not in result.warnings:
             result.warnings.append(warn)
-    if deploy_info.get("status") == "partial" and deploy_info.get("install_error"):
-        job.log(f"WordPress install partial: {deploy_info.get('install_error')}")
+
+    if needs_php or template_id == "static":
+        try:
+            owner = _apply_site_ownership(doc_root, req.php_version or "")
+            job.log(f"Document root owned by {owner}")
+        except RuntimeError as exc:
+            result.warnings.append(str(exc))
+            job.log(str(exc))
 
     if req.issue_ssl:
-        job.update(progress=75, message="Issuing SSL certificate")
+        job.update(progress=75, message="Checking DNS for SSL")
         if not req.ssl_email:
             raise RuntimeError("SSL email is required when issue_ssl is true.")
-        ssl_res = _safe_call(
-            "ssl.issue",
-            lambda: SSLManager.issue_certbot(domain, req.ssl_email),  # type: ignore[arg-type]
-        )
-        if ssl_res.get("status") != "success":
-            warning = ssl_res.get("message", "SSL issuance failed")
+        dns = dns_points_here(domain)
+        if not dns.get("dns_ok"):
+            warning = (
+                "DNS does not point at this server, so SSL was not requested from Let's Encrypt."
+            )
             result.warnings.append(warning)
-            result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "failed", "error": warning}
-            job.log(f"SSL warning: {warning}")
+            result.ssl = {
+                "type": "letsencrypt",
+                "domain": domain,
+                "email": req.ssl_email,
+                "status": "skipped",
+                "error": warning,
+            }
+            job.log(warning)
         else:
-            result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "active"}
-            job.log("SSL certificate issued and applied")
-            if template_id == "wordpress":
-                if _update_wordpress_site_urls(doc_root, domain, use_https=True):
-                    job.log("WordPress siteurl/home updated to https")
-                else:
-                    result.warnings.append("Could not update WordPress siteurl/home to https")
-            # SSL rewrite may leave a stale PHP socket — repair again.
-            if req.php_version or template_id in ("wordpress", "laravel"):
-                _ensure_vhost_php_fpm(domain, req.php_version, job, result)
+            ssl_res = SSLManager.issue_certbot(domain, req.ssl_email)
+            if ssl_res.get("status") != "success":
+                warning = ssl_res.get("message") or "SSL issuance failed"
+                result.warnings.append(warning)
+                result.ssl = {
+                    "type": "letsencrypt",
+                    "domain": domain,
+                    "email": req.ssl_email,
+                    "status": "failed",
+                    "error": warning,
+                }
+                job.log(f"SSL warning: {warning}")
+            else:
+                result.ssl = {"type": "letsencrypt", "domain": domain, "email": req.ssl_email, "status": "active"}
+                job.log("SSL certificate issued and applied")
+                if template_id == "wordpress" and result.database and result.database.get("password"):
+                    if _update_wordpress_site_urls(doc_root, domain, use_https=True):
+                        job.log("WordPress siteurl/home updated to https")
+                    else:
+                        result.warnings.append("Could not update WordPress siteurl/home to https")
+                if needs_php:
+                    _ensure_vhost_php_fpm(domain, req.php_version, job, result)
 
     job.update(progress=92, message="Verifying site availability")
     ssl_active = bool(result.ssl and result.ssl.get("status") == "active")
@@ -937,7 +1373,14 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
 
     job.update(progress=100, message="Site provisioned")
     tpl = get_template(template_id) or {}
-    ssl_note = ", ssl OK" if ssl_active else (", ssl failed" if result.ssl else "")
+    if ssl_active:
+        ssl_note = ", ssl OK"
+    elif result.ssl and result.ssl.get("status") == "skipped":
+        ssl_note = ", ssl skipped"
+    elif result.ssl:
+        ssl_note = ", ssl failed"
+    else:
+        ssl_note = ""
     result.summary = (
         f"{tpl.get('name', template_id)} on {domain}: nginx OK"
         + (", app deployed" if deploy_info.get("deployed") else "")
@@ -946,11 +1389,14 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
     )
     if result.warnings:
         result.summary += f" ({len(result.warnings)} warning(s))"
+    if created_vhost:
+        result.rollback.append(f"web_manager:{result.site_filename}")
     site_url = f"https://{domain}" if ssl_active else f"http://{domain}"
     if isinstance(deploy_info, dict) and template_id == "wordpress":
         deploy_info["admin_url"] = f"{site_url}/wp-admin/"
     return {
         "template_id": template_id,
+        "php_version": req.php_version or None,
         "domain": result.domain,
         "document_root": result.document_root,
         "site_filename": result.site_filename,
@@ -963,3 +1409,28 @@ async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
         "site_url": site_url,
         "completed_at": time.time(),
     }
+
+
+def _remove_created_root(doc_root: str) -> None:
+    if _protected_web_parent(doc_root):
+        raise RuntimeError(f"Refusing to delete {doc_root}")
+    shutil.rmtree(doc_root, ignore_errors=False)
+
+
+def _rollback_vhost(domain: str) -> None:
+    from modules.ssl_manager.logic import SSLManager
+    from modules.web_manager.logic import get_nginx_paths, nginx_reload_test, remove_nginx_site
+
+    path = SSLManager.find_nginx_vhost_path(domain)
+    paths = get_nginx_paths()
+    if path:
+        remove_nginx_site(paths, path.name)
+    try:
+        nginx_reload_test()
+    except Exception:
+        pass
+
+
+async def run_wizard(job, req: WizardRequest) -> Dict[str, Any]:
+    """Provision a site without blocking the API event loop."""
+    return await asyncio.to_thread(_run_wizard_sync, job, req)

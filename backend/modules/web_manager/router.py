@@ -2,11 +2,14 @@
 Web Manager Module Router
 Nginx + Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM and DB service overview.
 """
+import asyncio
 import os
 import shutil
 import subprocess
 import urllib.request
 from typing import List, Dict, Any, Optional, Literal
+
+from core.jobs import jobs
 
 from fastapi import APIRouter, Depends, HTTPException
 from core.auth import require_module
@@ -118,8 +121,8 @@ async def list_sites() -> Dict[str, Any]:
     try:
         sites: List[Dict[str, Any]] = []
         np = _nginx_paths()
-        for filename in os.listdir(np.sites_available):
-            file_path = os.path.join(np.sites_available, filename)
+        for filename in logic.list_nginx_site_filenames(np):
+            file_path = logic.nginx_available_file(np, filename)
             if not os.path.isfile(file_path):
                 continue
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -127,8 +130,7 @@ async def list_sites() -> Dict[str, Any]:
             parsed = parse_nginx_config(content)
             auth = detect_site_auth(content)
             meta = read_site_auth_meta(filename)
-            enabled_path = os.path.join(np.sites_enabled, filename)
-            is_active = os.path.exists(enabled_path)
+            is_active = logic.nginx_site_is_enabled(np, filename)
             sites.append(
                 {
                     "filename": filename,
@@ -213,7 +215,7 @@ def _apache_vhost_template(
 
 
 @router.post("/create")
-async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
+def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     """Create a new Nginx or Apache vhost from a basic template."""
     try:
         try:
@@ -331,11 +333,24 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 
         # ---- Nginx ----
         np = _nginx_paths()
-        file_path = os.path.join(np.sites_available, safe_filename)
-        enabled_path = os.path.join(np.sites_enabled, safe_filename)
+        file_path = logic.nginx_available_file(np, safe_filename)
+        enabled_path = logic.nginx_enabled_file(np, safe_filename)
+        disabled_path = file_path + ".disabled"
 
-        if os.path.exists(file_path):
+        if os.path.exists(file_path) or os.path.exists(disabled_path):
             raise HTTPException(status_code=400, detail="Site configuration file already exists.")
+
+        php_version = (req.php_version or "").strip() or None
+        if php_version:
+            try:
+                php_version = logic.resolve_php_version(php_version)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if req.php_modules and not IS_WINDOWS:
+                try:
+                    logic.install_php_extensions(php_version, list(req.php_modules))
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         if req.proxy_port:
             template = f"""server {{
@@ -360,9 +375,9 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     }}
 }}
 """
-        elif req.php_version:
+        elif php_version:
             try:
-                sock = ensure_php_fpm_socket(req.php_version)
+                sock = ensure_php_fpm_socket(php_version)
             except RuntimeError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
             template = f"""server {{
@@ -407,35 +422,14 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(template)
 
-        if not IS_WINDOWS and req.php_version and req.php_modules:
-            try:
-                pm = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
-                if pm == "apt-get":
-                    pkgs = [f"php{req.php_version}-{m}" for m in req.php_modules]
-                    subprocess.run(["sudo", "apt-get", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                elif pm == "yum":
-                    pkgs = [f"php-{m}" for m in req.php_modules]
-                    subprocess.run(["sudo", "yum", "install", "-y"] + pkgs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-
-        if not os.path.exists(enabled_path):
-            if IS_WINDOWS:
-                shutil.copy2(file_path, enabled_path)
-            else:
-                os.symlink(file_path, enabled_path)
+        if np.style != "rhel":
+            logic.enable_nginx_site(np, safe_filename)
 
         if not IS_WINDOWS:
             try:
                 nginx_reload_test()
             except subprocess.CalledProcessError as e:
-                if os.path.exists(enabled_path):
-                    if os.path.islink(enabled_path):
-                        os.unlink(enabled_path)
-                    else:
-                        os.remove(enabled_path)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
+                logic.remove_nginx_site(np, safe_filename)
                 raise HTTPException(
                     status_code=400,
                     detail=f"Nginx configuration invalid: {e.stderr}",
@@ -542,34 +536,24 @@ async def toggle_site(req: ToggleSiteRequest) -> Dict[str, Any]:
             return {"status": "success", "message": f"Apache site {'enabled' if req.active else 'disabled'} successfully."}
 
         np = _nginx_paths()
-        available_path = os.path.join(np.sites_available, safe_filename)
-        enabled_path = os.path.join(np.sites_enabled, safe_filename)
-
-        if not os.path.exists(available_path):
-            raise HTTPException(status_code=404, detail="Site configuration not found in sites-available.")
+        available_path = logic.nginx_available_file(np, safe_filename)
+        disabled_path = available_path + ".disabled"
+        if not os.path.exists(available_path) and not (np.style == "rhel" and os.path.exists(disabled_path)):
+            raise HTTPException(status_code=404, detail="Site configuration not found.")
 
         if req.active:
-            if not os.path.exists(enabled_path):
-                if IS_WINDOWS:
-                    shutil.copy2(available_path, enabled_path)
-                else:
-                    os.symlink(available_path, enabled_path)
+            logic.enable_nginx_site(np, safe_filename)
         else:
-            if os.path.exists(enabled_path):
-                if os.path.islink(enabled_path):
-                    os.unlink(enabled_path)
-                else:
-                    os.remove(enabled_path)
+            logic.disable_nginx_site(np, safe_filename)
 
         if not IS_WINDOWS:
             try:
                 nginx_reload_test()
             except subprocess.CalledProcessError as e:
-                if req.active and os.path.exists(enabled_path):
-                    if os.path.islink(enabled_path):
-                        os.unlink(enabled_path)
-                    else:
-                        os.remove(enabled_path)
+                if req.active:
+                    logic.disable_nginx_site(np, safe_filename)
+                else:
+                    logic.enable_nginx_site(np, safe_filename)
                 raise HTTPException(
                     status_code=400,
                     detail=f"Nginx configuration invalid: {e.stderr}",
@@ -622,23 +606,17 @@ async def delete_site(req: DeleteSiteRequest) -> Dict[str, Any]:
             return {"status": "success", "message": "Apache vhost removed."}
 
         np = _nginx_paths()
-        available_path = os.path.join(np.sites_available, safe_filename)
-        enabled_path = os.path.join(np.sites_enabled, safe_filename)
-
-        if os.path.exists(enabled_path):
-            if os.path.islink(enabled_path):
-                os.unlink(enabled_path)
-            else:
-                os.remove(enabled_path)
-
-        if os.path.exists(available_path):
-            os.remove(available_path)
-
+        logic.remove_nginx_site(np, safe_filename)
         delete_site_auth_files(safe_filename)
 
         if not IS_WINDOWS:
-            subprocess.run(["nginx", "-t"], check=False)
-            subprocess.run(["systemctl", "reload", "nginx"], check=False)
+            try:
+                from core import sysexec
+
+                sysexec.run(["nginx", "-t"], timeout=30)
+                sysexec.run(["systemctl", "reload", "nginx"], timeout=30, as_root=True)
+            except Exception:
+                pass
 
         return {"status": "success", "message": "Nginx site removed completely."}
     except HTTPException:
@@ -678,7 +656,7 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
             return {"status": "success", "message": "Apache configuration saved and reloaded successfully."}
 
         np = _nginx_paths()
-        available_path = os.path.join(np.sites_available, safe_filename)
+        available_path = logic.nginx_available_file(np, safe_filename)
 
         if not os.path.exists(available_path):
             raise HTTPException(status_code=404, detail="Site configuration not found.")
@@ -816,128 +794,106 @@ async def stack_overview() -> Dict[str, Any]:
     }
 
 
-@router.post("/stack/bootstrap")
-async def stack_bootstrap(req: StackBootstrapRequest) -> Dict[str, Any]:
-    """Install common presets: LEMP (nginx + php-fpm + mariadb), LAMP, or PHP+DB libs only."""
-    if IS_WINDOWS:
-        return {"status": "success", "message": f"Bootstrap '{req.preset}' simulated (Windows)."}
-
-    pm = pkg_manager()
-    if not pm:
-        raise HTTPException(status_code=400, detail="No supported package manager (apt-get/yum).")
-
-    ver = (req.php_version or "8.2").strip()
-    cmds: List[List[str]] = []
-
-    if req.preset == "nginx_only":
-        cmds.append(["sudo", pm, "install", "-y", "nginx"])
-    elif req.preset == "apache_only":
-        pkg = "apache2" if pm == "apt-get" else "httpd"
-        cmds.append(["sudo", pm, "install", "-y", pkg])
-    elif req.preset == "lemp":
-        cmds.append(["sudo", pm, "install", "-y", "nginx"])
-        if pm == "apt-get":
-            cmds.append(["sudo", pm, "install", "-y", f"php{ver}-fpm", f"php{ver}-cli", f"php{ver}-mysql", "mariadb-server"])
-        else:
-            cmds.append(
-                ["sudo", pm, "install", "-y", "php-fpm", "php-mysqlnd", "mariadb-server"]
-            )
-    elif req.preset == "lamp":
-        if pm == "apt-get":
-            cmds.append(
-                [
-                    "sudo",
-                    pm,
-                    "install",
-                    "-y",
-                    "apache2",
-                    f"php{ver}",
-                    f"libapache2-mod-php{ver}",
-                    f"php{ver}-mysql",
-                    "mariadb-server",
-                ]
-            )
-        else:
-            cmds.append(["sudo", pm, "install", "-y", "httpd", "php", "php-mysqlnd", "mariadb-server"])
-    elif req.preset == "php_mysql":
-        if pm == "apt-get":
-            cmds.append(
-                [
-                    "sudo",
-                    pm,
-                    "install",
-                    "-y",
-                    f"php{ver}-fpm",
-                    f"php{ver}-cli",
-                    f"php{ver}-mysql",
-                    f"php{ver}-curl",
-                    f"php{ver}-mbstring",
-                    f"php{ver}-xml",
-                ]
-            )
-        else:
-            cmds.append(["sudo", pm, "install", "-y", "php-fpm", "php-mysqlnd", "php-cli"])
-
-    for cmd in cmds:
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=(e.stderr or e.stdout or "Bootstrap install failed.").strip(),
-            )
-
-    return {"status": "success", "message": f"Stack bootstrap '{req.preset}' completed."}
-
-
-@router.post("/web_services/install_stack")
-async def install_web_stack(req: dict) -> Dict[str, Any]:
-    """Install a chosen web server stack with conflict guard."""
-    stack = req.get("stack", "nginx")  # nginx | apache2 | litespeed | nginx_apache
+def _install_web_stack_sync(stack: str) -> Dict[str, Any]:
+    """Install nginx, Apache, or OpenLiteSpeed off the event loop."""
+    from core import sysexec
 
     if IS_WINDOWS:
         return {"status": "success", "message": f"Stack '{stack}' install simulated (Windows mock)."}
-
-    pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
-    if not pkg_manager:
-        raise HTTPException(status_code=400, detail="No supported package manager found.")
-
-    install_cmds: List[List[str]] = []
-
+    family = logic.php_package_family()
+    if not family:
+        raise RuntimeError("No supported package manager found.")
+    packages: List[str] = []
     if stack == "nginx":
-        install_cmds.append(["sudo", pkg_manager, "install", "-y", "nginx"])
+        packages = ["nginx"]
     elif stack == "apache2":
-        pkg = "apache2" if pkg_manager == "apt-get" else "httpd"
-        install_cmds.append(["sudo", pkg_manager, "install", "-y", pkg])
-    elif stack == "litespeed":
-        # OpenLiteSpeed repo install
-        install_cmds.append(["sudo", pkg_manager, "install", "-y", "wget"])
-        install_cmds.append(["bash", "-c",
-            "wget -O - https://repo.litespeed.sh | sudo bash && "
-            + ("sudo apt-get install -y openlitespeed" if pkg_manager == "apt-get" else "sudo yum install -y openlitespeed")
-        ])
+        packages = ["apache2"] if family == "apt" else ["httpd"]
     elif stack == "nginx_apache":
-        pkg = "apache2" if pkg_manager == "apt-get" else "httpd"
-        install_cmds.append(["sudo", pkg_manager, "install", "-y", "nginx", pkg])
-        # Configure Apache to listen on 8080
-        apache_conf = "/etc/apache2/ports.conf" if pkg_manager == "apt-get" else "/etc/httpd/conf/httpd.conf"
+        packages = ["nginx", "apache2" if family == "apt" else "httpd"]
+        apache_conf = "/etc/apache2/ports.conf" if family == "apt" else "/etc/httpd/conf/httpd.conf"
         if os.path.exists(apache_conf):
             try:
-                with open(apache_conf, "r") as f:
-                    content = f.read()
+                with open(apache_conf, "r", encoding="utf-8", errors="ignore") as handle:
+                    content = handle.read()
                 content = content.replace("Listen 80", "Listen 8080")
-                with open(apache_conf, "w") as f:
-                    f.write(content)
-            except Exception:
+                with open(apache_conf, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+            except OSError:
                 pass
-
-    for cmd in install_cmds:
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"Install failed: {e.stderr or e.stdout}")
-
+    elif stack == "litespeed":
+        packages = ["wget"]
+    else:
+        raise RuntimeError(f"Unknown stack '{stack}'.")
+    if packages:
+        logic._require_pkg_install(packages)
+    if stack == "litespeed":
+        installer = "apt-get install -y openlitespeed" if family == "apt" else "yum install -y openlitespeed"
+        result = sysexec.run(
+            ["bash", "-c", f"wget -O - https://repo.litespeed.sh | bash && {installer}"],
+            timeout=900,
+            as_root=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"OpenLiteSpeed install failed. {sysexec.combined_output(result)}")
+    if stack in {"nginx", "nginx_apache"}:
+        sysexec.service_enable_now("nginx")
     return {"status": "success", "message": f"Stack '{stack}' installed successfully."}
+
+
+@router.post("/stack/bootstrap")
+def stack_bootstrap(req: StackBootstrapRequest) -> Dict[str, Any]:
+    """Install a LEMP/LAMP preset as a background job so the panel stays responsive."""
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Bootstrap '{req.preset}' simulated (Windows)."}
+
+    async def _handler(job, preset: str, php_version: Optional[str]):
+        job.update(progress=10, message=f"Installing {preset}")
+        job.log(f"Stack bootstrap {preset} (PHP {php_version or 'auto'})")
+        result = await asyncio.to_thread(logic.bootstrap_stack_sync, preset, php_version, job.log)
+        job.update(progress=100, message=result.get("message") or "Stack installed")
+        return result
+
+    job = jobs.submit(
+        kind="web_manager.stack_bootstrap",
+        title=f"Install {req.preset} stack",
+        module="web_manager",
+        payload={"preset": req.preset, "php_version": req.php_version},
+        handler=_handler,
+        args=(req.preset, req.php_version),
+    )
+    return {
+        "status": "accepted",
+        "job_id": job.id,
+        "message": f"Stack bootstrap '{req.preset}' started.",
+    }
+
+
+@router.post("/web_services/install_stack")
+def install_web_stack(req: dict) -> Dict[str, Any]:
+    """Install a web server stack in a background job."""
+    stack = req.get("stack", "nginx")  # nginx | apache2 | litespeed | nginx_apache
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Stack '{stack}' install simulated (Windows mock)."}
+
+    async def _handler(job, stack_name: str):
+        job.update(progress=10, message=f"Installing {stack_name}")
+        result = await asyncio.to_thread(_install_web_stack_sync, stack_name)
+        job.update(progress=100, message=result.get("message") or "Installed")
+        return result
+
+    job = jobs.submit(
+        kind="web_manager.install_stack",
+        title=f"Install {stack}",
+        module="web_manager",
+        payload={"stack": stack},
+        handler=_handler,
+        args=(stack,),
+    )
+    return {
+        "status": "accepted",
+        "job_id": job.id,
+        "message": f"Stack '{stack}' install started.",
+    }
 
 @router.post("/web_services/{service_id}/{action}")
 async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:

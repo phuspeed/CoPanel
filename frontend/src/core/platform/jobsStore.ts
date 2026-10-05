@@ -126,7 +126,9 @@ export const jobsApi = {
   },
   async get(id: string): Promise<Job> {
     const data = await api<Job>(`/api/platform/jobs/${id}`);
-    return localizeJob(data);
+    const job = localizeJob(data);
+    upsert(job);
+    return job;
   },
   async cancel(id: string) {
     return api(`/api/platform/jobs/${id}/cancel`, { method: 'POST' });

@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from passlib.hash import apr_md5_crypt
 
+from core import sysexec
+
 IS_WINDOWS = os.name == "nt"
 SITE_AUTH_START = "# BEGIN COPANEL SITE AUTH"
 SITE_AUTH_END = "# END COPANEL SITE AUTH"
@@ -142,6 +144,43 @@ def parse_apache_vhost(content: str) -> Dict[str, str]:
 class NginxPaths:
     sites_available: str
     sites_enabled: str
+    style: str = "debian"  # debian (sites-available + symlink) | rhel (conf.d)
+
+
+_RHEL_SKIP_CONFS = frozenset({"php-fpm.conf", "ssl.conf", "default.conf"})
+
+
+def detect_nginx_style(nginx_root: str) -> str:
+    """Debian layout when nginx.conf includes sites-enabled, otherwise conf.d."""
+    root = Path(nginx_root)
+    conf = root / "nginx.conf"
+    text = ""
+    if conf.is_file():
+        try:
+            text = conf.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+    if re.search(r"include\s+[^\n]*sites-enabled", text):
+        return "debian"
+    if (root / "conf.d").is_dir() and "sites-enabled" not in text:
+        return "rhel"
+    if (root / "sites-available").is_dir() and (root / "sites-enabled").is_dir():
+        return "debian"
+    if (root / "conf.d").is_dir():
+        return "rhel"
+    return "debian"
+
+
+def nginx_paths_for_root(nginx_root: str) -> NginxPaths:
+    style = detect_nginx_style(nginx_root)
+    if style == "rhel":
+        conf_d = os.path.join(nginx_root, "conf.d")
+        return NginxPaths(sites_available=conf_d, sites_enabled=conf_d, style="rhel")
+    return NginxPaths(
+        sites_available=os.path.join(nginx_root, "sites-available"),
+        sites_enabled=os.path.join(nginx_root, "sites-enabled"),
+        style="debian",
+    )
 
 
 @dataclass
@@ -159,18 +198,114 @@ def get_nginx_paths() -> NginxPaths:
         return NginxPaths(
             sites_available=os.path.join(base, "sites-available"),
             sites_enabled=os.path.join(base, "sites-enabled"),
+            style="debian",
         )
-    return NginxPaths(
-        sites_available="/etc/nginx/sites-available",
-        sites_enabled="/etc/nginx/sites-enabled",
-    )
+    return nginx_paths_for_root("/etc/nginx")
 
 
 def ensure_nginx_dirs() -> NginxPaths:
     p = get_nginx_paths()
     os.makedirs(p.sites_available, exist_ok=True)
-    os.makedirs(p.sites_enabled, exist_ok=True)
+    if p.style != "rhel":
+        os.makedirs(p.sites_enabled, exist_ok=True)
     return p
+
+
+def nginx_site_filename(filename: str, style: str) -> str:
+    if style == "rhel" and not filename.endswith(".conf"):
+        return f"{filename}.conf"
+    return filename
+
+
+def nginx_available_file(np: NginxPaths, filename: str) -> str:
+    return os.path.join(np.sites_available, nginx_site_filename(filename, np.style))
+
+
+def nginx_enabled_file(np: NginxPaths, filename: str) -> str:
+    if np.style == "rhel":
+        return nginx_available_file(np, filename)
+    return os.path.join(np.sites_enabled, filename)
+
+
+def list_nginx_site_filenames(np: NginxPaths) -> List[str]:
+    if not os.path.isdir(np.sites_available):
+        return []
+    names: List[str] = []
+    if np.style == "rhel":
+        for fn in sorted(os.listdir(np.sites_available)):
+            if fn in _RHEL_SKIP_CONFS or fn.endswith(".disabled") or not fn.endswith(".conf"):
+                continue
+            path = os.path.join(np.sites_available, fn)
+            if not os.path.isfile(path):
+                continue
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if "server_name" not in text:
+                continue
+            names.append(fn)
+        return names
+    for fn in sorted(os.listdir(np.sites_available)):
+        path = os.path.join(np.sites_available, fn)
+        if os.path.isfile(path):
+            names.append(fn)
+    return names
+
+
+def nginx_site_is_enabled(np: NginxPaths, filename: str) -> bool:
+    if np.style == "rhel":
+        live = nginx_available_file(np, filename)
+        return os.path.isfile(live)
+    return os.path.exists(nginx_enabled_file(np, filename))
+
+
+def enable_nginx_site(np: NginxPaths, filename: str) -> None:
+    if np.style == "rhel":
+        live = nginx_available_file(np, filename)
+        disabled = live + ".disabled"
+        if os.path.isfile(disabled) and not os.path.isfile(live):
+            os.rename(disabled, live)
+        return
+    available = os.path.join(np.sites_available, filename)
+    enabled = nginx_enabled_file(np, filename)
+    if not os.path.exists(enabled):
+        if IS_WINDOWS:
+            shutil.copy2(available, enabled)
+        else:
+            os.symlink(available, enabled)
+
+
+def disable_nginx_site(np: NginxPaths, filename: str) -> None:
+    if np.style == "rhel":
+        live = nginx_available_file(np, filename)
+        if os.path.isfile(live):
+            os.rename(live, live + ".disabled")
+        return
+    enabled = nginx_enabled_file(np, filename)
+    if os.path.lexists(enabled):
+        if os.path.islink(enabled):
+            os.unlink(enabled)
+        else:
+            os.remove(enabled)
+
+
+def remove_nginx_site(np: NginxPaths, filename: str) -> None:
+    if np.style != "rhel":
+        enabled = nginx_enabled_file(np, filename)
+        if os.path.lexists(enabled):
+            if os.path.islink(enabled):
+                os.unlink(enabled)
+            else:
+                os.remove(enabled)
+        available = os.path.join(np.sites_available, filename)
+        if os.path.isfile(available):
+            os.remove(available)
+        return
+    live = nginx_available_file(np, filename)
+    for path in (live, live + ".disabled"):
+        if os.path.isfile(path):
+            os.remove(path)
 
 
 def detect_apache_layout() -> Optional[ApacheLayout]:
@@ -207,17 +342,13 @@ def detect_apache_layout() -> Optional[ApacheLayout]:
 
 
 def _run_cmd(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return sysexec.run(cmd, timeout=timeout)
 
 
 def run_with_optional_sudo(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
-    except Exception:
-        pass
     if IS_WINDOWS:
         raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="Command failed on Windows mode.")
-    return subprocess.run(["sudo", "-n"] + cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    return sysexec.run(cmd, timeout=timeout, as_root=True, check=True)
 
 
 def systemctl_is_active(unit: str) -> Optional[str]:
@@ -235,83 +366,128 @@ def systemctl_is_active(unit: str) -> Optional[str]:
         return None
 
 
+def _php_cli_version() -> str:
+    php_bin = _php_resolve_bin("php")
+    if not php_bin:
+        return ""
+    try:
+        res = _php_run([php_bin, "-v"])
+    except Exception:
+        return ""
+    match = re.search(r"PHP\s+(\d+\.\d+)", res.stdout or "")
+    return match.group(1) if match else ""
+
+
 def detect_php_fpm_socket(version: str) -> Optional[str]:
-    """Return first existing PHP-FPM socket for version, or None."""
+    """Return the PHP-FPM socket for ``version``, or None.
+
+    Alma/RHEL ship a single ``/run/php-fpm/www.sock``. That socket is accepted
+    only when ``php -v`` reports the same version, so a vhost never silently
+    runs a different PHP than the one that has the required extensions.
+    """
     ver = (version or "").strip()
     candidates = [
         f"/run/php/php{ver}-fpm.sock",
         f"/var/run/php/php{ver}-fpm.sock",
     ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
     try:
-        for path in glob.glob("/run/php/php*-fpm.sock"):
-            if ver and ver in path:
+        for path in glob.glob("/run/php/php*-fpm.sock") + glob.glob("/var/run/php/php*-fpm.sock"):
+            if ver and ver in os.path.basename(path):
                 return path
     except Exception:
         pass
+    if ver and _php_cli_version() == ver:
+        for candidate in ("/run/php-fpm/www.sock", "/var/run/php-fpm/www.sock"):
+            if os.path.exists(candidate):
+                return candidate
     return None
+
+
+def php_fpm_identity(version: str = "") -> Tuple[str, str]:
+    """User and group of the PHP-FPM pool that will read the site files."""
+    user, group = "www-data", "www-data"
+    if not shutil.which("apt-get") and (
+        shutil.which("dnf") or shutil.which("yum") or Path("/etc/redhat-release").is_file()
+    ):
+        user, group = "apache", "apache"
+    patterns = []
+    if version:
+        patterns.append(f"/etc/php/{version}/fpm/pool.d/www.conf")
+    patterns.extend([
+        "/etc/php/*/fpm/pool.d/www.conf",
+        "/etc/php-fpm.d/www.conf",
+    ])
+    seen = set()
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            user_match = re.search(r"^\s*user\s*=\s*(\S+)", text, re.M)
+            group_match = re.search(r"^\s*group\s*=\s*(\S+)", text, re.M)
+            if user_match:
+                user = user_match.group(1)
+            if group_match:
+                group = group_match.group(1)
+            if user_match or group_match:
+                return user, group
+    return user, group
+
+
+def php_fpm_unit(version: str) -> str:
+    if shutil.which("apt-get"):
+        return f"php{version}-fpm"
+    return "php-fpm"
 
 
 def _start_php_fpm(version: str) -> None:
     ver = (version or "").strip()
     if not ver or IS_WINDOWS:
         return
-    for unit in (f"php{ver}-fpm", f"php-fpm{ver}", "php-fpm"):
+    units = [php_fpm_unit(ver)]
+    if f"php{ver}-fpm" not in units:
+        units.append(f"php{ver}-fpm")
+    if "php-fpm" not in units:
+        units.append("php-fpm")
+    for unit in units:
         try:
-            subprocess.run(
-                ["sudo", "systemctl", "start", unit],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-            subprocess.run(
-                ["sudo", "systemctl", "enable", unit],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
+            sysexec.run(["systemctl", "enable", "--now", unit], timeout=30, as_root=True)
+            if detect_php_fpm_socket(ver):
+                return
         except Exception:
             continue
 
 
-def ensure_php_fpm_socket(version: Optional[str] = None) -> str:
-    """Return a live PHP-FPM unix socket, starting FPM if needed.
+def ensure_php_fpm_socket(version: Optional[str] = None, *, strict: bool = True) -> str:
+    """Return the PHP-FPM socket for the requested version.
 
-    Raises RuntimeError when no socket can be found (would cause nginx 502).
+    ``strict`` is kept for callers. A different installed PHP is never
+    substituted: that mismatch is what made WordPress report a missing MySQL
+    extension after the vhost had been pointed at another socket.
     """
-    preferred = (version or "").strip() or "8.2"
+    del strict  # both modes refuse a cross-version fallback
+    preferred = (version or "").strip()
+    if not preferred or preferred.lower() == "auto":
+        preferred = resolve_php_version(preferred or "auto")
     sock = detect_php_fpm_socket(preferred)
     if sock:
         return sock
-
     _start_php_fpm(preferred)
     sock = detect_php_fpm_socket(preferred)
     if sock:
         return sock
-
-    # Any other running FPM socket is better than a dead path that causes 502.
-    for path in sorted(glob.glob("/run/php/php*-fpm.sock")) + sorted(
-        glob.glob("/var/run/php/php*-fpm.sock")
-    ):
-        if os.path.exists(path):
-            return path
-
-    # Last attempt: start common versions then rescan.
-    for ver in ("8.3", "8.2", "8.1", "8.0"):
-        if ver == preferred:
-            continue
-        _start_php_fpm(ver)
-        sock = detect_php_fpm_socket(ver)
-        if sock:
-            return sock
-
+    unit = php_fpm_unit(preferred)
     raise RuntimeError(
-        f"PHP-FPM socket not found for PHP {preferred}. "
-        "Install/start php-fpm (e.g. systemctl start php8.2-fpm) to avoid nginx 502."
+        f"PHP-FPM socket for PHP {preferred} was not found. "
+        f"Start {unit} (Debian/Ubuntu: php{preferred}-fpm, Alma/RHEL: php-fpm) and retry. "
+        "CoPanel will not use a different PHP version."
     )
 
 
@@ -336,7 +512,6 @@ def repair_nginx_php_socket(domain: str, php_version: Optional[str] = None) -> D
         r"fastcgi_pass\s+unix:[^;]+;",
         f"fastcgi_pass unix:{sock};",
         content,
-        count=1,
     )
     if n == 0:
         return {"status": "success", "message": "no unix fastcgi_pass to update", "socket": sock, "updated": False}
@@ -346,9 +521,9 @@ def repair_nginx_php_socket(domain: str, php_version: Optional[str] = None) -> D
 
     vhost.write_text(new_content, encoding="utf-8")
     if not IS_WINDOWS and shutil.which("nginx"):
-        test = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+        test = sysexec.run(["nginx", "-t"], timeout=30, as_root=True)
         if test.returncode == 0:
-            subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+            sysexec.run(["systemctl", "reload", "nginx"], timeout=30, as_root=True)
         else:
             vhost.write_text(content, encoding="utf-8")
             return {
@@ -499,19 +674,19 @@ def read_apache_site(layout: ApacheLayout, filename: str) -> Tuple[str, str]:
 
 
 def nginx_reload_test() -> None:
-    subprocess.run(["nginx", "-t"], check=True, capture_output=True, text=True)
-    subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, text=True)
+    sysexec.run(["nginx", "-t"], timeout=30, check=True)
+    sysexec.run(["systemctl", "reload", "nginx"], timeout=30, as_root=True, check=True)
 
 
 def apache_reload_test(layout: ApacheLayout) -> None:
     if shutil.which("apache2ctl"):
-        subprocess.run(["apache2ctl", "configtest"], check=True, capture_output=True, text=True)
-        subprocess.run(["systemctl", "reload", layout.service_name], check=True, capture_output=True, text=True)
+        sysexec.run(["apache2ctl", "configtest"], timeout=30, check=True)
+        sysexec.run(["systemctl", "reload", layout.service_name], timeout=30, as_root=True, check=True)
     elif shutil.which("httpd"):
-        subprocess.run(["httpd", "-t"], check=True, capture_output=True, text=True)
-        subprocess.run(["systemctl", "reload", layout.service_name], check=True, capture_output=True, text=True)
+        sysexec.run(["httpd", "-t"], timeout=30, check=True)
+        sysexec.run(["systemctl", "reload", layout.service_name], timeout=30, as_root=True, check=True)
     else:
-        subprocess.run(["systemctl", "reload", layout.service_name], check=True, capture_output=True, text=True)
+        sysexec.run(["systemctl", "reload", layout.service_name], timeout=30, as_root=True, check=True)
 
 
 def pkg_manager() -> Optional[str]:
@@ -527,9 +702,61 @@ def pkg_manager() -> Optional[str]:
 PHP_SUPPORTED_VERSIONS = ["8.4", "8.3", "8.2", "8.1", "8.0", "7.4"]
 PHP_DEFAULT_MODULES = ["mysqli", "curl", "mbstring", "gd", "zip", "xml", "redis", "intl", "soap", "bcmath"]
 
+# Distro package names. `phpX.Y-mysqli` does not exist (the module is in
+# `phpX.Y-mysql`); on RHEL the module is `php-mysqlnd`. Unknown extensions
+# are rejected instead of guessed, because one bad name aborts the whole apt
+# transaction.
+PHP_EXT_PACKAGES: Dict[str, Dict[str, str]] = {
+    "mysqli": {"apt": "php{ver}-mysql", "rpm": "php-mysqlnd"},
+    "pdo_mysql": {"apt": "php{ver}-mysql", "rpm": "php-mysqlnd"},
+    "mysql": {"apt": "php{ver}-mysql", "rpm": "php-mysqlnd"},
+    "curl": {"apt": "php{ver}-curl", "rpm": "php-common"},
+    "mbstring": {"apt": "php{ver}-mbstring", "rpm": "php-mbstring"},
+    "gd": {"apt": "php{ver}-gd", "rpm": "php-gd"},
+    "zip": {"apt": "php{ver}-zip", "rpm": "php-pecl-zip"},
+    "xml": {"apt": "php{ver}-xml", "rpm": "php-xml"},
+    "intl": {"apt": "php{ver}-intl", "rpm": "php-intl"},
+    "bcmath": {"apt": "php{ver}-bcmath", "rpm": "php-bcmath"},
+    "soap": {"apt": "php{ver}-soap", "rpm": "php-soap"},
+    "redis": {"apt": "php{ver}-redis", "rpm": "php-pecl-redis"},
+}
+
+
+class UnknownPhpExtension(ValueError):
+    """Raised when an extension has no distro package mapping."""
+
+
+def php_package_family() -> str:
+    if shutil.which("apt-get"):
+        return "apt"
+    if shutil.which("dnf") or shutil.which("yum") or shutil.which("rpm"):
+        return "rpm"
+    return ""
+
+
+def php_extension_package(module: str, version: str, family: str) -> str:
+    key = (module or "").strip().lower()
+    spec = PHP_EXT_PACKAGES.get(key)
+    if not spec or family not in spec:
+        known = ", ".join(sorted(PHP_EXT_PACKAGES))
+        raise UnknownPhpExtension(
+            f"No {family or 'distro'} package mapping for PHP extension '{module}'. "
+            f"Known extensions: {known}."
+        )
+    return spec[family].format(ver=version)
+
+
+def php_extension_packages(modules: List[str], version: str, family: str) -> List[str]:
+    packages: List[str] = []
+    for module in modules:
+        package = php_extension_package(module, version, family)
+        if package not in packages:
+            packages.append(package)
+    return packages
+
 
 def _php_run(cmd: List[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+    return sysexec.run(cmd, timeout=60)
 
 
 def _php_resolve_bin(name: str) -> Optional[str]:
@@ -721,26 +948,212 @@ def get_enabled_modules(version: str) -> List[str]:
     return []
 
 
+def _os_release() -> Dict[str, str]:
+    data: Dict[str, str] = {}
+    path = Path("/etc/os-release")
+    if not path.is_file():
+        return data
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return data
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key.strip()] = value.strip().strip('"')
+    return data
+
+
+def _apt_candidate_version(package: str) -> str:
+    try:
+        result = sysexec.run(["apt-cache", "policy", package], timeout=20)
+    except sysexec.CommandError:
+        return ""
+    match = re.search(r"Candidate:\s+(\S+)", result.stdout or "")
+    if not match or match.group(1) == "(none)":
+        return ""
+    found = re.search(r"(\d+\.\d+)", match.group(1))
+    return found.group(1) if found else ""
+
+
+def _rpm_php_candidate() -> str:
+    tool = "dnf" if shutil.which("dnf") else ("yum" if shutil.which("yum") else "")
+    if tool:
+        try:
+            result = sysexec.run([tool, "-q", "info", "php-fpm"], timeout=40)
+        except sysexec.CommandError:
+            result = None
+        if result is not None:
+            match = re.search(r"^Version\s*:\s*(\d+\.\d+)", result.stdout or "", re.M)
+            if match:
+                return match.group(1)
+    return _php_cli_version()
+
+
+def distro_default_php() -> str:
+    """PHP version the distro repositories would install, without extra repos."""
+    if shutil.which("apt-get"):
+        version = _apt_candidate_version("php-fpm")
+        if version:
+            return version
+    if shutil.which("dnf") or shutil.which("yum"):
+        version = _rpm_php_candidate()
+        if version:
+            return version
+    info = _os_release()
+    distro_id = (info.get("ID") or "").lower()
+    version_id = info.get("VERSION_ID") or ""
+    major = version_id.split(".")[0]
+    table = {
+        ("ubuntu", "22.04"): "8.1",
+        ("ubuntu", "24.04"): "8.3",
+        ("debian", "12"): "8.2",
+        ("debian", "13"): "8.4",
+        ("almalinux", "9"): "8.1",
+        ("rocky", "9"): "8.1",
+        ("rhel", "9"): "8.1",
+        ("centos", "9"): "8.1",
+    }
+    return table.get((distro_id, version_id)) or table.get((distro_id, major)) or ""
+
+
+def _php_version_installable(version: str) -> bool:
+    if shutil.which("apt-get"):
+        return _apt_candidate_version(f"php{version}-fpm").startswith(version) and bool(version)
+    if shutil.which("dnf") or shutil.which("yum"):
+        candidate = _rpm_php_candidate() or distro_default_php()
+        return candidate == version
+    return False
+
+
+def available_php_versions() -> List[str]:
+    found: List[str] = []
+    for version in PHP_SUPPORTED_VERSIONS:
+        if _is_php_version_installed(version) or _php_version_installable(version):
+            found.append(version)
+    if not found:
+        default = distro_default_php()
+        if default:
+            found.append(default)
+    return found
+
+
+def resolve_php_version(requested: Optional[str]) -> str:
+    """Pick a PHP version this distro can actually run.
+
+    ``auto`` / empty prefers a running PHP-FPM, then the distro default.
+    An explicit version that is not packaged raises instead of falling back.
+    """
+    req = (requested or "").strip()
+    if req.lower() in {"", "auto"}:
+        for row in list_php_fpm_versions():
+            version = str(row.get("version") or "").strip()
+            if row.get("status") == "running" and version in PHP_SUPPORTED_VERSIONS:
+                return version
+        active = get_active_php_version()
+        if active:
+            return active
+        default = distro_default_php()
+        if default:
+            return default
+        raise RuntimeError(
+            "No PHP version is available from this distro's repositories. "
+            "Install php-fpm from the Ubuntu, Debian, or Alma packages. "
+            "CoPanel does not enable third-party PHP repositories."
+        )
+    if req not in PHP_SUPPORTED_VERSIONS:
+        raise RuntimeError(
+            f"PHP {req} is not supported. Choose one of: {', '.join(PHP_SUPPORTED_VERSIONS)}."
+        )
+    if _is_php_version_installed(req) or _php_version_installable(req):
+        return req
+    available = ", ".join(available_php_versions()) or "none"
+    raise RuntimeError(
+        f"PHP {req} is not available on this system. Available: {available}. "
+        "CoPanel will not switch to a different PHP version."
+    )
+
+
+def _extension_loaded(loaded: set[str], module: str) -> bool:
+    name = module.lower()
+    if name in loaded:
+        return True
+    if name in {"mysqli", "mysql", "pdo_mysql"}:
+        return bool(loaded.intersection({"mysqli", "pdo_mysql", "mysqlnd"}))
+    return False
+
+
+def install_php_extensions(version: str, modules: List[str]) -> Dict[str, Any]:
+    """Install the distro packages for ``modules`` and require them to load."""
+    requested = [m.strip() for m in modules if m and m.strip()]
+    if not requested:
+        return {"status": "success", "packages": [], "message": "No PHP extensions requested."}
+    if IS_WINDOWS:
+        return {"status": "success", "packages": requested, "message": "PHP extensions simulated (Windows)."}
+    family = php_package_family()
+    if not family:
+        raise RuntimeError("No supported package manager to install PHP extensions.")
+    packages = php_extension_packages(requested, version, family)
+    result = sysexec.pkg_install(packages)
+    if not result.get("ok"):
+        missing = ", ".join(result.get("missing") or packages)
+        tail = result.get("output_tail") or ""
+        raise RuntimeError(f"PHP extension install failed ({missing}). {tail}".strip())
+    unit = php_fpm_unit(version)
+    try:
+        sysexec.run(["systemctl", "restart", unit], timeout=30, as_root=True)
+    except sysexec.CommandError:
+        pass
+    loaded = set(get_enabled_modules(version))
+    missing_mods = [name for name in requested if not _extension_loaded(loaded, name)]
+    if missing_mods:
+        raise RuntimeError(
+            f"PHP {version} is missing extensions: {', '.join(missing_mods)}. "
+            f"Restart {unit} and check `php -m`."
+        )
+    return {"status": "success", "packages": packages, "message": f"PHP {version} extensions installed."}
+
+
 def install_php_version(version: str) -> Dict[str, Any]:
     if version not in PHP_SUPPORTED_VERSIONS:
         return {"status": "error", "message": "Unsupported PHP version selected."}
     if IS_WINDOWS:
         return {"status": "success", "message": f"PHP {version} installed successfully (Mock mode)."}
     try:
-        pm = pkg_manager()
-        if pm == "apt-get":
-            cmd = [
-                "sudo", "apt-get", "install", "-y",
-                f"php{version}", f"php{version}-fpm", f"php{version}-mysql", f"php{version}-curl",
-                f"php{version}-mbstring", f"php{version}-xml", f"php{version}-zip",
+        family = php_package_family()
+        if family == "apt":
+            packages = [
+                f"php{version}-cli",
+                f"php{version}-fpm",
+                f"php{version}-mysql",
+                f"php{version}-curl",
+                f"php{version}-mbstring",
+                f"php{version}-xml",
+                f"php{version}-zip",
             ]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            return {"status": "success", "message": f"PHP {version} installed successfully."}
-        if pm == "yum":
-            cmd = ["sudo", "yum", "install", "-y", f"php{version}-fpm", f"php{version}-mysql"]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            return {"status": "success", "message": f"PHP {version} installed successfully via yum."}
-        return {"status": "error", "message": "No recognized package manager found to install PHP."}
+        elif family == "rpm":
+            if not _php_version_installable(version) and not _is_php_version_installed(version):
+                available = ", ".join(available_php_versions()) or "none"
+                return {
+                    "status": "error",
+                    "message": (
+                        f"PHP {version} is not in the distro repositories. Available: {available}."
+                    ),
+                }
+            packages = ["php-cli", "php-fpm", "php-mysqlnd"]
+        else:
+            return {"status": "error", "message": "No recognized package manager found to install PHP."}
+        installed = sysexec.pkg_install(packages)
+        if not installed.get("ok"):
+            missing = ", ".join(installed.get("missing") or packages)
+            tail = installed.get("output_tail") or ""
+            return {"status": "error", "message": f"PHP {version} install failed ({missing}). {tail}".strip()}
+        try:
+            sysexec.service_enable_now(php_fpm_unit(version))
+        except sysexec.CommandError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "success", "message": f"PHP {version} installed successfully."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -765,12 +1178,7 @@ def uninstall_php_version(version: str) -> Dict[str, Any]:
             has_apt = bool(tracked) or _php_debian_dpkg_stream_has_installed_pkg(version)
             if not has_apt and not _is_php_version_installed(version):
                 return {"status": "success", "message": f"PHP {version} is not installed (nothing to remove)."}
-            r = subprocess.run(
-                ["sudo", "apt-get", "purge", "-y", *to_purge],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            r = sysexec.run(["apt-get", "purge", "-y", *to_purge], timeout=900, as_root=True)
             out = (r.stdout or "") + (r.stderr or "")
             if r.returncode != 0 and "E: Unable to locate package" not in out:
                 tail = out[-800:]
@@ -778,10 +1186,10 @@ def uninstall_php_version(version: str) -> Dict[str, Any]:
             ver_re = re.escape(version)
             shell = (
                 f"PKGS=$(dpkg-query -W -f '${{Package}}\\n' 2>/dev/null | grep -E '^php{ver_re}(-|$)|^libapache2-mod-php{ver_re}$' || true); "
-                f"if [ -n \"$PKGS\" ]; then sudo apt-get purge -y $PKGS; fi"
+                f"if [ -n \"$PKGS\" ]; then apt-get purge -y $PKGS; fi"
             )
-            subprocess.run(["/bin/bash", "-lc", shell], check=False, capture_output=True, text=True)
-            subprocess.run(["sudo", "apt-get", "autoremove", "-y"], check=False, capture_output=True, text=True)
+            sysexec.run(["/bin/bash", "-lc", shell], timeout=900, as_root=True)
+            sysexec.run(["apt-get", "autoremove", "-y"], timeout=300, as_root=True)
             if _php_debian_dpkg_stream_has_installed_pkg(version):
                 tail = out[-400:]
                 return {"status": "error", "message": f"PHP {version} packages still show as installed in dpkg. {tail}"}
@@ -792,11 +1200,11 @@ def uninstall_php_version(version: str) -> Dict[str, Any]:
                 }
             return {"status": "success", "message": f"PHP {version} purged (APT packages and config removed)."}
         if pm == "yum":
-            subprocess.run(
-                ["sudo", "yum", "remove", "-y", f"php{version}*", f"php-fpm{version}"],
-                check=False,
-                capture_output=True,
-                text=True,
+            tool = "dnf" if shutil.which("dnf") else "yum"
+            sysexec.run(
+                [tool, "remove", "-y", "php-fpm", "php-cli", "php-mysqlnd"],
+                timeout=900,
+                as_root=True,
             )
             return {"status": "success", "message": f"PHP {version} removed."}
         return {"status": "error", "message": "No recognized package manager found."}
@@ -812,9 +1220,9 @@ def set_active_php_version(version: str) -> Dict[str, Any]:
     try:
         php_bin = _php_resolve_bin(f"php{version}")
         if php_bin and _php_resolve_bin("update-alternatives"):
-            _php_run(["sudo", "update-alternatives", "--set", "php", php_bin])
+            sysexec.run(["update-alternatives", "--set", "php", php_bin], timeout=30, as_root=True)
         if shutil.which("systemctl"):
-            _php_run(["sudo", "systemctl", "restart", f"php{version}-fpm"])
+            sysexec.run(["systemctl", "restart", php_fpm_unit(version)], timeout=30, as_root=True)
         return {"status": "success", "message": f"PHP {version} set as active."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -828,21 +1236,21 @@ def toggle_php_module(version: str, module: str, enable: bool) -> Dict[str, Any]
     try:
         if shutil.which("phpenmod") and shutil.which("phpdismod"):
             before = set(get_enabled_modules(version))
-            cmd = ["sudo", "phpenmod" if enable else "phpdismod", "-v", version, module]
-            res = _php_run(cmd)
+            cmd = ["phpenmod" if enable else "phpdismod", "-v", version, module]
+            res = sysexec.run(cmd, timeout=60, as_root=True)
             err = (res.stderr or "") + (res.stdout or "")
             if res.returncode != 0:
                 low = err.lower()
                 if "not found" in low or "doesn't exist" in low or "cannot find" in low:
                     return {"status": "error", "message": f"Module '{module}' not found for PHP {version}."}
                 return {"status": "error", "message": err.strip() or f"phpenmod/phpdismod exited {res.returncode}"}
-            _php_run(["sudo", "systemctl", "restart", f"php{version}-fpm"])
+            sysexec.run(["systemctl", "restart", php_fpm_unit(version)], timeout=30, as_root=True)
             after = set(get_enabled_modules(version))
             mod_l = module.lower()
             if enable and mod_l not in after:
                 return {
                     "status": "error",
-                    "message": f"Module '{module}' did not appear loaded after enable (may need php{version}-{module} package via apt).",
+                    "message": f"Module '{module}' did not appear loaded after enable for PHP {version}.",
                 }
             if not enable and mod_l in after and mod_l in before:
                 return {
@@ -880,7 +1288,82 @@ def save_php_ini(version: str, content: str) -> Dict[str, Any]:
         ini_path.parent.mkdir(parents=True, exist_ok=True)
         ini_path.write_text(content, encoding="utf-8")
         if not IS_WINDOWS:
-            subprocess.run(["sudo", "systemctl", "restart", f"php{version}-fpm"], check=True, capture_output=True, text=True)
+            sysexec.run(["systemctl", "restart", php_fpm_unit(version)], timeout=30, as_root=True, check=True)
         return {"status": "success", "message": f"php.ini for PHP {version} successfully updated and restarted."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _require_pkg_install(packages: List[str]) -> None:
+    result = sysexec.pkg_install(packages)
+    if not result.get("ok"):
+        missing = ", ".join(result.get("missing") or packages)
+        tail = result.get("output_tail") or ""
+        raise RuntimeError(f"Package install failed ({missing}). {tail}".strip())
+
+
+def bootstrap_stack_sync(preset: str, php_version: Optional[str], log: Optional[Any] = None) -> Dict[str, Any]:
+    """Install a LEMP/LAMP preset. Raises RuntimeError with the package tail on failure."""
+    def _log(line: str) -> None:
+        if log:
+            log(line)
+
+    if IS_WINDOWS:
+        return {"status": "success", "message": f"Bootstrap '{preset}' simulated (Windows)."}
+    family = php_package_family()
+    if not family:
+        raise RuntimeError("No supported package manager (apt-get, dnf, or yum).")
+    version = (php_version or "").strip() or "auto"
+    if preset in {"lemp", "lamp", "php_mysql"}:
+        version = resolve_php_version(version)
+        _log(f"PHP {version}")
+    packages: List[str] = []
+    services: List[str] = []
+    if preset == "nginx_only":
+        packages = ["nginx"]
+        services = ["nginx"]
+    elif preset == "apache_only":
+        packages = ["apache2"] if family == "apt" else ["httpd"]
+        services = ["apache2"] if family == "apt" else ["httpd"]
+    elif preset == "lemp":
+        if family == "apt":
+            packages = ["nginx", f"php{version}-fpm", f"php{version}-cli", f"php{version}-mysql", "mariadb-server"]
+            services = ["nginx", f"php{version}-fpm", "mariadb"]
+        else:
+            packages = ["nginx", "php-fpm", "php-mysqlnd", "mariadb-server"]
+            services = ["nginx", "php-fpm", "mariadb"]
+    elif preset == "lamp":
+        if family == "apt":
+            packages = ["apache2", f"php{version}", f"libapache2-mod-php{version}", f"php{version}-mysql", "mariadb-server"]
+            services = ["apache2", "mariadb"]
+        else:
+            packages = ["httpd", "php", "php-mysqlnd", "mariadb-server"]
+            services = ["httpd", "mariadb"]
+    elif preset == "php_mysql":
+        if family == "apt":
+            packages = [
+                f"php{version}-fpm", f"php{version}-cli", f"php{version}-mysql",
+                f"php{version}-curl", f"php{version}-mbstring", f"php{version}-xml",
+            ]
+            services = [f"php{version}-fpm"]
+        else:
+            packages = ["php-fpm", "php-mysqlnd", "php-cli"]
+            services = ["php-fpm"]
+    else:
+        raise RuntimeError(f"Unknown stack preset '{preset}'.")
+    _log("Installing " + ", ".join(packages))
+    _require_pkg_install(packages)
+    for unit in services:
+        try:
+            sysexec.service_enable_now(unit)
+            _log(f"Service {unit} is active")
+        except sysexec.CommandError as exc:
+            if unit == "mariadb":
+                try:
+                    sysexec.service_enable_now("mysql")
+                    _log("Service mysql is active")
+                    continue
+                except sysexec.CommandError:
+                    pass
+            raise RuntimeError(str(exc)) from exc
+    return {"status": "success", "message": f"Stack bootstrap '{preset}' completed.", "php_version": version}

@@ -9,6 +9,7 @@ import WindowModal from '../../core/shell/WindowModal';
 import WebManagerSidebar, { type WebManagerTab } from './components/WebManagerSidebar';
 import PhpManagerPanel from './components/PhpManagerPanel';
 import * as Icons from 'lucide-react';
+import { jobsApi } from '../../core/platform';
 
 interface SiteItem {
   filename: string;
@@ -638,6 +639,21 @@ export default function WebManagerDashboard() {
     }
   };
 
+  const waitForStackJob = async (jobId: string): Promise<{ ok: boolean; message: string }> => {
+    const started = Date.now();
+    while (Date.now() - started < 15 * 60 * 1000) {
+      const job = await jobsApi.get(jobId);
+      if (job.status === 'success') {
+        return { ok: true, message: job.message || job.result?.message || 'Done.' };
+      }
+      if (job.status === 'failed' || job.status === 'cancelled') {
+        return { ok: false, message: job.error || job.message || 'Failed.' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return { ok: false, message: 'Still running. Check Task Center.' };
+  };
+
   const handleInstallStack = async (stack: string) => {
     setInstallingStack(stack);
     setStackMsg(null);
@@ -648,7 +664,12 @@ export default function WebManagerDashboard() {
         body: JSON.stringify({ stack })
       });
       const d = await res.json();
-      if (res.ok) {
+      if (res.ok && d.job_id) {
+        setStackMsg({ msg: d.message || 'Install started.', isError: false });
+        const done = await waitForStackJob(d.job_id);
+        setStackMsg({ msg: done.message, isError: !done.ok });
+        fetchWebServices();
+      } else if (res.ok) {
         setStackMsg({ msg: d.message || 'Stack installed.', isError: false });
         fetchWebServices();
       } else {
@@ -671,7 +692,12 @@ export default function WebManagerDashboard() {
         body: JSON.stringify({ preset, php_version: bootstrapPhpVer }),
       });
       const d = await res.json();
-      if (res.ok) {
+      if (res.ok && d.job_id) {
+        setStackMsg({ msg: d.message || 'Bootstrap started.', isError: false });
+        const done = await waitForStackJob(d.job_id);
+        setStackMsg({ msg: done.message, isError: !done.ok });
+        fetchWebServices();
+      } else if (res.ok) {
         setStackMsg({ msg: d.message || 'Bootstrap OK.', isError: false });
         fetchWebServices();
       } else {

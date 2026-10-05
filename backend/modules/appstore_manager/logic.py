@@ -383,8 +383,28 @@ def restart_backend_service(delay: float = 2.0) -> Dict[str, Any]:
             )
         return result
 
+    def _wait_for_idle_jobs() -> None:
+        """Let Site Wizard and other jobs finish before systemd kills the process."""
+        deadline = time.time() + 600
+        announced = False
+        while time.time() < deadline:
+            try:
+                from core.jobs import jobs
+
+                busy = jobs.has_running_work()
+            except Exception:
+                return
+            if not busy:
+                return
+            if not announced:
+                logger.info("Deferring copanel restart for up to 10 minutes because a job is still running")
+                announced = True
+            time.sleep(5)
+        logger.warning("Restarting copanel after waiting 10 minutes for jobs to finish")
+
     def _do_restart():
         time.sleep(delay)
+        _wait_for_idle_jobs()
         try:
             result = _run_restart()
             if result.returncode != 0:
