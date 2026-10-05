@@ -30,9 +30,10 @@ interface Template {
 interface Preflight {
   nginx: { installed: boolean; ready: boolean };
   mysql: { installed: boolean; ready: boolean };
-  php: { installed_versions: string[]; active: string; ready: boolean };
+  php: { installed_versions: string[]; active: string; ready: boolean; suggested?: string };
   ready_for_lemp: boolean;
   ready_for_static: boolean;
+  dns?: { dns_ok: boolean; reason?: string };
 }
 
 interface FormState {
@@ -61,7 +62,7 @@ const INITIAL: FormState = {
   database_name: '',
   database_user: '',
   database_password: '',
-  issue_ssl: true,
+  issue_ssl: false,
   ssl_email: '',
 };
 
@@ -86,6 +87,8 @@ export default function SiteWizard() {
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [jobId, setJobId] = useState<string | null>(searchParams.get('job'));
+  const [sslTouched, setSslTouched] = useState(false);
+  const [pollWarning, setPollWarning] = useState<string | null>(null);
   const job = useJob(jobId);
 
   const tr = useMemo(
@@ -104,6 +107,10 @@ export default function SiteWizard() {
           quickDesc: 'Pick a stack, enter your domain, and provision Nginx + app + DB + SSL in one job.',
           domainLabel: 'Domain name',
           domainHint: 'DNS should point to this server before SSL',
+          issueSsl: "Issue Let's Encrypt SSL",
+          dnsOk: 'DNS points at this server. SSL can be issued.',
+          dnsBad: 'DNS does not point at this server. SSL will be skipped so Let’s Encrypt is not called.',
+          lostContact: 'Lost contact with the panel. The job may still be running.',
           sslEmail: 'SSL contact email',
           installNow: 'Install now',
           installing: 'Starting…',
@@ -135,6 +142,10 @@ export default function SiteWizard() {
           quickDesc: 'Chọn stack, nhập tên miền — tự động tạo Nginx + app + DB + SSL trong một job.',
           domainLabel: 'Tên miền',
           domainHint: 'DNS cần trỏ về máy chủ này trước khi cấp SSL',
+          issueSsl: 'Cấp SSL Let’s Encrypt',
+          dnsOk: 'DNS đang trỏ về máy chủ này. Có thể cấp SSL.',
+          dnsBad: 'DNS chưa trỏ về máy chủ này. SSL sẽ được bỏ qua, không gọi Let’s Encrypt.',
+          lostContact: 'Mất kết nối tới panel, job vẫn có thể đang chạy',
           sslEmail: 'Email SSL',
           installNow: 'Cài ngay',
           installing: 'Đang khởi chạy…',
@@ -195,11 +206,21 @@ export default function SiteWizard() {
 
   useEffect(() => {
     if (!jobId) return;
+    let misses = 0;
     const id = setInterval(() => {
-      jobsApi.get(jobId).catch(() => {});
+      jobsApi
+        .get(jobId)
+        .then(() => {
+          misses = 0;
+          setPollWarning(null);
+        })
+        .catch(() => {
+          misses += 1;
+          if (misses >= 3) setPollWarning(tr.lostContact);
+        });
     }, 1500);
     return () => clearInterval(id);
-  }, [jobId]);
+  }, [jobId, tr.lostContact]);
 
   function applyTemplate(tpl: Template) {
     setForm((s) => ({
@@ -209,8 +230,9 @@ export default function SiteWizard() {
       php_modules: tpl.php_modules || [],
       proxy_port: tpl.proxy_port ? String(tpl.proxy_port) : '',
       create_database: !!tpl.create_database,
-      issue_ssl: tpl.issue_ssl !== false,
+      issue_ssl: tpl.issue_ssl === true,
     }));
+    setSslTouched(false);
   }
 
   useEffect(() => {
@@ -232,9 +254,20 @@ export default function SiteWizard() {
       ...s,
       domain: clean,
       document_root: clean ? root : s.document_root,
-      ssl_email: s.ssl_email || (clean ? `admin@${clean}` : ''),
     }));
   }
+
+  useEffect(() => {
+    if (form.domain.length < 3) return;
+    api<Preflight>(`/api/site_wizard/preflight?domain=${encodeURIComponent(form.domain)}`)
+      .then(setPreflight)
+      .catch(() => setPreflight(null));
+  }, [form.domain]);
+
+  useEffect(() => {
+    if (sslTouched || !preflight?.dns?.dns_ok) return;
+    setForm((s) => (s.issue_ssl ? s : { ...s, issue_ssl: true }));
+  }, [preflight, sslTouched]);
 
   const selectedTpl = templates.find((t) => t.id === form.templateId);
 
@@ -351,6 +384,24 @@ export default function SiteWizard() {
           />
         </Field>
       </div>
+
+      <label className={cn('flex items-center gap-3 text-sm', isDark ? 'text-slate-200' : 'text-slate-700')}>
+        <input
+          type="checkbox"
+          checked={form.issue_ssl}
+          onChange={(e) => {
+            setSslTouched(true);
+            setForm({ ...form, issue_ssl: e.target.checked });
+          }}
+          className="w-4 h-4"
+        />
+        {tr.issueSsl}
+      </label>
+      {preflight?.dns && form.domain.length >= 3 && (
+        <p className={cn('text-xs', preflight.dns.dns_ok ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-amber-300' : 'text-amber-800'))}>
+          {preflight.dns.dns_ok ? tr.dnsOk : tr.dnsBad}
+        </p>
+      )}
 
       {preflight && (
         <div className={card}>
@@ -476,7 +527,10 @@ export default function SiteWizard() {
             <input
               type="checkbox"
               checked={form.issue_ssl}
-              onChange={(e) => setForm({ ...form, issue_ssl: e.target.checked })}
+              onChange={(e) => {
+                setSslTouched(true);
+                setForm({ ...form, issue_ssl: e.target.checked });
+              }}
               className="w-4 h-4"
             />
             Issue Let&apos;s Encrypt SSL
@@ -512,6 +566,7 @@ export default function SiteWizard() {
 
   const resetWizard = () => {
     setJobId(null);
+    setPollWarning(null);
     setSearchParams({});
     setStep('quick');
     setForm(INITIAL);
@@ -560,7 +615,7 @@ export default function SiteWizard() {
                 )}
               </>
             ) : (
-              <RunPanel job={job} isDark={isDark} onReset={resetWizard} />
+              <RunPanel job={job} isDark={isDark} onReset={resetWizard} pollWarning={pollWarning} />
             )}
           </main>
 
@@ -659,9 +714,24 @@ function StackPill({
   );
 }
 
-function RunPanel({ job, isDark, onReset }: { job: ReturnType<typeof useJob>; isDark: boolean; onReset: () => void }) {
+function RunPanel({
+  job,
+  isDark,
+  onReset,
+  pollWarning,
+}: {
+  job: ReturnType<typeof useJob>;
+  isDark: boolean;
+  onReset: () => void;
+  pollWarning?: string | null;
+}) {
   if (!job) {
-    return <p className={cn('text-sm', isDark ? 'text-slate-400' : 'text-slate-500')}>Submitting…</p>;
+    return (
+      <div className="space-y-2">
+        <p className={cn('text-sm', isDark ? 'text-slate-400' : 'text-slate-500')}>Submitting…</p>
+        {pollWarning && <p className="text-sm text-amber-500">{pollWarning}</p>}
+      </div>
+    );
   }
   const failed = job.status === 'failed';
   const done = job.status === 'success';
@@ -682,7 +752,8 @@ function RunPanel({ job, isDark, onReset }: { job: ReturnType<typeof useJob>; is
           </div>
         )}
         {job.message && <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{job.message}</p>}
-        {failed && <p className="text-sm text-red-500">{job.error}</p>}
+        {pollWarning && <p className="text-sm text-amber-500">{pollWarning}</p>}
+        {(failed || job.error) && <p className="text-sm text-red-500">{job.error}</p>}
         {done && job.result && (
           <div className="space-y-2 text-sm">
             <Row k="Summary" v={job.result.summary} isDark={isDark} />
@@ -695,7 +766,9 @@ function RunPanel({ job, isDark, onReset }: { job: ReturnType<typeof useJob>; is
               <>
                 <Row k="DB" v={job.result.database.name} isDark={isDark} />
                 <Row k="User" v={job.result.database.user} isDark={isDark} />
-                <Row k="Password" v={job.result.database.password} isDark={isDark} mono />
+                {job.result.database.password ? (
+                  <Row k="Password" v={job.result.database.password} isDark={isDark} mono />
+                ) : null}
               </>
             )}
             {job.result.deployment?.admin_url && (
@@ -713,8 +786,8 @@ function RunPanel({ job, isDark, onReset }: { job: ReturnType<typeof useJob>; is
               <Row
                 k="SSL"
                 v={
-                  job.result.ssl.status === 'failed'
-                    ? `failed: ${job.result.ssl.error || 'unknown'}`
+                  job.result.ssl.status === 'failed' || job.result.ssl.status === 'skipped'
+                    ? `${job.result.ssl.status}: ${job.result.ssl.error || 'unknown'}`
                     : `${job.result.ssl.type} (${job.result.ssl.domain})`
                 }
                 isDark={isDark}

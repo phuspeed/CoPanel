@@ -15,7 +15,7 @@ TEMPLATES: List[Dict[str, Any]] = [
         "php_modules": [],
         "proxy_port": None,
         "create_database": False,
-        "issue_ssl": True,
+        "issue_ssl": False,
         "stack_preset": "nginx_only",
     },
     {
@@ -25,11 +25,11 @@ TEMPLATES: List[Dict[str, Any]] = [
         "icon": "Wordpress",
         "features": ["LEMP stack", "MySQL DB", "WP core download", "SSL optional"],
         "one_click": True,
-        "php_version": "8.2",
+        "php_version": "auto",
         "php_modules": ["mysqli", "curl", "mbstring", "gd", "zip", "xml", "intl"],
         "proxy_port": None,
         "create_database": True,
-        "issue_ssl": True,
+        "issue_ssl": False,
         "stack_preset": "lemp",
     },
     {
@@ -39,11 +39,11 @@ TEMPLATES: List[Dict[str, Any]] = [
         "icon": "Boxes",
         "features": ["LEMP stack", "MySQL DB", "public/ skeleton", "SSL optional"],
         "one_click": True,
-        "php_version": "8.3",
+        "php_version": "auto",
         "php_modules": ["mysqli", "curl", "mbstring", "bcmath", "intl", "zip", "xml"],
         "proxy_port": None,
         "create_database": True,
-        "issue_ssl": True,
+        "issue_ssl": False,
         "stack_preset": "lemp",
     },
     {
@@ -57,7 +57,7 @@ TEMPLATES: List[Dict[str, Any]] = [
         "php_modules": [],
         "proxy_port": 3000,
         "create_database": False,
-        "issue_ssl": True,
+        "issue_ssl": False,
         "stack_preset": "nginx_only",
     },
 ]
@@ -93,9 +93,7 @@ def resolve_wizard_defaults(
         else:
             doc_root = f"/var/www/{clean}" if clean else "/var/www/site"
 
-    resolved_ssl_email = ssl_email
-    if (issue_ssl if issue_ssl is not None else tpl.get("issue_ssl")) and not resolved_ssl_email and domain:
-        resolved_ssl_email = f"admin@{domain}"
+    resolved_ssl_email = ssl_email or None
 
     return {
         "template_id": template_id or tpl.get("id") or "static",

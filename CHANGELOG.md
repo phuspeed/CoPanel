@@ -6,6 +6,15 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**Fixed / Improved (`site_wizard` 1.2.0, `web_manager` 1.3.0, `database_manager` 1.1.0, `ssl_manager` 1.1.4, `appstore_manager` 1.0.39)**
+
+- Web 1-click runs package installs, downloads, and certbot off the API event loop, so the panel stays usable while a site is provisioning. The installer nginx `/api/` location now allows 300s proxy read/send timeouts.
+- PHP extensions use real package names (`php{ver}-mysql` on apt, `php-mysqlnd` on Alma/RHEL). The wizard uses the distro PHP (`auto`) and fails with the missing version instead of pointing nginx at a different PHP-FPM socket.
+- Creating a database or user on Linux fails when the `mysql` client is missing. Site users are unique per domain (no 14-character prefix collision) and an existing user that already owns another database is not given a new password.
+- A failed wizard rolls back the vhost, database, and document root it created in that run. Downloads use a per-job temp directory and a checksum. Jobs left `running` after a service restart are marked failed (`Interrupted: CoPanel restarted while job was running`).
+- Alma/RHEL nginx sites go in `conf.d`, and the PHP-FPM socket is `/run/php-fpm/www.sock` only when `php -v` matches. SSL is off unless the user asks for it, and Let’s Encrypt is skipped when DNS does not point at this server. Site files are chowned to the PHP-FPM user. Commands do not call `sudo` when the panel is already root.
+- The wizard UI shows job errors and a warning when polling loses contact. App Store waits up to 10 minutes before restarting `copanel` if a job is still running.
+
 **Security**
 
 - JWT signing no longer falls back to a hard-coded secret. The installer writes a random secret to `/opt/copanel/config/jwt_secret` (mode 0600) and loads it with systemd `EnvironmentFile=-/opt/copanel/config/copanel.env`. Reinstall keeps the existing secret. A missing secret is created on first process start. Password changes and `POST /api/auth/logout` bump `token_version`, so older tokens stop working.
@@ -28,6 +37,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
 - API chỉ nghe `127.0.0.1:8000`; cài lại sẽ gỡ rule firewall cổng 8000.
 - phpMyAdmin không chạy lệnh qua shell và không trả mật khẩu ở GET. Tên database/user được kiểm tra trước khi đưa vào SQL.

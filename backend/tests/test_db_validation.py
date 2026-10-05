@@ -26,11 +26,12 @@ class DBValidationTests(unittest.TestCase):
 
     def test_valid_user_sql_goes_to_stdin(self):
         with patch("modules.database_manager.logic.shutil.which", return_value="/usr/bin/mysql"):
-            with patch("modules.database_manager.logic.subprocess.run") as mocked:
-                mocked.return_value.returncode = 0
-                mocked.return_value.stderr = ""
-                mocked.return_value.stdout = ""
-                res = DBManager.create_user("app_user", "localhost", "p'a$(id)", "app_db")
+            with patch("core.sysexec.is_root", return_value=True):
+                with patch("modules.database_manager.logic.subprocess.run") as mocked:
+                    mocked.return_value.returncode = 0
+                    mocked.return_value.stderr = ""
+                    mocked.return_value.stdout = ""
+                    res = DBManager.create_user("app_user", "localhost", "p'a$(id)", "app_db")
         self.assertEqual(res["status"], "success", res)
         args, kwargs = mocked.call_args
         self.assertIsInstance(args[0], list)
