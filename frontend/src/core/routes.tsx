@@ -99,6 +99,14 @@ export function createRoutes() {
   };
 
   const handleLogout = () => {
+    const current = localStorage.getItem('copanel_token');
+    if (current) {
+      // Server bumps token_version so other sessions die too.
+      void fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${current}` },
+      }).catch(() => {});
+    }
     localStorage.removeItem('copanel_token');
     localStorage.removeItem('copanel_user');
     setSessionVerified(true);

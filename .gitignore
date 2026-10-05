@@ -70,6 +70,12 @@ dist/
 *.sqlite3
 *.db-journal
 
+# Runtime secrets (generated on the server; never commit)
+config/admin_password.txt
+config/jwt_secret
+config/copanel.env
+config/mysql_credentials.txt
+
 # Environment files
 .env
 .env.local

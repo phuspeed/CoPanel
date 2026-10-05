@@ -3,7 +3,6 @@ Web Manager Module Router
 Nginx + Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM and DB service overview.
 """
 import os
-import re
 import shutil
 import subprocess
 import urllib.request
@@ -11,6 +10,13 @@ from typing import List, Dict, Any, Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from core.auth import require_module
+from core.paths import config_dir, write_private_text
+from core.validators import (
+    escape_mysql_literal,
+    validate_db_username,
+    validate_doc_root,
+    validate_domain,
+)
 from pydantic import BaseModel, Field
 
 from . import logic
@@ -210,6 +216,12 @@ def _apache_vhost_template(
 async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
     """Create a new Nginx or Apache vhost from a basic template."""
     try:
+        try:
+            domain = validate_domain(req.domain)
+            doc_root = validate_doc_root(req.root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         if req.issue_ssl:
             email = (req.ssl_email or "").strip()
             if not email or "@" not in email:
@@ -225,21 +237,18 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
 
         fname = req.filename
         if not fname or fname.strip() == "":
-            domain_name = req.domain.strip().lower()
-            domain_name = re.sub(r"^(https?://)?(www\.)?", "", domain_name)
-            fname = f"{domain_name}.conf"
+            fname = f"{domain}.conf"
 
         safe_filename = sanitize_filename(fname)
 
-        server_name_str = req.domain.strip()
-        if not req.domain.startswith("www.") and "." in req.domain and not req.domain.replace(".", "").isdigit():
-            server_name_str += f" www.{req.domain}"
+        server_name_str = domain
+        if not domain.startswith("www.") and "." in domain and not domain.replace(".", "").isdigit():
+            server_name_str += f" www.{domain}"
 
-        if req.root and req.root.strip() != "":
-            try:
-                os.makedirs(req.root.strip(), exist_ok=True)
-            except Exception:
-                pass
+        try:
+            os.makedirs(doc_root, exist_ok=True)
+        except Exception:
+            pass
 
         if req.engine == "apache":
             layout = detect_apache_layout()
@@ -269,7 +278,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             template = _apache_vhost_template(
                 req.port or 80,
                 server_name_str,
-                req.root.strip() if req.root else "/var/www/html",
+                doc_root,
                 req.php_version,
                 req.proxy_port,
                 php_sock,
@@ -359,7 +368,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             template = f"""server {{
     listen {req.port};
     server_name {server_name_str};
-    root {req.root};
+    root {doc_root};
     client_max_body_size 500M;
 
     index index.php index.html index.htm;
@@ -384,7 +393,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             template = f"""server {{
     listen {req.port};
     server_name {server_name_str};
-    root {req.root};
+    root {doc_root};
     client_max_body_size 500M;
 
     index index.html index.htm;
@@ -441,8 +450,7 @@ async def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
         # Optional Let's Encrypt SSL via Certbot (HTTP vhost must exist first).
         if req.issue_ssl:
             email = (req.ssl_email or "").strip()
-            ssl_domain = req.domain.strip().lower()
-            ssl_domain = re.sub(r"^(https?://)?(www\.)?", "", ssl_domain)
+            ssl_domain = domain
             try:
                 from modules.ssl_manager.logic import SSLManager
 
@@ -1181,50 +1189,77 @@ class SavePhpMyAdminCredentialsRequest(BaseModel):
     user: str
     password: str
 
+def _mysql_credentials_path():
+    return config_dir() / "mysql_credentials.txt"
+
+
+def _read_mysql_credentials() -> tuple:
+    path = _mysql_credentials_path()
+    user, password = "", ""
+    if not path.is_file():
+        return user, password
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line.startswith("MYSQL_USER="):
+            user = line.split("=", 1)[1]
+        elif line.startswith("MYSQL_PASS="):
+            password = line.split("=", 1)[1]
+    return user, password
+
+
 @router.get("/phpmyadmin")
 async def get_phpmyadmin_credentials() -> Dict[str, Any]:
-    """Return phpMyAdmin login credentials saved by install.sh."""
-    creds_file = "/opt/copanel/config/mysql_credentials.txt"
+    """Return phpMyAdmin login metadata. The password is never sent back."""
     pma_installed = bool(
         shutil.which("mysql") or os.path.exists("/usr/share/phpmyadmin")
     )
-
-    if not os.path.exists(creds_file):
-        return {"installed": pma_installed, "user": "", "password": ""}
-
-    user, password = "", ""
     try:
-        with open(creds_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("MYSQL_USER="):
-                    user = line.split("=", 1)[1]
-                elif line.startswith("MYSQL_PASS="):
-                    password = line.split("=", 1)[1]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {"installed": pma_installed, "user": user, "password": password}
+        user, password = _read_mysql_credentials()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Could not read MySQL credentials.") from exc
+    return {
+        "installed": pma_installed,
+        "user": user,
+        "has_password": bool(password),
+    }
 
 
 @router.post("/phpmyadmin/save")
 async def save_phpmyadmin_credentials(req: SavePhpMyAdminCredentialsRequest) -> Dict[str, Any]:
     """Save or create phpMyAdmin/MySQL user."""
-    # Save to file
-    creds_file = "/opt/copanel/config/mysql_credentials.txt"
-    os.makedirs(os.path.dirname(creds_file), exist_ok=True)
-    with open(creds_file, "w") as f:
-        f.write(f"MYSQL_USER={req.user}\n")
-        f.write(f"MYSQL_PASS={req.password}\n")
-        
-    # On Linux, also try to create/update MySQL user directly!
-    if os.name != 'nt':
+    try:
+        user = validate_db_username(req.user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    password = req.password or ""
+    if not password or "\x00" in password or len(password) > 256:
+        raise HTTPException(status_code=400, detail="Password is required.")
+
+    creds_file = _mysql_credentials_path()
+    write_private_text(creds_file, f"MYSQL_USER={user}\nMYSQL_PASS={password}\n")
+
+    # On Linux, also try to create/update the MySQL user. SQL goes on stdin
+    # so the password is not a shell word and does not show up in argv.
+    if os.name != "nt":
+        safe_pass = escape_mysql_literal(password)
+        sql = (
+            f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{safe_pass}';"
+            f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{safe_pass}';"
+            f"GRANT ALL PRIVILEGES ON *.* TO '{user}'@'localhost' WITH GRANT OPTION;"
+            "FLUSH PRIVILEGES;"
+        )
         try:
-            cmd = f"sudo mysql -e \"CREATE USER IF NOT EXISTS '{req.user}'@'localhost' IDENTIFIED BY '{req.password}'; GRANT ALL PRIVILEGES ON *.* TO '{req.user}'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\""
-            subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            subprocess.run(
+                ["sudo", "mysql", "-u", "root"],
+                input=sql,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                shell=False,
+            )
         except Exception:
             pass
-            
+
     return {"status": "success", "message": "Credentials updated successfully."}
 
 

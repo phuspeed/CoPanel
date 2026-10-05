@@ -17,6 +17,8 @@ import string
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.validators import validate_db_name, validate_db_username
+
 IS_WINDOWS = os.name == "nt"
 MOCK_PG_FILE = (
     Path("./test_nginx/postgres_databases.json")
@@ -35,8 +37,20 @@ def _has_psql() -> bool:
 
 
 def _psql(sql: str) -> subprocess.CompletedProcess:
-    cmd = ["sudo", "-u", "postgres", "psql", "-tAqc", sql]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    """Run SQL via stdin so passwords are not visible in process arguments."""
+    cmd = ["sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-tA"]
+    return subprocess.run(
+        cmd,
+        input=sql if sql.endswith("\n") else sql + "\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        shell=False,
+    )
+
+
+def _escape_pg_literal(value: str) -> str:
+    return value.replace("'", "''")
 
 
 def _load_mock(path: Path, default: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -91,8 +105,10 @@ class PostgresManager:
 
     @staticmethod
     def create_database(name: str) -> Dict[str, Any]:
-        if not name or not name.replace("_", "").isalnum():
-            return {"status": "error", "message": "Database name must be alphanumeric/_."}
+        try:
+            name = validate_db_name(name)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         if not _has_psql():
             dbs = _load_mock(MOCK_PG_FILE, [])
             if any(db["name"] == name for db in dbs):
@@ -107,6 +123,10 @@ class PostgresManager:
 
     @staticmethod
     def delete_database(name: str) -> Dict[str, Any]:
+        try:
+            name = validate_db_name(name)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         if not _has_psql():
             dbs = _load_mock(MOCK_PG_FILE, [])
             _save_mock(MOCK_PG_FILE, [d for d in dbs if d["name"] != name])
@@ -130,7 +150,12 @@ class PostgresManager:
 
     @staticmethod
     def create_user(username: str, password: str, dbname: str) -> Dict[str, Any]:
-        if not username or not password:
+        try:
+            username = validate_db_username(username)
+            dbname = validate_db_name(dbname)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not password or "\x00" in password:
             return {"status": "error", "message": "Username and password required."}
         if not _has_psql():
             users = _load_mock(MOCK_PG_USERS, [])
@@ -139,8 +164,7 @@ class PostgresManager:
             users.append({"user": username, "host": "localhost", "db": dbname})
             _save_mock(MOCK_PG_USERS, users)
             return {"status": "success", "message": f"User '{username}' created (mock)."}
-        # Quote password safely
-        safe_pwd = password.replace("'", "''")
+        safe_pwd = _escape_pg_literal(password)
         for sql in (
             f"CREATE USER \"{username}\" WITH PASSWORD '{safe_pwd}';",
             f"GRANT ALL PRIVILEGES ON DATABASE \"{dbname}\" TO \"{username}\";",
@@ -152,6 +176,10 @@ class PostgresManager:
 
     @staticmethod
     def delete_user(username: str) -> Dict[str, Any]:
+        try:
+            username = validate_db_username(username)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         if not _has_psql():
             users = _load_mock(MOCK_PG_USERS, [])
             _save_mock(MOCK_PG_USERS, [u for u in users if u["user"] != username])
@@ -163,14 +191,18 @@ class PostgresManager:
 
     @staticmethod
     def set_user_password(username: str, password: str) -> Dict[str, Any]:
-        if not username or not password:
+        try:
+            username = validate_db_username(username)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        if not password or "\x00" in password:
             return {"status": "error", "message": "Username and password required."}
         if not _has_psql():
             users = _load_mock(MOCK_PG_USERS, [])
             if not any(u["user"] == username for u in users):
                 return {"status": "error", "message": "User not found."}
             return {"status": "success", "message": f"Password updated for '{username}' (mock)."}
-        safe_pwd = password.replace("'", "''")
+        safe_pwd = _escape_pg_literal(password)
         res = _psql(f"ALTER USER \"{username}\" WITH PASSWORD '{safe_pwd}';")
         if res.returncode != 0:
             return {"status": "error", "message": res.stderr.strip() or "Failed to update password"}

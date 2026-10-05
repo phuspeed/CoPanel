@@ -34,11 +34,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from core.validators import validate_doc_root, validate_domain
+
 from .templates import get_template, resolve_wizard_defaults
-
-
-SAFE_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9.-]+$")
-DOMAIN_LABEL_RE = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 
 
 @dataclass
@@ -71,25 +69,11 @@ class WizardResult:
 
 
 def _validate_domain(domain: str) -> str:
-    if not domain or not SAFE_DOMAIN_RE.match(domain):
-        raise ValueError("Domain contains invalid characters.")
-    parts = domain.split(".")
-    if len(parts) < 2:
-        raise ValueError("Domain must contain at least one dot.")
-    for label in parts:
-        if not DOMAIN_LABEL_RE.match(label):
-            raise ValueError(f"Domain label '{label}' is invalid.")
-    return domain.lower()
+    return validate_domain(domain)
 
 
 def _validate_doc_root(root: str) -> str:
-    if not root or root.strip() == "":
-        raise ValueError("Document root is required.")
-    if "\x00" in root:
-        raise ValueError("Document root contains an invalid character.")
-    if not root.startswith("/") and os.name != "nt":
-        raise ValueError("Document root must be an absolute path.")
-    return root
+    return validate_doc_root(root)
 
 
 def _generate_password(length: int = 18) -> str:

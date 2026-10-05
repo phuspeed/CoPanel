@@ -175,6 +175,8 @@ async def list_modules():
 
 if __name__ == "__main__":
     import uvicorn
+    # Dev-only entrypoint. The production systemd unit binds 127.0.0.1 so the
+    # API is reachable only through the nginx front door (port 8686).
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

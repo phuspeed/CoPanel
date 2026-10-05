@@ -59,13 +59,32 @@ def _normalize_permitted(value: Any) -> List[str]:
     return []
 
 
+def _token_version_ok(payload: Dict[str, Any], user: Dict[str, Any]) -> bool:
+    """Reject tokens issued before a password change or logout-all."""
+    if "token_version" not in payload:
+        return False
+    try:
+        claimed = int(payload["token_version"])
+        actual = int(user.get("token_version") or 0)
+    except (TypeError, ValueError):
+        return False
+    return claimed == actual
+
+
+def user_from_verified_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Map a decoded JWT to a user, enforcing ``token_version``."""
+    if not payload or "sub" not in payload:
+        return None
+    user = user_model.get_user_by_username(str(payload["sub"]))
+    if not user or not _token_version_ok(payload, user):
+        return None
+    return user
+
+
 def _user_from_bearer_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
     if not token:
         return None
-    payload = verify_token(token)
-    if not payload or "sub" not in payload:
-        return None
-    return user_model.get_user_by_username(payload["sub"])
+    return user_from_verified_payload(verify_token(token))
 
 
 def _user_from_token(authorization: Optional[str]) -> Optional[Dict[str, Any]]:

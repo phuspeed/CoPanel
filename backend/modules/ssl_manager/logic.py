@@ -8,7 +8,14 @@ import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from core.paths import write_private_text
+from core.validators import validate_domain
+
 IS_WINDOWS = os.name == 'nt'
+
+
+def _checked_domain(domain: str) -> str:
+    return validate_domain(domain)
 
 class SSLManager:
     @staticmethod
@@ -184,9 +191,10 @@ class SSLManager:
             return {"status": "success", "message": f"Renewed SSL for {domain} (Mock Mode)."}
         if not shutil.which("certbot"):
             return {"status": "error", "message": "Certbot CLI is not installed on this server."}
-        domain = domain.strip().lower()
-        if not domain:
-            return {"status": "error", "message": "Domain is required."}
+        try:
+            domain = _checked_domain(domain)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         try:
             cmd = ["sudo", "certbot", "renew", "--cert-name", domain, "--non-interactive"]
             if force:
@@ -211,6 +219,11 @@ class SSLManager:
         # 1. Ensure certbot is installed
         if not shutil.which("certbot"):
             return {"status": "error", "message": "Certbot CLI is not installed on this server."}
+
+        try:
+            domain = _checked_domain(domain)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
 
         try:
             # Generate cert via certbot
@@ -238,16 +251,25 @@ class SSLManager:
         """Saves custom pasted certificates and private key files and updates Nginx configuration."""
         if not domain or not private_key or not certificate:
             return {"status": "error", "message": "Domain, Private Key, and Certificate are required fields."}
+        try:
+            domain = _checked_domain(domain)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
 
-        ssl_dir = Path(f"/etc/nginx/ssl/{domain}") if not IS_WINDOWS else Path(f"./test_nginx/ssl/{domain}")
-        ssl_dir.mkdir(parents=True, exist_ok=True)
+        base = Path("/etc/nginx/ssl") if not IS_WINDOWS else Path("./test_nginx/ssl")
+        ssl_dir = (base / domain).resolve()
+        try:
+            ssl_dir.relative_to(base.resolve())
+        except ValueError:
+            return {"status": "error", "message": "Certificate path escapes the SSL directory."}
 
         try:
+            ssl_dir.mkdir(parents=True, exist_ok=True)
             fullchain_file = ssl_dir / "fullchain.pem"
             privkey_file = ssl_dir / "privkey.pem"
 
-            fullchain_file.write_text(certificate.strip(), encoding="utf-8")
-            privkey_file.write_text(private_key.strip(), encoding="utf-8")
+            fullchain_file.write_text(certificate.strip() + "\n", encoding="utf-8")
+            write_private_text(privkey_file, private_key.strip() + "\n")
 
             # Update Nginx
             SSLManager.enable_ssl_in_nginx_vhost(domain, str(fullchain_file), str(privkey_file))
@@ -259,7 +281,10 @@ class SSLManager:
     @staticmethod
     def find_nginx_vhost_path(domain: str) -> Optional[Path]:
         """Resolve the nginx vhost file for a domain (handles ``{domain}.conf`` naming)."""
-        domain = domain.strip().lower()
+        try:
+            domain = _checked_domain(domain)
+        except ValueError:
+            return None
         sites_dir = Path("/etc/nginx/sites-available") if not IS_WINDOWS else Path("./test_nginx/sites-available")
         if not sites_dir.is_dir():
             return None
