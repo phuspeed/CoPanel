@@ -182,6 +182,8 @@ https://<ip-máy>:8686/<token>/
 
 Mở đúng URL đó, chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. Chưa mở URL này thì trang đăng nhập và `/api/auth/login` trả **404**. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
 
+Cloudflare Tunnel không cần mở firewall 8686 ra internet. Origin phải là `https://127.0.0.1:8686` với `noTLSVerify: true`. `https://local:8686` không dùng được (tên `local` không có trên chứng chỉ, và thường không phân giải). Sau khi tunnel chạy, mở một lần `https://<tên-miền>/<token>/` — cookie của IP LAN không dùng được trên tên miền Cloudflare.
+
 Mất liên kết: SSH vào máy và chạy `copanel-entrance` (thêm `rotate`, `disable`, `enable`). Cùng các nút đó trong **Cài đặt → Bảo vệ truy cập panel**. Cài lại không đổi token hay chứng chỉ.
 
 Thay chứng chỉ thật: ghi đè `/opt/copanel/config/ssl/panel.crt` và `panel.key` (key mode 0600), rồi `sudo nginx -t && sudo systemctl reload nginx`.

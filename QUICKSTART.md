@@ -49,6 +49,8 @@ copanel-entrance disable  # turn the secret path off
 
 Settings → Panel access gate can show, rotate, or disable the same link after login. Re-running `install.sh` keeps the token and the certificate. Replace `/opt/copanel/config/ssl/panel.crt` and `panel.key`, then `nginx -t && systemctl reload nginx`, to install a real certificate.
 
+Cloudflare Tunnel does not need port 8686 open to the internet. Set the origin to `https://127.0.0.1:8686` with `noTLSVerify: true`, then open `https://<your-domain>/<token>/` once. `https://local:8686` does not work.
+
 ## 📊 What's Included
 
 ✅ **System Monitor** - Real-time CPU, Memory, Disk, Network stats
