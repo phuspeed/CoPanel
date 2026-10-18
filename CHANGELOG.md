@@ -17,9 +17,7 @@ All notable changes to CoPanel are documented in this file.
 
 **Security**
 
-- The panel no longer answers on plain HTTP. `install.sh` serves port 8686 over TLS with a 10-year self-signed certificate (SAN includes the hostname and server IPs) and redirects plain HTTP on that port to HTTPS. Reinstall keeps an existing `config/ssl/panel.crt` and `panel.key`, so a real certificate dropped there is not overwritten. (`panel_settings` **1.1.3**)
-- Cloudflare Tunnel can reach the panel without a public firewall rule for 8686. The origin is plain HTTP on loopback, `http://127.0.0.1:8687`, because the panel certificate is self-signed. `https://<lan-ip>:8686` and `https://localhost:8686` make cloudflared return 502 Bad Gateway. Port 8687 listens on 127.0.0.1 only and is not opened in the firewall. LAN browsers still use `https://<lan-ip>:8686/` and accept the certificate warning.
-- The secret `/<token>/` entrance is removed. The panel opens at `https://<ip>:8686/` (and at `https://<your-domain>/` through Cloudflare Tunnel). Upgrading deletes `config/security_entrance.json` and strips the nginx 404 gate. Basic auth, JWT, WebSockets, SSE, and phpMyAdmin are unchanged. (`panel_settings` **1.1.4**)
+- Port 8686 is plain HTTP again. The self-signed HTTPS listener, the loopback `127.0.0.1:8687` tunnel origin, and the `/<token>/` entrance are removed because Cloudflare Tunnel could not complete a TLS handshake to the panel (`502 Bad Gateway`). Upgrade rewrites nginx to `listen 8686` and deletes a leftover token file. Open `http://<lan-ip>:8686/`. Tunnel origin: `http://<lan-ip>:8686` or `http://localhost:8686`. (`panel_settings` **1.1.4**)
 
 - JWT signing no longer falls back to a hard-coded secret. The installer writes a random secret to `/opt/copanel/config/jwt_secret` (mode 0600) and loads it with systemd `EnvironmentFile=-/opt/copanel/config/copanel.env`. Reinstall keeps the existing secret. A missing secret is created on first process start. Password changes and `POST /api/auth/logout` bump `token_version`, so older tokens stop working.
 - The API process binds to `127.0.0.1:8000` in the systemd unit. `install.sh` no longer opens port 8000, and a reinstall removes a leftover UFW or firewalld allow rule for `8000/tcp`.
@@ -42,9 +40,7 @@ All notable changes to CoPanel are documented in this file.
 ### Tiếng Việt (tóm tắt)
 
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
-- Cloudflare Tunnel không cần mở cổng 8686 ra internet. Origin là `http://127.0.0.1:8687` (chỉ loopback, không mở firewall). `https://<ip-lan>:8686` và `https://localhost:8686` bị chứng chỉ tự ký chặn nên Cloudflare trả 502. Trên LAN vẫn mở `https://<ip-lan>:8686/` và chấp nhận cảnh báo chứng chỉ.
-- Panel nghe HTTPS trên cổng 8686 (chứng chỉ tự ký 10 năm, giữ nguyên khi cài lại hoặc khi đã thay chứng chỉ thật). HTTP thường được chuyển sang HTTPS.
-- Bỏ đường dẫn bí mật `/<token>/`. Panel mở tại `https://<ip>:8686/` và `https://<tên-miền>/` nếu dùng Cloudflare Tunnel. Nâng cấp sẽ xóa file token và gỡ luật 404 trên nginx. Basic auth, JWT, WebSocket, SSE và phpMyAdmin giữ nguyên.
+- Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký, origin loopback `127.0.0.1:8687` và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
 - API chỉ nghe `127.0.0.1:8000`; cài lại sẽ gỡ rule firewall cổng 8000.
 - phpMyAdmin không chạy lệnh qua shell và không trả mật khẩu ở GET. Tên database/user được kiểm tra trước khi đưa vào SQL.

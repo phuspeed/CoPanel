@@ -145,8 +145,8 @@ class CertificateTests(unittest.TestCase):
         self.assertFalse(forget_entrance(self.config))
 
     def test_panel_url_has_no_secret_path(self):
-        self.assertEqual(build_panel_url("203.0.113.10"), "https://203.0.113.10:8686/")
-        self.assertEqual(build_panel_url("panel.example.com", port=None), "https://panel.example.com/")
+        self.assertEqual(build_panel_url("203.0.113.10"), "http://203.0.113.10:8686/")
+        self.assertEqual(build_panel_url("panel.example.com", port=None), "http://panel.example.com/")
 
 
 class NginxSnippetTests(unittest.TestCase):
@@ -169,7 +169,15 @@ class NginxSnippetTests(unittest.TestCase):
             "    client_max_body_size 100M;\n",
             "    client_max_body_size 100M;\n" + OLD_SERVER,
             1,
-        )
+        ) + """
+# BEGIN COPANEL TUNNEL ORIGIN
+server {
+    listen 127.0.0.1:8687;
+    server_name _;
+    location / { root /opt/copanel/frontend/dist; }
+}
+# END COPANEL TUNNEL ORIGIN
+"""
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -184,17 +192,14 @@ class NginxSnippetTests(unittest.TestCase):
         self.assertNotIn("copanel_entrance_pass", twice)
         self.assertNotIn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", twice)
         self.assertNotIn("return 404", twice)
-        self.assertIn(TLS_START, twice)
-        self.assertIn("absolute_redirect off;", twice)
-        self.assertIn("port_in_redirect off;", twice)
-        self.assertIn("real_ip_header CF-Connecting-IP;", twice)
-        self.assertIn("error_page 497 =301 https://$http_host$request_uri;", twice)
-        self.assertNotIn("$host:$server_port", twice)
-        self.assertIn("listen 8686 ssl http2;", twice)
-        self.assertIn("listen [::]:8686 ssl http2;", twice)
-        self.assertIn("listen 127.0.0.1:8687;", twice)
-        self.assertNotIn("listen 8687;", twice)
-        self.assertEqual(twice.count("listen 127.0.0.1:8687;"), 1)
+        self.assertNotIn(TLS_START, twice)
+        self.assertNotIn("error_page 497", twice)
+        self.assertNotIn("ssl_certificate", twice)
+        self.assertNotIn("ssl", twice)
+        self.assertNotIn("8687", twice)
+        self.assertNotIn("COPANEL TUNNEL ORIGIN", twice)
+        self.assertIn("listen 8686;", twice)
+        self.assertIn("listen [::]:8686;", twice)
         self.assertIn("location /phpmyadmin {", twice)
         self.assertIn("location /health {", twice)
         self.assertIn('proxy_set_header Upgrade $http_upgrade;', twice)

@@ -182,8 +182,7 @@ The installer will:
 - ✅ Create Python virtual environment
 - ✅ Install backend & frontend dependencies
 - ✅ Build frontend assets
-- ✅ Configure Nginx reverse proxy (HTTPS on port 8686)
-- ✅ Create a self-signed panel certificate (HTTPS on port 8686)
+- ✅ Configure Nginx reverse proxy (HTTP on port 8686)
 - ✅ Set up Systemd service
 - ✅ Start all services
 
@@ -192,34 +191,23 @@ The installer will:
 Open the panel on the LAN:
 
 ```text
-https://<server-ip>:8686/
+http://<server-ip>:8686/
 ```
 
-Accept the self-signed certificate warning, then sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`).
+Sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`). The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
 
-Plain `http://<ip>:8686/...` redirects to HTTPS. The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
-
-Cloudflare Tunnel works without exposing port 8686. The panel certificate is self-signed, so `https://<lan-ip>:8686` and `https://localhost:8686` make cloudflared return **502 Bad Gateway** (it cannot skip the browser warning). Point the public hostname at the loopback HTTP port, which is not opened in the firewall:
+Cloudflare Tunnel uses the same plain HTTP port. Either origin works:
 
 ```yaml
 ingress:
   - hostname: panel.example.com
-    service: http://127.0.0.1:8687
+    service: http://192.168.1.10:8686
   - service: http_status:404
 ```
 
-The public URL is `https://panel.example.com/`. On the LAN, open `https://<lan-ip>:8686/` and choose Continue on the certificate warning.
+`http://localhost:8686` is the same when cloudflared runs on the panel host. The public URL is `https://panel.example.com/`.
 
-To use a real certificate later, replace these files and reload nginx (do not rename them):
-
-```bash
-sudo cp fullchain.pem /opt/copanel/config/ssl/panel.crt
-sudo cp privkey.pem /opt/copanel/config/ssl/panel.key
-sudo chmod 600 /opt/copanel/config/ssl/panel.key
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-- **Web UI**: `https://<server-ip>:8686/` (printed at the end of `install.sh`)
+- **Web UI**: `http://<server-ip>:8686/` (printed at the end of `install.sh`)
 - **Backend API**: http://127.0.0.1:8000 (localhost only)
 - **API Docs**: http://127.0.0.1:8000/docs (localhost only)
 

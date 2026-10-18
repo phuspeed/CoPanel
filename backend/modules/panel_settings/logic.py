@@ -1185,7 +1185,7 @@ def _inject_nginx_gate_block(content: str, htpasswd_path: str) -> str:
         f"        {NGINX_AUTH_END}\n"
     )
 
-    # Every SPA location, including the loopback tunnel server. /api/ does not match.
+    # Inject into each SPA `location /`. `/api/` does not match.
     pattern = re.compile(r"(?m)^([ \t]*location / \{\n)")
     if not pattern.search(content):
         raise RuntimeError("Could not find 'location /' block in nginx site config.")
