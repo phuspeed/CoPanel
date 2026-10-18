@@ -298,9 +298,48 @@ def render_server_block(state: EntranceState) -> str:
             "        return 302 /;\n"
             "    }\n"
         )
+    # Relative redirects so Cloudflare Tunnel (and any other proxy on 443)
+    # is not sent to https://<public-host>:8686, which is firewalled.
+    # CF-Connecting-IP is trusted only from loopback, where cloudflared runs,
+    # so the entrance and login limits see the visitor instead of 127.0.0.1.
+    proxy = (
+        "    absolute_redirect off;\n"
+        "    port_in_redirect off;\n"
+        "    set_real_ip_from 127.0.0.1;\n"
+        "    set_real_ip_from ::1;\n"
+        "    real_ip_header CF-Connecting-IP;\n"
+    )
     # ``!= 1`` fails closed if the map above is missing.
     gate = "    if ($copanel_entrance_pass != 1) {\n        return 404;\n    }\n"
-    return f"{SERVER_START}\n{locations}{gate}{SERVER_END}\n"
+    return f"{SERVER_START}\n{proxy}{locations}{gate}{SERVER_END}\n"
+
+
+_REDIRECT_497_PINNED = re.compile(
+    r"error_page\s+497\s+=301\s+https://\$host:\$server_port\$request_uri\s*;"
+)
+_REDIRECT_497_HOST = "error_page 497 =301 https://$http_host$request_uri;"
+_LISTEN_8686 = re.compile(r"(?m)^([ \t]*listen\s+[^;\n]*\b8686\b[^;\n]*);")
+
+
+def _relax_https_redirect(content: str) -> str:
+    """Keep the port the client already used.
+
+    A direct browser sends ``Host: 1.2.3.4:8686`` and stays on 8686.
+    Cloudflare Tunnel sends ``Host: panel.example.com`` and must stay on 443.
+    """
+    return _REDIRECT_497_PINNED.sub(_REDIRECT_497_HOST, content)
+
+
+def _enable_listen_http2(content: str) -> str:
+    """cloudflared speaks HTTP/2 to an https:// origin unless the origin accepts it."""
+
+    def repl(match: re.Match) -> str:
+        line = match.group(0)
+        if "ssl" not in line or "http2" in line:
+            return line
+        return match.group(1) + " http2;"
+
+    return _LISTEN_8686.sub(repl, content)
 
 
 def _upsert_block(content: str, start: str, end: str, block: str, insert_at: int) -> str:
@@ -342,6 +381,8 @@ def apply_nginx_text(content: str, state: EntranceState) -> str:
     updated = _upsert_block(
         updated, SERVER_START, SERVER_END, render_server_block(state), _server_insert_at(updated)
     )
+    updated = _relax_https_redirect(updated)
+    updated = _enable_listen_http2(updated)
     return updated
 
 
