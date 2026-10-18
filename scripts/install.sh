@@ -2015,6 +2015,19 @@ copanel_detect_panel_ip() {
     printf '%s' "${ip:-127.0.0.1}"
 }
 
+copanel_trust_panel_certificate() {
+    # Let cloudflared on this host verify https://127.0.0.1:8686.
+    local crt="${CoPanel_HOME}/config/ssl/panel.crt"
+    [[ -s "$crt" ]] || return 0
+    if [[ -d /usr/local/share/ca-certificates ]] && command_exists update-ca-certificates; then
+        cp "$crt" /usr/local/share/ca-certificates/copanel-panel.crt
+        update-ca-certificates >/dev/null 2>&1 || true
+    elif [[ -d /etc/pki/ca-trust/source/anchors ]] && command_exists update-ca-trust; then
+        cp "$crt" /etc/pki/ca-trust/source/anchors/copanel-panel.crt
+        update-ca-trust extract >/dev/null 2>&1 || true
+    fi
+}
+
 copanel_install_entrance_command() {
     mkdir -p /usr/local/bin
     cat > /usr/local/bin/copanel-entrance << 'EOF'
@@ -2033,6 +2046,7 @@ setup_nginx() {
 
     copanel_entrance_cli ensure
     copanel_entrance_cli ensure-cert
+    copanel_trust_panel_certificate
     copanel_lock_down_secrets
 
     copanel_ensure_nginx_package || { log_error "nginx is required."; exit 1; }
@@ -2065,8 +2079,8 @@ upstream php_fpm {
 }
 
 server {
-    listen 8686 ssl;
-    listen [::]:8686 ssl;
+    listen 8686 ssl http2;
+    listen [::]:8686 ssl http2;
 
     server_name _;
 
@@ -2076,8 +2090,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
 
-    # Plain HTTP on this TLS port is status 497. Send the browser to HTTPS.
-    error_page 497 =301 https://$host:$server_port$request_uri;
+    # Plain HTTP on this TLS port is status 497.
+    # $http_host keeps :8686 for a direct browser and omits it when Cloudflare
+    # Tunnel sends Host: panel.example.com (public port 443).
+    error_page 497 =301 https://$http_host$request_uri;
 
     client_max_body_size 100M;
     
@@ -2349,7 +2365,11 @@ print_summary() {
         access_block="🔐 Panel URL:         ${GREEN}${entrance_url}${NC}
    ${YELLOW}Open that link first. Anywhere else on port ${NGINX_PORT} returns 404.${NC}
    ${YELLOW}The browser will warn about the self-signed certificate.${NC}
-   Lost this link?      ${GREEN}copanel-entrance${NC}"
+   Lost this link?      ${GREEN}copanel-entrance${NC}
+   ${YELLOW}Cloudflare Tunnel (no need to open 8686 on the internet):${NC}
+   service: https://127.0.0.1:8686
+   originRequest.noTLSVerify: true
+   Then open https://<your-domain>/${entrance_url#*://*/} once. Do not use https://local:8686."
     else
         access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
    ${YELLOW}Security entrance is disabled. HTTP on ${NGINX_PORT} redirects to HTTPS.${NC}

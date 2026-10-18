@@ -199,6 +199,19 @@ Open that URL first and accept the self-signed certificate warning. It sets a br
 
 Plain `http://<ip>:8686/...` redirects to HTTPS. The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
 
+Cloudflare Tunnel works without exposing port 8686. Point the public hostname at the panel on localhost, then open the entrance on that hostname (the LAN cookie does not carry over):
+
+```yaml
+ingress:
+  - hostname: panel.example.com
+    service: https://127.0.0.1:8686
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+```
+
+`https://local:8686` and `https://localhost:8686` fail when `localhost` is IPv6 or the name is not on the certificate. Use `127.0.0.1`. The first browser visit is `https://panel.example.com/<token>/`.
+
 Lost the entrance link? On the server:
 
 ```bash
