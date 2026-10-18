@@ -1,6 +1,6 @@
 # CoPanel - Lightweight Linux VPS Management Panel
 
-![Version](https://img.shields.io/badge/version-1.1.6-blue)
+![Version](https://img.shields.io/badge/version-1.1.7-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -199,18 +199,16 @@ Accept the self-signed certificate warning, then sign in with the admin password
 
 Plain `http://<ip>:8686/...` redirects to HTTPS. The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
 
-Cloudflare Tunnel works without exposing port 8686. Point the public hostname at nginx on localhost:
+Cloudflare Tunnel works without exposing port 8686. The panel certificate is self-signed, so `https://<lan-ip>:8686` and `https://localhost:8686` make cloudflared return **502 Bad Gateway** (it cannot skip the browser warning). Point the public hostname at the loopback HTTP port, which is not opened in the firewall:
 
 ```yaml
 ingress:
   - hostname: panel.example.com
-    service: https://127.0.0.1:8686
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:8687
   - service: http_status:404
 ```
 
-`https://local:8686` fails when the name `local` does not resolve or is missing from the certificate. Use `127.0.0.1`. The public URL is `https://panel.example.com/`.
+The public URL is `https://panel.example.com/`. On the LAN, open `https://<lan-ip>:8686/` and choose Continue on the certificate warning.
 
 To use a real certificate later, replace these files and reload nginx (do not rename them):
 

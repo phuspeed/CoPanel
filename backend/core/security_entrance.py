@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 ENTRANCE_FILENAME = "security_entrance.json"
 PANEL_PORT = 8686
+# Plain HTTP on loopback for cloudflared. Port 8686 stays TLS-only, so a
+# self-signed certificate never has to be trusted by the tunnel.
+TUNNEL_ORIGIN_PORT = 8687
 SSL_CERT_NAME = "panel.crt"
 SSL_KEY_NAME = "panel.key"
 CERT_DAYS = 3650  # 10 years
@@ -38,6 +41,8 @@ SERVER_END = "# END COPANEL SECURITY ENTRANCE SERVER"
 
 TLS_START = "# BEGIN COPANEL PANEL TLS"
 TLS_END = "# END COPANEL PANEL TLS"
+TUNNEL_START = "# BEGIN COPANEL TUNNEL ORIGIN"
+TUNNEL_END = "# END COPANEL TUNNEL ORIGIN"
 
 _DNS_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 
@@ -275,6 +280,93 @@ def build_panel_url(host: str, *, port: Optional[int] = PANEL_PORT, proto: str =
     return f"{proto}://{pretty}/"
 
 
+def _frontend_root(content: str) -> str:
+    match = re.search(r"location\s+/\s*\{[^}]*?\broot\s+([^;]+);", content, re.DOTALL)
+    if match:
+        root = match.group(1).strip().strip('"').strip("'")
+        if root and ".." not in root and "\n" not in root:
+            return root
+    return "/opt/copanel/frontend/dist"
+
+
+def render_tunnel_origin(frontend_root: str = "/opt/copanel/frontend/dist") -> str:
+    """HTTP origin bound to 127.0.0.1 so cloudflared skips the self-signed cert.
+
+    ``https://192.168.x.x:8686`` and ``https://localhost:8686`` make cloudflared
+    return 502: the certificate is not a public CA, and ``localhost`` is often
+    ``::1`` while nginx is answering on IPv4.
+    """
+    root = frontend_root.strip() or "/opt/copanel/frontend/dist"
+    return (
+        f"{TUNNEL_START}\n"
+        "server {\n"
+        f"    listen 127.0.0.1:{TUNNEL_ORIGIN_PORT};\n"
+        "    server_name _;\n"
+        "    absolute_redirect off;\n"
+        "    port_in_redirect off;\n"
+        "    client_max_body_size 100M;\n"
+        "    set_real_ip_from 127.0.0.1;\n"
+        "    set_real_ip_from ::1;\n"
+        "    real_ip_header CF-Connecting-IP;\n"
+        "\n"
+        "    location / {\n"
+        f"        root {root};\n"
+        "        try_files $uri $uri/ /index.html;\n"
+        '        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";\n'
+        "    }\n"
+        "\n"
+        "    location /phpmyadmin {\n"
+        "        root /usr/share/;\n"
+        "        index index.php index.html index.htm;\n"
+        "        location ~ ^/phpmyadmin/(.+\\.php)$ {\n"
+        "            try_files $uri =404;\n"
+        "            root /usr/share/;\n"
+        "            fastcgi_pass php_fpm;\n"
+        "            include /etc/nginx/fastcgi_params;\n"
+        "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+        "        }\n"
+        "        location ~* ^/phpmyadmin/(.+\\.(jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {\n"
+        "            root /usr/share/;\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    location /api/ {\n"
+        "        proxy_pass http://copanel_backend;\n"
+        "        proxy_intercept_errors off;\n"
+        "        proxy_http_version 1.1;\n"
+        "        proxy_set_header Upgrade $http_upgrade;\n"
+        "        proxy_set_header Connection \"upgrade\";\n"
+        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header X-Real-IP $remote_addr;\n"
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n"
+        "        proxy_cache_bypass $http_upgrade;\n"
+        "        proxy_read_timeout 300s;\n"
+        "        proxy_send_timeout 300s;\n"
+        "    }\n"
+        "\n"
+        "    location /health {\n"
+        "        proxy_pass http://copanel_backend;\n"
+        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header X-Real-IP $remote_addr;\n"
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n"
+        "    }\n"
+        "}\n"
+        f"{TUNNEL_END}\n"
+    )
+
+
+def _upsert_tunnel_origin(content: str) -> str:
+    block = render_tunnel_origin(_frontend_root(content))
+    pattern = re.compile(re.escape(TUNNEL_START) + r".*?" + re.escape(TUNNEL_END) + r"\n?", re.DOTALL)
+    if pattern.search(content):
+        return pattern.sub(lambda _match: block, content, count=1)
+    if content and not content.endswith("\n"):
+        content += "\n"
+    return content + "\n" + block
+
+
 def render_tls_block() -> str:
     """Keep redirects on the host the browser used. No access gate."""
     return (
@@ -347,6 +439,7 @@ def apply_nginx_text(content: str) -> str:
     updated = _upsert_block(updated, TLS_START, TLS_END, render_tls_block(), _server_insert_at(updated))
     updated = _relax_https_redirect(updated)
     updated = _enable_listen_http2(updated)
+    updated = _upsert_tunnel_origin(updated)
     return updated
 
 
@@ -358,6 +451,8 @@ def panel_nginx_current(content: str) -> bool:
     if "error_page 497" in content and _REDIRECT_497_HOST not in content:
         return False
     if render_tls_block() not in content:
+        return False
+    if f"listen 127.0.0.1:{TUNNEL_ORIGIN_PORT};" not in content:
         return False
     for line in content.splitlines():
         stripped = line.strip()

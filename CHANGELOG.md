@@ -18,7 +18,7 @@ All notable changes to CoPanel are documented in this file.
 **Security**
 
 - The panel no longer answers on plain HTTP. `install.sh` serves port 8686 over TLS with a 10-year self-signed certificate (SAN includes the hostname and server IPs) and redirects plain HTTP on that port to HTTPS. Reinstall keeps an existing `config/ssl/panel.crt` and `panel.key`, so a real certificate dropped there is not overwritten. (`panel_settings` **1.1.3**)
-- Cloudflare Tunnel can reach the panel without a public firewall rule for 8686. The origin is `https://127.0.0.1:8686` (`noTLSVerify: true`). Redirects stay on the public hostname instead of jumping to `:8686`, and nginx accepts HTTP/2 from cloudflared. `https://local:8686` is not a valid origin.
+- Cloudflare Tunnel can reach the panel without a public firewall rule for 8686. The origin is plain HTTP on loopback, `http://127.0.0.1:8687`, because the panel certificate is self-signed. `https://<lan-ip>:8686` and `https://localhost:8686` make cloudflared return 502 Bad Gateway. Port 8687 listens on 127.0.0.1 only and is not opened in the firewall. LAN browsers still use `https://<lan-ip>:8686/` and accept the certificate warning.
 - The secret `/<token>/` entrance is removed. The panel opens at `https://<ip>:8686/` (and at `https://<your-domain>/` through Cloudflare Tunnel). Upgrading deletes `config/security_entrance.json` and strips the nginx 404 gate. Basic auth, JWT, WebSockets, SSE, and phpMyAdmin are unchanged. (`panel_settings` **1.1.4**)
 
 - JWT signing no longer falls back to a hard-coded secret. The installer writes a random secret to `/opt/copanel/config/jwt_secret` (mode 0600) and loads it with systemd `EnvironmentFile=-/opt/copanel/config/copanel.env`. Reinstall keeps the existing secret. A missing secret is created on first process start. Password changes and `POST /api/auth/logout` bump `token_version`, so older tokens stop working.
@@ -42,7 +42,7 @@ All notable changes to CoPanel are documented in this file.
 ### Tiếng Việt (tóm tắt)
 
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
-- Cloudflare Tunnel không cần mở cổng 8686 ra internet. Origin là `https://127.0.0.1:8686` (`noTLSVerify: true`). Điều hướng giữ tên miền tunnel, không nhảy sang cổng 8686. `https://local:8686` không dùng được.
+- Cloudflare Tunnel không cần mở cổng 8686 ra internet. Origin là `http://127.0.0.1:8687` (chỉ loopback, không mở firewall). `https://<ip-lan>:8686` và `https://localhost:8686` bị chứng chỉ tự ký chặn nên Cloudflare trả 502. Trên LAN vẫn mở `https://<ip-lan>:8686/` và chấp nhận cảnh báo chứng chỉ.
 - Panel nghe HTTPS trên cổng 8686 (chứng chỉ tự ký 10 năm, giữ nguyên khi cài lại hoặc khi đã thay chứng chỉ thật). HTTP thường được chuyển sang HTTPS.
 - Bỏ đường dẫn bí mật `/<token>/`. Panel mở tại `https://<ip>:8686/` và `https://<tên-miền>/` nếu dùng Cloudflare Tunnel. Nâng cấp sẽ xóa file token và gỡ luật 404 trên nginx. Basic auth, JWT, WebSocket, SSE và phpMyAdmin giữ nguyên.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.

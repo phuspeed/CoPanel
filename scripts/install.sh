@@ -54,6 +54,8 @@ VENV_PATH="$CoPanel_HOME/venv"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
 NGINX_PORT=8686
+# Loopback HTTP for cloudflared. Not opened in the firewall.
+TUNNEL_ORIGIN_PORT=8687
 NGINX_CONF="/etc/nginx/sites-available/copanel"
 NGINX_ENABLED="/etc/nginx/sites-enabled/copanel"
 
@@ -1384,6 +1386,9 @@ copanel_allow_nginx_selinux() {
         semanage port -a -t http_port_t -p tcp 8686 >/dev/null 2>&1 \
             || semanage port -m -t http_port_t -p tcp 8686 >/dev/null 2>&1 \
             || log_warning "Could not label tcp/8686 as http_port_t. Nginx may fail to bind that port."
+        semanage port -a -t http_port_t -p tcp 8687 >/dev/null 2>&1 \
+            || semanage port -m -t http_port_t -p tcp 8687 >/dev/null 2>&1 \
+            || log_warning "Could not label tcp/8687 as http_port_t. The Cloudflare origin port may fail to bind."
     else
         log_warning "semanage is missing; if nginx cannot bind :8686, install policycoreutils-python-utils."
     fi
@@ -2174,17 +2179,17 @@ EOF
         exit 1
     fi
 
+    # Refresh TLS directives and the loopback tunnel origin, then put the
+    # access gate back. Gate restore runs last so it covers both servers.
+    copanel_entrance_cli apply-nginx "$NGINX_CONF"
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx >/dev/null 2>&1 || true
+    fi
     # Re-apply HTTP access gate if Settings previously enabled it.
     # setup_nginx overwrites sites-available/copanel with a clean template that
     # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
-    # Gate restore rewrites the site. Re-apply TLS directives (and drop any
-    # leftover secret-path gate) then reload if nginx is already up.
-    copanel_entrance_cli apply-nginx "$NGINX_CONF"
-    if nginx -t >/dev/null 2>&1; then
-        systemctl reload nginx >/dev/null 2>&1 || true
-    fi
     copanel_install_entrance_command
 
     # UFW alone does not open the panel on Oracle Cloud Ubuntu: UFW is often
@@ -2341,6 +2346,13 @@ verify_installation() {
     else
         log_warning "Plain HTTP on port ${NGINX_PORT} did not redirect (status ${http_code:-none})"
     fi
+
+    # Cloudflare Tunnel origin. Plain HTTP on loopback, no certificate check.
+    if curl -sf --max-time 5 "http://127.0.0.1:${TUNNEL_ORIGIN_PORT}/health" | grep -q "healthy"; then
+        log_success "Cloudflare origin http://127.0.0.1:${TUNNEL_ORIGIN_PORT} is up"
+    else
+        log_warning "Could not verify Cloudflare origin on 127.0.0.1:${TUNNEL_ORIGIN_PORT}"
+    fi
 }
 
 ###############################################################################
@@ -2360,11 +2372,10 @@ print_summary() {
     local panel_ip access_block
     panel_ip="$(copanel_detect_panel_ip)"
     access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
-   ${YELLOW}The browser will warn about the self-signed certificate.${NC}
-   ${YELLOW}Cloudflare Tunnel (8686 stays closed on the internet):${NC}
-   service: https://127.0.0.1:8686
-   originRequest.noTLSVerify: true
-   Then open https://<your-domain>/ . Do not use https://local:8686."
+   ${YELLOW}The browser will warn about the self-signed certificate. Choose Continue.${NC}
+   ${YELLOW}Cloudflare Tunnel (do not use https://localhost:8686 or the LAN IP):${NC}
+   service: http://127.0.0.1:${TUNNEL_ORIGIN_PORT}
+   Then open https://<your-domain>/"
 
     cat <<EOF
 
