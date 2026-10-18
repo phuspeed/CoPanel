@@ -1,6 +1,6 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.1.5-blue)
+![Version](https://img.shields.io/badge/version-1.1.6-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -168,27 +168,25 @@ Trình cài đặt sẽ:
 - ✅ Cài đặt các thư viện phụ thuộc của backend & frontend
 - ✅ Xây dựng các tệp tĩnh frontend (build assets)
 - ✅ Cấu hình Nginx (HTTPS cổng 8686)
-- ✅ Tạo chứng chỉ tự ký và đường dẫn bảo mật
+- ✅ Tạo chứng chỉ tự ký (HTTPS cổng 8686)
 - ✅ Thiết lập dịch vụ Systemd
 - ✅ Khởi chạy tất cả các dịch vụ
 
 ### Đăng nhập lần đầu
 
-Cuối lệnh cài, script in URL:
+Mở panel trên LAN:
 
 ```text
-https://<ip-máy>:8686/<token>/
+https://<ip-máy>:8686/
 ```
 
-Mở đúng URL đó, chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. Chưa mở URL này thì trang đăng nhập và `/api/auth/login` trả **404**. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
+Chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
 
-Cloudflare Tunnel không cần mở firewall 8686 ra internet. Origin phải là `https://127.0.0.1:8686` với `noTLSVerify: true`. `https://local:8686` không dùng được (tên `local` không có trên chứng chỉ, và thường không phân giải). Sau khi tunnel chạy, mở một lần `https://<tên-miền>/<token>/` — cookie của IP LAN không dùng được trên tên miền Cloudflare.
-
-Mất liên kết: SSH vào máy và chạy `copanel-entrance` (thêm `rotate`, `disable`, `enable`). Cùng các nút đó trong **Cài đặt → Bảo vệ truy cập panel**. Cài lại không đổi token hay chứng chỉ.
+Cloudflare Tunnel không cần mở firewall 8686 ra internet. Origin là `https://127.0.0.1:8686` với `noTLSVerify: true`. Tên `local` không phân giải và không có trên chứng chỉ, nên origin phải là `127.0.0.1`. Trang public là `https://<tên-miền>/`.
 
 Thay chứng chỉ thật: ghi đè `/opt/copanel/config/ssl/panel.crt` và `panel.key` (key mode 0600), rồi `sudo nginx -t && sudo systemctl reload nginx`.
 
-- **Giao diện Web**: `https://<ip>:8686/<token>/` (in ở cuối `install.sh`)
+- **Giao diện Web**: `https://<ip>:8686/` (in ở cuối `install.sh`)
 - **Backend API**: http://127.0.0.1:8000 (chỉ localhost)
 - **Tài liệu API**: http://127.0.0.1:8000/docs (chỉ localhost)
 

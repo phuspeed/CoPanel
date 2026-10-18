@@ -23,7 +23,7 @@ This script will:
 4. Install Python dependencies
 5. Build React frontend
 6. Configure Nginx for HTTPS on port 8686
-7. Create a self-signed certificate and a secret entrance path
+7. Create a self-signed certificate for HTTPS on port 8686
 8. Create and start the Systemd service
 9. Verify everything works
 
@@ -31,25 +31,17 @@ This script will:
 
 ## 🌐 First login
 
-At the end of `install.sh`, copy the printed URL:
+At the end of `install.sh`, open:
 
 ```text
-https://<server-ip>:8686/<token>/
+https://<server-ip>:8686/
 ```
 
-Open that exact URL (not `http://`, and not the site root). The browser warns about the self-signed certificate; continue, and the panel sets a cookie and shows the login page. Until that visit, the login page and the login API return 404.
+The browser warns about the self-signed certificate; continue to the login page. Sign in as `admin` with the password in the installer summary (also stored in `/opt/copanel/config/admin_password.txt`).
 
-Sign in as `admin` with the password in the installer summary (also stored in `/opt/copanel/config/admin_password.txt`).
+Re-running `install.sh` keeps the certificate. Replace `/opt/copanel/config/ssl/panel.crt` and `panel.key`, then `nginx -t && systemctl reload nginx`, to install a real certificate.
 
-```bash
-copanel-entrance          # print the URL again if you lost it
-copanel-entrance rotate   # issue a new URL
-copanel-entrance disable  # turn the secret path off
-```
-
-Settings → Panel access gate can show, rotate, or disable the same link after login. Re-running `install.sh` keeps the token and the certificate. Replace `/opt/copanel/config/ssl/panel.crt` and `panel.key`, then `nginx -t && systemctl reload nginx`, to install a real certificate.
-
-Cloudflare Tunnel does not need port 8686 open to the internet. Set the origin to `https://127.0.0.1:8686` with `noTLSVerify: true`, then open `https://<your-domain>/<token>/` once. `https://local:8686` does not work.
+Cloudflare Tunnel does not need port 8686 open to the internet. Set the origin to `https://127.0.0.1:8686` with `noTLSVerify: true`, then open `https://<your-domain>/`. `https://local:8686` does not work.
 
 ## 📊 What's Included
 
@@ -305,7 +297,7 @@ sudo chown -R copanel:copanel /opt/copanel
 
 ## 🎯 Next Steps
 
-1. ✅ Installation complete — open the `https://<ip>:8686/<token>/` URL from the installer summary
+1. ✅ Installation complete — open `https://<ip>:8686/` from the installer summary
 2. 📖 Read the [Backend Guide](backend/README.md)
 3. 🎨 Read the [Frontend Guide](frontend/README.md)
 4. 🔌 Create your first custom module
