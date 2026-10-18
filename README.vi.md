@@ -1,6 +1,6 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.1.6-blue)
+![Version](https://img.shields.io/badge/version-1.1.7-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -167,8 +167,7 @@ Trình cài đặt sẽ:
 - ✅ Tạo môi trường ảo Python (virtual environment)
 - ✅ Cài đặt các thư viện phụ thuộc của backend & frontend
 - ✅ Xây dựng các tệp tĩnh frontend (build assets)
-- ✅ Cấu hình Nginx (HTTPS cổng 8686)
-- ✅ Tạo chứng chỉ tự ký (HTTPS cổng 8686)
+- ✅ Cấu hình Nginx (HTTP cổng 8686)
 - ✅ Thiết lập dịch vụ Systemd
 - ✅ Khởi chạy tất cả các dịch vụ
 
@@ -177,16 +176,14 @@ Trình cài đặt sẽ:
 Mở panel trên LAN:
 
 ```text
-https://<ip-máy>:8686/
+http://<ip-máy>:8686/
 ```
 
-Chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
+Đăng nhập bằng mật khẩu admin vừa in.
 
-Cloudflare Tunnel không cần mở firewall 8686 ra internet. Origin là `https://127.0.0.1:8686` với `noTLSVerify: true`. Tên `local` không phân giải và không có trên chứng chỉ, nên origin phải là `127.0.0.1`. Trang public là `https://<tên-miền>/`.
+Cloudflare Tunnel trỏ origin về đúng cổng HTTP đó: `http://<ip-lan>:8686` hoặc `http://localhost:8686`. Trang public vẫn là `https://<tên-miền>/` do chứng chỉ của Cloudflare.
 
-Thay chứng chỉ thật: ghi đè `/opt/copanel/config/ssl/panel.crt` và `panel.key` (key mode 0600), rồi `sudo nginx -t && sudo systemctl reload nginx`.
-
-- **Giao diện Web**: `https://<ip>:8686/` (in ở cuối `install.sh`)
+- **Giao diện Web**: `http://<ip>:8686/` (in ở cuối `install.sh`)
 - **Backend API**: http://127.0.0.1:8000 (chỉ localhost)
 - **Tài liệu API**: http://127.0.0.1:8000/docs (chỉ localhost)
 

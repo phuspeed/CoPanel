@@ -1,9 +1,9 @@
-"""Panel TLS helpers.
+"""Panel port helpers.
 
-``install.sh`` serves port 8686 over HTTPS with a self-signed certificate.
-The secret ``/<token>/`` entrance used to hide the login page; that gate is
-removed. ``apply-nginx`` and the startup repair delete any leftover nginx
-blocks so ``https://<host>:8686/`` opens directly.
+``install.sh`` serves port 8686 over plain HTTP so Cloudflare Tunnel can use
+``http://<lan-ip>:8686`` or ``http://localhost:8686``. The self-signed HTTPS
+listener and the secret ``/<token>/`` entrance are removed. ``apply-nginx``
+and the startup repair rewrite a leftover HTTPS site back to HTTP.
 
 Stdlib only, so ``install.sh`` can run this file before the virtualenv
 imports FastAPI.
@@ -266,7 +266,7 @@ def split_host_header(value: str) -> Tuple[str, Optional[int]]:
     return raw, None
 
 
-def build_panel_url(host: str, *, port: Optional[int] = PANEL_PORT, proto: str = "https") -> str:
+def build_panel_url(host: str, *, port: Optional[int] = PANEL_PORT, proto: str = "http") -> str:
     pretty = format_host(host)
     if not pretty:
         return "/"
@@ -341,29 +341,50 @@ def _server_insert_at(content: str) -> int:
     return newline + 1
 
 
+_SSL_DIRECTIVE = re.compile(
+    r"(?m)^[ \t]*ssl_(?:certificate|certificate_key|protocols|prefer_server_ciphers|session_timeout)\b[^;\n]*;\n?"
+)
+_ERROR_497 = re.compile(r"(?m)^[ \t]*error_page\s+497\b[^;\n]*;\n?")
+_TLS_BLOCK = re.compile(re.escape(TLS_START) + r".*?" + re.escape(TLS_END) + r"\n?", re.DOTALL)
+
+
+def _listen_plain_http(content: str) -> str:
+    """Serve port 8686 as plain HTTP, the origin Cloudflare Tunnel already used."""
+
+    def repl(match: re.Match) -> str:
+        line = match.group(0)
+        indent = re.match(r"[ \t]*", line).group(0)
+        if "[::]" in line:
+            return f"{indent}listen [::]:8686;"
+        return f"{indent}listen 8686;"
+
+    return _LISTEN_8686.sub(repl, content)
+
+
+def strip_panel_tls(content: str) -> str:
+    """Drop the self-signed HTTPS server settings added on port 8686."""
+    updated = _TLS_BLOCK.sub("", content)
+    updated = _ERROR_497.sub("", updated)
+    updated = _SSL_DIRECTIVE.sub("", updated)
+    return _listen_plain_http(updated)
+
+
 def apply_nginx_text(content: str) -> str:
-    """Remove the secret entrance and keep HTTPS redirects on the client host."""
+    """Remove the secret entrance and the HTTPS wrapper on port 8686."""
     updated = strip_entrance(content)
-    updated = _upsert_block(updated, TLS_START, TLS_END, render_tls_block(), _server_insert_at(updated))
-    updated = _relax_https_redirect(updated)
-    updated = _enable_listen_http2(updated)
-    return updated
+    return strip_panel_tls(updated)
 
 
 def panel_nginx_current(content: str) -> bool:
     if HTTP_START in content or SERVER_START in content or "copanel_entrance_pass" in content:
         return False
-    if "$host:$server_port" in content:
-        return False
-    if "error_page 497" in content and _REDIRECT_497_HOST not in content:
-        return False
-    if render_tls_block() not in content:
+    if TLS_START in content or "error_page 497" in content or "ssl_certificate" in content:
         return False
     for line in content.splitlines():
         stripped = line.strip()
-        if stripped.startswith("listen") and "8686" in stripped and "ssl" in stripped and "http2" not in stripped:
+        if stripped.startswith("listen") and "8686" in stripped and "ssl" in stripped:
             return False
-    return True
+    return "listen 8686;" in content
 
 
 def find_nginx_site(explicit: Optional[str] = None) -> Optional[Path]:
@@ -516,7 +537,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     show_parser.add_argument("--json", action="store_true")
 
     for name in ("rotate", "disable", "enable"):
-        cmd = sub.add_parser(name, help="Open https://<host>:8686/ and drop any leftover secret path")
+        cmd = sub.add_parser(name, help="Open http://<host>:8686/ and drop any leftover secret path")
         cmd.add_argument("--nginx")
         cmd.add_argument("--no-reload", action="store_true")
 

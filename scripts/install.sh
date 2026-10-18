@@ -21,8 +21,7 @@
 # 
 # Features:
 # - Python virtual environment setup
-# - Nginx on port 8686 over HTTPS (self-signed until you replace the cert)
-# - Panel URL is https://<ip>:8686/ (no secret path)
+# - Nginx on port 8686 over plain HTTP (Cloudflare Tunnel origin)
 # - Systemd service installation
 # - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
@@ -2043,11 +2042,9 @@ EOF
 ###############################################################################
 
 setup_nginx() {
-    log_info "Configuring Nginx reverse proxy (HTTPS on port ${NGINX_PORT})..."
+    log_info "Configuring Nginx reverse proxy (HTTP on port ${NGINX_PORT})..."
 
     copanel_entrance_cli ensure
-    copanel_entrance_cli ensure-cert
-    copanel_trust_panel_certificate
     copanel_lock_down_secrets
 
     copanel_ensure_nginx_package || { log_error "nginx is required."; exit 1; }
@@ -2080,21 +2077,10 @@ upstream php_fpm {
 }
 
 server {
-    listen 8686 ssl http2;
-    listen [::]:8686 ssl http2;
+    listen 8686;
+    listen [::]:8686;
 
     server_name _;
-
-    ssl_certificate     /opt/copanel/config/ssl/panel.crt;
-    ssl_certificate_key /opt/copanel/config/ssl/panel.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;
-    ssl_session_timeout 1d;
-
-    # Plain HTTP on this TLS port is status 497.
-    # $http_host keeps :8686 for a direct browser and omits it when Cloudflare
-    # Tunnel sends Host: panel.example.com (public port 443).
-    error_page 497 =301 https://$http_host$request_uri;
 
     client_max_body_size 100M;
     
@@ -2327,19 +2313,10 @@ verify_installation() {
         log_warning "Could not verify backend health"
     fi
     
-    # Nginx serves HTTPS on the panel port.
-    if curl -skf --max-time 5 "https://127.0.0.1:${NGINX_PORT}/health" | grep -q "healthy"; then
-        log_success "Nginx HTTPS reverse proxy working"
+    if curl -sf --max-time 5 "http://127.0.0.1:${NGINX_PORT}/health" | grep -q "healthy"; then
+        log_success "Nginx reverse proxy working"
     else
-        log_warning "Could not verify Nginx HTTPS proxy"
-    fi
-
-    local http_code
-    http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${NGINX_PORT}/health" || true)"
-    if [[ "$http_code" == "301" ]]; then
-        log_success "Plain HTTP on port ${NGINX_PORT} redirects to HTTPS"
-    else
-        log_warning "Plain HTTP on port ${NGINX_PORT} did not redirect (status ${http_code:-none})"
+        log_warning "Could not verify Nginx proxy"
     fi
 }
 
@@ -2358,13 +2335,12 @@ print_summary() {
     fi
 
     local panel_ip access_block
-    panel_ip="$(copanel_detect_panel_ip)"
-    access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
-   ${YELLOW}The browser will warn about the self-signed certificate.${NC}
-   ${YELLOW}Cloudflare Tunnel (8686 stays closed on the internet):${NC}
-   service: https://127.0.0.1:8686
-   originRequest.noTLSVerify: true
-   Then open https://<your-domain>/ . Do not use https://local:8686."
+    panel_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    panel_ip="${panel_ip:-127.0.0.1}"
+    access_block="🌐 Panel URL:         ${GREEN}http://${panel_ip}:${NGINX_PORT}/${NC}
+   ${GREEN}http://localhost:${NGINX_PORT}/${NC}
+   Cloudflare Tunnel origin: ${GREEN}http://${panel_ip}:${NGINX_PORT}${NC}
+   or ${GREEN}http://localhost:${NGINX_PORT}${NC}"
 
     cat <<EOF
 
@@ -2381,7 +2357,7 @@ ${BLUE}Installation Summary:${NC}
 👤 Service User:      ${CoPanel_USER}
 ${access_block}
 📊 Backend API:       http://127.0.0.1:${BACKEND_PORT} (localhost only)
-📜 phpMyAdmin:        https://${panel_ip}:${NGINX_PORT}/phpmyadmin
+📜 phpMyAdmin:        http://${panel_ip}:${NGINX_PORT}/phpmyadmin
    ${YELLOW}(Install MariaDB + phpMyAdmin via Package Manager inside CoPanel)${NC}
 ${LOWMEM_SUMMARY}
 ${BLUE}Useful Commands:${NC}
@@ -2402,7 +2378,7 @@ Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
 
 ${YELLOW}Next Steps:${NC}
 
-1. Open the panel URL printed above (https://<ip>:${NGINX_PORT}/)
+1. Open the panel URL printed above (http://<ip>:${NGINX_PORT}/)
 2. Go to Package Manager to install MariaDB / PostgreSQL / phpMyAdmin
 3. Review logs: journalctl -u copanel -f
 

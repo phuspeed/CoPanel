@@ -102,13 +102,18 @@ if grep -q 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$nginx_file" || grep -q 'copanel_
 else
     printf 'ok  %s\n' "apply-nginx removes the secret path"
 fi
-grep -q 'error_page 497 =301 https://$http_host$request_uri;' "$nginx_file"
+if grep -q 'error_page 497' "$nginx_file" || grep -q 'ssl_certificate' "$nginx_file" || grep -q 'ssl' "$nginx_file"; then
+    printf 'FAIL %s\n' "apply-nginx restores plain http" >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  %s\n' "apply-nginx restores plain http"
+fi
 grep -q "location /phpmyadmin" "$nginx_file"
 grep -q 'proxy_set_header Upgrade' "$nginx_file"
-grep -q 'listen 8686 ssl http2;' "$nginx_file"
+grep -q 'listen 8686;' "$nginx_file"
 
 url="$(copanel_entrance_cli --host 203.0.113.10 show --url-only)"
-assert_eq "show prints the https panel url" "https://203.0.113.10:8686/" "$url"
+assert_eq "show prints the http panel url" "http://203.0.113.10:8686/" "$url"
 
 conf="$(mktemp)"
 printf '%s\n' '    listen 8686 ssl;' '    listen [::]:8686 ssl;' > "$conf"
@@ -132,4 +137,4 @@ if [[ "$FAILS" -ne 0 ]]; then
     printf '%s failure(s)\n' "$FAILS" >&2
     exit 1
 fi
-printf 'panel https installer checks passed\n'
+printf 'panel http installer checks passed\n'
