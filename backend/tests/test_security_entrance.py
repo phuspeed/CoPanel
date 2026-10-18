@@ -169,7 +169,15 @@ class NginxSnippetTests(unittest.TestCase):
             "    client_max_body_size 100M;\n",
             "    client_max_body_size 100M;\n" + OLD_SERVER,
             1,
-        )
+        ) + """
+# BEGIN COPANEL TUNNEL ORIGIN
+server {
+    listen 127.0.0.1:8687;
+    server_name _;
+    location / { root /opt/copanel/frontend/dist; }
+}
+# END COPANEL TUNNEL ORIGIN
+"""
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -188,6 +196,8 @@ class NginxSnippetTests(unittest.TestCase):
         self.assertNotIn("error_page 497", twice)
         self.assertNotIn("ssl_certificate", twice)
         self.assertNotIn("ssl", twice)
+        self.assertNotIn("8687", twice)
+        self.assertNotIn("COPANEL TUNNEL ORIGIN", twice)
         self.assertIn("listen 8686;", twice)
         self.assertIn("listen [::]:8686;", twice)
         self.assertIn("location /phpmyadmin {", twice)

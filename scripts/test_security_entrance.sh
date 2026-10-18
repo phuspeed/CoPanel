@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installer entrypoints for panel HTTPS and removal of the secret entrance.
+# Installer entrypoints for plain HTTP on 8686 and removal of the secret entrance.
 # Does not install packages or write /etc/nginx.
 set -euo pipefail
 
@@ -85,6 +85,12 @@ server {
     }
     # END COPANEL SECURITY ENTRANCE SERVER
 }
+# BEGIN COPANEL TUNNEL ORIGIN
+server {
+    listen 127.0.0.1:8687;
+    server_name _;
+}
+# END COPANEL TUNNEL ORIGIN
 EOF
 
 copanel_entrance_cli apply-nginx "$nginx_file"
@@ -111,6 +117,12 @@ fi
 grep -q "location /phpmyadmin" "$nginx_file"
 grep -q 'proxy_set_header Upgrade' "$nginx_file"
 grep -q 'listen 8686;' "$nginx_file"
+if grep -q '8687' "$nginx_file" || grep -q 'COPANEL TUNNEL ORIGIN' "$nginx_file"; then
+    printf 'FAIL %s\n' "apply-nginx removes the loopback tunnel origin" >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  %s\n' "apply-nginx removes the loopback tunnel origin"
+fi
 
 url="$(copanel_entrance_cli --host 203.0.113.10 show --url-only)"
 assert_eq "show prints the http panel url" "http://203.0.113.10:8686/" "$url"

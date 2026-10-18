@@ -38,6 +38,8 @@ SERVER_END = "# END COPANEL SECURITY ENTRANCE SERVER"
 
 TLS_START = "# BEGIN COPANEL PANEL TLS"
 TLS_END = "# END COPANEL PANEL TLS"
+TUNNEL_START = "# BEGIN COPANEL TUNNEL ORIGIN"
+TUNNEL_END = "# END COPANEL TUNNEL ORIGIN"
 
 _DNS_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 
@@ -46,10 +48,6 @@ NGINX_CANDIDATES = (
     Path("/etc/nginx/conf.d/copanel.conf"),
 )
 
-_REDIRECT_497_PINNED = re.compile(
-    r"error_page\s+497\s+=301\s+https://\$host:\$server_port\$request_uri\s*;"
-)
-_REDIRECT_497_HOST = "error_page 497 =301 https://$http_host$request_uri;"
 _LISTEN_8686 = re.compile(r"(?m)^([ \t]*listen\s+[^;\n]*\b8686\b[^;\n]*);")
 _SERVER_BLOCK = re.compile(
     re.escape(SERVER_START) + r".*?" + re.escape(SERVER_END) + r"\n?",
@@ -275,19 +273,6 @@ def build_panel_url(host: str, *, port: Optional[int] = PANEL_PORT, proto: str =
     return f"{proto}://{pretty}/"
 
 
-def render_tls_block() -> str:
-    """Keep redirects on the host the browser used. No access gate."""
-    return (
-        f"{TLS_START}\n"
-        "    absolute_redirect off;\n"
-        "    port_in_redirect off;\n"
-        "    set_real_ip_from 127.0.0.1;\n"
-        "    set_real_ip_from ::1;\n"
-        "    real_ip_header CF-Connecting-IP;\n"
-        f"{TLS_END}\n"
-    )
-
-
 def strip_entrance(content: str) -> str:
     """Drop the secret-path map and the server ``return 404`` gate."""
     # The server marker contains the http marker as a prefix, so remove it first.
@@ -296,56 +281,12 @@ def strip_entrance(content: str) -> str:
     return updated
 
 
-def _relax_https_redirect(content: str) -> str:
-    """Keep the port the client already used.
-
-    A direct browser sends ``Host: 192.168.1.10:8686`` and stays on 8686.
-    Cloudflare Tunnel sends ``Host: panel.example.com`` and stays on 443.
-    """
-    return _REDIRECT_497_PINNED.sub(_REDIRECT_497_HOST, content)
-
-
-def _enable_listen_http2(content: str) -> str:
-    """cloudflared speaks HTTP/2 to an https:// origin."""
-
-    def repl(match: re.Match) -> str:
-        line = match.group(0)
-        if "ssl" not in line or "http2" in line:
-            return line
-        return match.group(1) + " http2;"
-
-    return _LISTEN_8686.sub(repl, content)
-
-
-def _upsert_block(content: str, start: str, end: str, block: str, insert_at: int) -> str:
-    pattern = re.compile(re.escape(start) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
-    if pattern.search(content):
-        return pattern.sub(lambda _match: block, content, count=1)
-    if insert_at < 0:
-        raise RuntimeError("nginx site has no server block to attach the panel TLS directives")
-    return content[:insert_at] + block + content[insert_at:]
-
-
-def _server_insert_at(content: str) -> int:
-    marker = content.find("error_page 497")
-    if marker != -1:
-        newline = content.find("\n", marker)
-        if newline != -1:
-            return newline + 1
-    match = re.search(r"(?m)^server\s*\{", content)
-    if not match:
-        return -1
-    newline = content.find("\n", match.end())
-    if newline == -1:
-        return -1
-    return newline + 1
-
-
 _SSL_DIRECTIVE = re.compile(
     r"(?m)^[ \t]*ssl_(?:certificate|certificate_key|protocols|prefer_server_ciphers|session_timeout)\b[^;\n]*;\n?"
 )
 _ERROR_497 = re.compile(r"(?m)^[ \t]*error_page\s+497\b[^;\n]*;\n?")
 _TLS_BLOCK = re.compile(re.escape(TLS_START) + r".*?" + re.escape(TLS_END) + r"\n?", re.DOTALL)
+_TUNNEL_BLOCK = re.compile(re.escape(TUNNEL_START) + r".*?" + re.escape(TUNNEL_END) + r"\n?", re.DOTALL)
 
 
 def _listen_plain_http(content: str) -> str:
@@ -362,8 +303,9 @@ def _listen_plain_http(content: str) -> str:
 
 
 def strip_panel_tls(content: str) -> str:
-    """Drop the self-signed HTTPS server settings added on port 8686."""
+    """Drop HTTPS on 8686 and a leftover loopback tunnel server on 8687."""
     updated = _TLS_BLOCK.sub("", content)
+    updated = _TUNNEL_BLOCK.sub("", updated)
     updated = _ERROR_497.sub("", updated)
     updated = _SSL_DIRECTIVE.sub("", updated)
     return _listen_plain_http(updated)
@@ -378,7 +320,9 @@ def apply_nginx_text(content: str) -> str:
 def panel_nginx_current(content: str) -> bool:
     if HTTP_START in content or SERVER_START in content or "copanel_entrance_pass" in content:
         return False
-    if TLS_START in content or "error_page 497" in content or "ssl_certificate" in content:
+    if TLS_START in content or TUNNEL_START in content or "error_page 497" in content or "ssl_certificate" in content:
+        return False
+    if "8687" in content:
         return False
     for line in content.splitlines():
         stripped = line.strip()
@@ -400,7 +344,7 @@ def find_nginx_site(explicit: Optional[str] = None) -> Optional[Path]:
 
 
 def apply_nginx_file(path: Path) -> bool:
-    """Write the TLS directives into ``path``. Returns True when the file changed."""
+    """Rewrite ``path`` to plain HTTP on 8686. Returns True when the file changed."""
     original = path.read_text(encoding="utf-8")
     updated = apply_nginx_text(original)
     if updated == original:
@@ -520,7 +464,7 @@ def _cmd_open(config: Path, nginx: Optional[Path], *, reload: bool, host: str) -
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="CoPanel panel HTTPS certificate and nginx TLS directives")
+    parser = argparse.ArgumentParser(description="Restore plain HTTP on port 8686 and drop a leftover secret path")
     parser.add_argument("--home", help="CoPanel install root (defaults to /opt/copanel or the repo)")
     parser.add_argument("--host", default="", help="IP or hostname used when printing the URL")
     sub = parser.add_subparsers(dest="command")
@@ -528,7 +472,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub.add_parser("ensure", help="Remove a leftover security-entrance token file")
     sub.add_parser("ensure-cert", help="Create the self-signed panel certificate if it is missing")
 
-    apply_parser = sub.add_parser("apply-nginx", help="Remove the secret path from an nginx site and keep HTTPS")
+    apply_parser = sub.add_parser("apply-nginx", help="Rewrite an nginx site to plain HTTP on port 8686")
     apply_parser.add_argument("nginx_file")
     apply_parser.add_argument("--reload", action="store_true")
 

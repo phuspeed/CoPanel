@@ -17,7 +17,7 @@ All notable changes to CoPanel are documented in this file.
 
 **Security**
 
-- Port 8686 is plain HTTP again. The self-signed HTTPS listener and the `/<token>/` entrance are removed because Cloudflare Tunnel could not complete a TLS handshake to the panel (`502 Bad Gateway`). Upgrade rewrites nginx to `listen 8686` and deletes a leftover token file. Open `http://<lan-ip>:8686/`. Tunnel origin: `http://<lan-ip>:8686` or `http://localhost:8686`. (`panel_settings` **1.1.4**)
+- Port 8686 is plain HTTP again. The self-signed HTTPS listener, the loopback `127.0.0.1:8687` tunnel origin, and the `/<token>/` entrance are removed because Cloudflare Tunnel could not complete a TLS handshake to the panel (`502 Bad Gateway`). Upgrade rewrites nginx to `listen 8686` and deletes a leftover token file. Open `http://<lan-ip>:8686/`. Tunnel origin: `http://<lan-ip>:8686` or `http://localhost:8686`. (`panel_settings` **1.1.4**)
 
 - JWT signing no longer falls back to a hard-coded secret. The installer writes a random secret to `/opt/copanel/config/jwt_secret` (mode 0600) and loads it with systemd `EnvironmentFile=-/opt/copanel/config/copanel.env`. Reinstall keeps the existing secret. A missing secret is created on first process start. Password changes and `POST /api/auth/logout` bump `token_version`, so older tokens stop working.
 - The API process binds to `127.0.0.1:8000` in the systemd unit. `install.sh` no longer opens port 8000, and a reinstall removes a leftover UFW or firewalld allow rule for `8000/tcp`.
@@ -40,7 +40,7 @@ All notable changes to CoPanel are documented in this file.
 ### Tiếng Việt (tóm tắt)
 
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
-- Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.
+- Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký, origin loopback `127.0.0.1:8687` và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
 - API chỉ nghe `127.0.0.1:8000`; cài lại sẽ gỡ rule firewall cổng 8000.
 - phpMyAdmin không chạy lệnh qua shell và không trả mật khẩu ở GET. Tên database/user được kiểm tra trước khi đưa vào SQL.

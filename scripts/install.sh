@@ -1977,10 +1977,9 @@ copanel_write_ui_track() {
 }
 
 ###############################################################################
-# Panel TLS
-# Certificate logic lives in backend/core/security_entrance.py so reinstalls
-# keep the same certificate files. apply-nginx also removes a leftover
-# secret-path gate from older installs.
+# Panel nginx
+# apply-nginx restores plain HTTP on 8686 and removes a leftover secret-path
+# gate, self-signed TLS block, or loopback :8687 tunnel server.
 ###############################################################################
 
 copanel_entrance_cli() {
@@ -2160,17 +2159,17 @@ EOF
         exit 1
     fi
 
+    # Refresh TLS directives and the loopback tunnel origin, then put the
+    # access gate back. Gate restore runs last so it covers both servers.
+    copanel_entrance_cli apply-nginx "$NGINX_CONF"
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx >/dev/null 2>&1 || true
+    fi
     # Re-apply HTTP access gate if Settings previously enabled it.
     # setup_nginx overwrites sites-available/copanel with a clean template that
     # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
-    # Gate restore rewrites the site. Re-apply TLS directives (and drop any
-    # leftover secret-path gate) then reload if nginx is already up.
-    copanel_entrance_cli apply-nginx "$NGINX_CONF"
-    if nginx -t >/dev/null 2>&1; then
-        systemctl reload nginx >/dev/null 2>&1 || true
-    fi
     copanel_install_entrance_command
 
     # UFW alone does not open the panel on Oracle Cloud Ubuntu: UFW is often
