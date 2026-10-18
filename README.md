@@ -1,6 +1,6 @@
 # CoPanel - Lightweight Linux VPS Management Panel
 
-![Version](https://img.shields.io/badge/version-1.1.5-blue)
+![Version](https://img.shields.io/badge/version-1.1.6-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -183,23 +183,23 @@ The installer will:
 - ✅ Install backend & frontend dependencies
 - ✅ Build frontend assets
 - ✅ Configure Nginx reverse proxy (HTTPS on port 8686)
-- ✅ Create a self-signed panel certificate and a secret entrance path
+- ✅ Create a self-signed panel certificate (HTTPS on port 8686)
 - ✅ Set up Systemd service
 - ✅ Start all services
 
 ### First login
 
-The installer prints a one-time entrance URL:
+Open the panel on the LAN:
 
 ```text
-https://<server-ip>:8686/<token>/
+https://<server-ip>:8686/
 ```
 
-Open that URL first and accept the self-signed certificate warning. It sets a browser cookie and redirects to the login page. Any other request to port 8686 (including `/` and `/api/auth/login`) returns **404** until then. Sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`).
+Accept the self-signed certificate warning, then sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`).
 
 Plain `http://<ip>:8686/...` redirects to HTTPS. The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
 
-Cloudflare Tunnel works without exposing port 8686. Point the public hostname at the panel on localhost, then open the entrance on that hostname (the LAN cookie does not carry over):
+Cloudflare Tunnel works without exposing port 8686. Point the public hostname at nginx on localhost:
 
 ```yaml
 ingress:
@@ -210,18 +210,7 @@ ingress:
   - service: http_status:404
 ```
 
-`https://local:8686` and `https://localhost:8686` fail when `localhost` is IPv6 or the name is not on the certificate. Use `127.0.0.1`. The first browser visit is `https://panel.example.com/<token>/`.
-
-Lost the entrance link? On the server:
-
-```bash
-copanel-entrance          # print the URL
-copanel-entrance rotate   # new URL; the old one stops working
-copanel-entrance disable  # panel is reachable at https://<ip>:8686/ again
-copanel-entrance enable
-```
-
-The same controls are in the panel under **Settings → Panel access gate** after you are signed in. Reinstall keeps the token and the certificate.
+`https://local:8686` fails when the name `local` does not resolve or is missing from the certificate. Use `127.0.0.1`. The public URL is `https://panel.example.com/`.
 
 To use a real certificate later, replace these files and reload nginx (do not rename them):
 
@@ -232,7 +221,7 @@ sudo chmod 600 /opt/copanel/config/ssl/panel.key
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-- **Web UI**: `https://<server-ip>:8686/<token>/` (printed at the end of `install.sh`)
+- **Web UI**: `https://<server-ip>:8686/` (printed at the end of `install.sh`)
 - **Backend API**: http://127.0.0.1:8000 (localhost only)
 - **API Docs**: http://127.0.0.1:8000/docs (localhost only)
 

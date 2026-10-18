@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installer entrypoints for the security entrance and panel certificate.
+# Installer entrypoints for panel HTTPS and removal of the secret entrance.
 # Does not install packages or write /etc/nginx.
 set -euo pipefail
 
@@ -23,21 +23,20 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 CoPanel_HOME="$tmpdir/opt"
-mkdir -p "$CoPanel_HOME"
+mkdir -p "$CoPanel_HOME/config"
 export COPANEL_SKIP_PUBLIC_IP=1
 export COPANEL_PANEL_IP="203.0.113.10"
 
-copanel_entrance_cli ensure
-copanel_entrance_cli ensure
 token_file="${CoPanel_HOME}/config/security_entrance.json"
-token1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$token_file")"
-enabled1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["enabled"])' "$token_file")"
+printf '%s\n' '{"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","enabled":true}' > "$token_file"
 copanel_entrance_cli ensure
-token2="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$token_file")"
-assert_eq "ensure keeps the token" "$token1" "$token2"
-assert_eq "ensure starts enabled" "True" "$enabled1"
-mode="$(stat -c '%a' "$token_file")"
-assert_eq "token file is mode 0600" "600" "$mode"
+if [[ -f "$token_file" ]]; then
+    printf 'FAIL %s\n' "ensure removes the token file" >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  %s\n' "ensure removes the token file"
+fi
+copanel_entrance_cli ensure
 
 copanel_entrance_cli ensure-cert
 key_file="${CoPanel_HOME}/config/ssl/panel.key"
@@ -52,6 +51,11 @@ test -s "$crt_file"
 
 nginx_file="$tmpdir/copanel.conf"
 cat > "$nginx_file" << 'EOF'
+# BEGIN COPANEL SECURITY ENTRANCE
+map $uri $copanel_entrance_pass {
+    default 0;
+}
+# END COPANEL SECURITY ENTRANCE
 server {
     listen 8686 ssl;
     listen [::]:8686 ssl;
@@ -72,6 +76,14 @@ server {
     location /health {
         proxy_pass http://127.0.0.1:8000;
     }
+    # BEGIN COPANEL SECURITY ENTRANCE SERVER
+    location = /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa {
+        return 302 /;
+    }
+    if ($copanel_entrance_pass != 1) {
+        return 404;
+    }
+    # END COPANEL SECURITY ENTRANCE SERVER
 }
 EOF
 
@@ -84,25 +96,19 @@ else
     printf 'FAIL %s\n' "apply-nginx is idempotent" >&2
     FAILS=$((FAILS + 1))
 fi
-grep -q "$token1" "$nginx_file"
-grep -q "error_page 497" "$nginx_file"
+if grep -q 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$nginx_file" || grep -q 'copanel_entrance_pass' "$nginx_file"; then
+    printf 'FAIL %s\n' "apply-nginx removes the secret path" >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  %s\n' "apply-nginx removes the secret path"
+fi
+grep -q 'error_page 497 =301 https://$http_host$request_uri;' "$nginx_file"
 grep -q "location /phpmyadmin" "$nginx_file"
 grep -q 'proxy_set_header Upgrade' "$nginx_file"
-
-# Disable must not require the host nginx, and a later ensure must not turn it back on.
-copanel_entrance_cli disable --nginx "$nginx_file" --no-reload
-enabled_off="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["enabled"])' "$token_file")"
-assert_eq "disable keeps the file but turns enforcement off" "False" "$enabled_off"
-token_off="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$token_file")"
-assert_eq "disable keeps the token" "$token1" "$token_off"
-copanel_entrance_cli ensure
-token_after="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$token_file")"
-enabled_after="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["enabled"])' "$token_file")"
-assert_eq "reinstall ensure keeps a disabled entrance" "False" "$enabled_after"
-assert_eq "reinstall ensure keeps the disabled token" "$token_off" "$token_after"
+grep -q 'listen 8686 ssl http2;' "$nginx_file"
 
 url="$(copanel_entrance_cli --host 203.0.113.10 show --url-only)"
-assert_eq "show prints the full https entrance url" "https://203.0.113.10:8686/${token_after}/" "$url"
+assert_eq "show prints the https panel url" "https://203.0.113.10:8686/" "$url"
 
 conf="$(mktemp)"
 printf '%s\n' '    listen 8686 ssl;' '    listen [::]:8686 ssl;' > "$conf"
@@ -126,4 +132,4 @@ if [[ "$FAILS" -ne 0 ]]; then
     printf '%s failure(s)\n' "$FAILS" >&2
     exit 1
 fi
-printf 'security entrance installer checks passed\n'
+printf 'panel https installer checks passed\n'

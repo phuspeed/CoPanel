@@ -22,7 +22,7 @@
 # Features:
 # - Python virtual environment setup
 # - Nginx on port 8686 over HTTPS (self-signed until you replace the cert)
-# - Secret security entrance path (copanel-entrance prints or rotates it)
+# - Panel URL is https://<ip>:8686/ (no secret path)
 # - Systemd service installation
 # - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
@@ -1978,9 +1978,10 @@ copanel_write_ui_track() {
 }
 
 ###############################################################################
-# Security entrance + panel TLS
-# Token and certificate logic live in backend/core/security_entrance.py so
-# reinstalls keep the same secret and the same certificate files.
+# Panel TLS
+# Certificate logic lives in backend/core/security_entrance.py so reinstalls
+# keep the same certificate files. apply-nginx also removes a leftover
+# secret-path gate from older installs.
 ###############################################################################
 
 copanel_entrance_cli() {
@@ -2178,8 +2179,8 @@ EOF
     # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
-    # Gate restore rewrites the site. Re-apply the entrance so a future edit
-    # cannot drop it, then reload if nginx is already up.
+    # Gate restore rewrites the site. Re-apply TLS directives (and drop any
+    # leftover secret-path gate) then reload if nginx is already up.
     copanel_entrance_cli apply-nginx "$NGINX_CONF"
     if nginx -t >/dev/null 2>&1; then
         systemctl reload nginx >/dev/null 2>&1 || true
@@ -2319,14 +2320,14 @@ verify_installation() {
     
     sleep 2
     
-    # Check backend health (direct localhost, no entrance cookie).
+    # Check backend health on localhost.
     if curl -sf --max-time 5 http://127.0.0.1:8000/health | grep -q "healthy"; then
         log_success "Backend health check passed"
     else
         log_warning "Could not verify backend health"
     fi
     
-    # Nginx serves HTTPS. Loopback /health is exempt from the security entrance.
+    # Nginx serves HTTPS on the panel port.
     if curl -skf --max-time 5 "https://127.0.0.1:${NGINX_PORT}/health" | grep -q "healthy"; then
         log_success "Nginx HTTPS reverse proxy working"
     else
@@ -2356,25 +2357,14 @@ print_summary() {
         LOWMEM_SUMMARY="🧠 Low-memory mode:  ${COPANEL_SWAP_SIZE_MB:-2048} MB swap, Node heap ${COPANEL_NODE_HEAP_MB:-1536} MB"
     fi
 
-    local panel_ip entrance_json entrance_url entrance_on access_block
+    local panel_ip access_block
     panel_ip="$(copanel_detect_panel_ip)"
-    entrance_json="$(copanel_entrance_cli --host "$panel_ip" show --json 2>/dev/null || true)"
-    entrance_url="$(ENTRANCE_JSON="$entrance_json" python3 -c 'import json,os; print(json.loads(os.environ.get("ENTRANCE_JSON") or "{}").get("url",""))' 2>/dev/null || true)"
-    entrance_on="$(ENTRANCE_JSON="$entrance_json" python3 -c 'import json,os; print("yes" if json.loads(os.environ.get("ENTRANCE_JSON") or "{}").get("enabled") else "no")' 2>/dev/null || true)"
-    if [[ "$entrance_on" == "yes" && -n "$entrance_url" ]]; then
-        access_block="🔐 Panel URL:         ${GREEN}${entrance_url}${NC}
-   ${YELLOW}Open that link first. Anywhere else on port ${NGINX_PORT} returns 404.${NC}
+    access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
    ${YELLOW}The browser will warn about the self-signed certificate.${NC}
-   Lost this link?      ${GREEN}copanel-entrance${NC}
-   ${YELLOW}Cloudflare Tunnel (no need to open 8686 on the internet):${NC}
+   ${YELLOW}Cloudflare Tunnel (8686 stays closed on the internet):${NC}
    service: https://127.0.0.1:8686
    originRequest.noTLSVerify: true
-   Then open https://<your-domain>/${entrance_url#*://*/} once. Do not use https://local:8686."
-    else
-        access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
-   ${YELLOW}Security entrance is disabled. HTTP on ${NGINX_PORT} redirects to HTTPS.${NC}
-   Lost the entrance?   ${GREEN}copanel-entrance${NC}"
-    fi
+   Then open https://<your-domain>/ . Do not use https://local:8686."
 
     cat <<EOF
 
@@ -2412,7 +2402,7 @@ Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
 
 ${YELLOW}Next Steps:${NC}
 
-1. Open the panel URL printed above (https://<ip>:${NGINX_PORT}/<entrance>/)
+1. Open the panel URL printed above (https://<ip>:${NGINX_PORT}/)
 2. Go to Package Manager to install MariaDB / PostgreSQL / phpMyAdmin
 3. Review logs: journalctl -u copanel -f
 
