@@ -201,7 +201,7 @@ Cloudflare Tunnel uses the same plain HTTP port. Either origin works:
 ```yaml
 ingress:
   - hostname: panel.example.com
-    service: http://192.168.10.82:8686
+    service: http://192.168.1.10:8686
   - service: http_status:404
 ```
 
