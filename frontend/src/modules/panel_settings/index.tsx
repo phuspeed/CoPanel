@@ -28,10 +28,20 @@ interface BrandingSettings {
   selected_wallpaper_id: string | null;
 }
 
+interface SecurityEntranceSettings {
+  enabled: boolean;
+  configured: boolean;
+  path: string;
+  url: string;
+  cert_path: string;
+  key_path: string;
+}
+
 interface Settings {
   ssh_port: number;
   panel_port: number;
   nginx_gate: { enabled: boolean; username: string; configured: boolean; needs_repair?: boolean };
+  security_entrance?: SecurityEntranceSettings;
   totp: { enabled: boolean; username: string };
   branding: BrandingSettings;
   is_linux: boolean;
@@ -82,6 +92,8 @@ export default function PanelSettings() {
   const [rootPass, setRootPass] = useState('');
   const [rootPass2, setRootPass2] = useState('');
   const [gateEnabled, setGateEnabled] = useState(false);
+  const [entranceEnabled, setEntranceEnabled] = useState(true);
+  const [entranceNotice, setEntranceNotice] = useState<string | null>(null);
   const [gateUser, setGateUser] = useState('copanel');
   const [gatePass, setGatePass] = useState('');
   const [totpCode, setTotpCode] = useState('');
@@ -134,6 +146,15 @@ export default function PanelSettings() {
       disableGate: 'Disable access gate',
       saveGate: 'Save gate settings',
       gateRepair: 'Gate already enabled? Save again with empty password to fix API prompt loop.',
+      entranceTitle: 'Security entrance',
+      entranceHint:
+        'The panel answers 404 until this secret link is opened once in the browser. It sets a cookie; WebSocket, SSE, and phpMyAdmin keep working after that. Basic auth on the UI is unchanged.',
+      entranceEnable: 'Require the secret link',
+      entranceSave: 'Save entrance',
+      entranceRotate: 'Rotate link',
+      entranceRecover: 'Lost the link? Over SSH run copanel-entrance',
+      entranceCert: 'Panel TLS certificate (replace these files with a real certificate, then reload nginx)',
+      entranceRotated: 'New entrance link. Open it in this browser before the old cookie stops working:',
       repairNginx: 'Repair nginx layout',
       repairHint: 'Gate markers missing or auth is at server level — /api/ may break or gate may be off after upgrade. Auto-fix runs on copanel restart, or click Repair.',
       totpHint: 'Scan QR with Google Authenticator or Microsoft Authenticator.',
@@ -217,6 +238,15 @@ export default function PanelSettings() {
       disableGate: 'Tắt gate truy cập',
       saveGate: 'Lưu gate',
       gateRepair: 'Gate đang bật? Lưu lại (để trống mật khẩu) để sửa lỗi hỏi passwd liên tục trên API.',
+      entranceTitle: 'Đường dẫn bảo mật',
+      entranceHint:
+        'Panel trả 404 cho đến khi mở liên kết bí mật này một lần trên trình duyệt. Liên kết gắn cookie; WebSocket, SSE và phpMyAdmin vẫn hoạt động sau đó. Basic auth của giao diện không đổi.',
+      entranceEnable: 'Bắt buộc liên kết bí mật',
+      entranceSave: 'Lưu đường dẫn',
+      entranceRotate: 'Đổi liên kết',
+      entranceRecover: 'Mất liên kết? SSH vào máy và chạy copanel-entrance',
+      entranceCert: 'Chứng chỉ TLS của panel (thay hai file này bằng chứng chỉ thật, rồi reload nginx)',
+      entranceRotated: 'Liên kết mới. Mở nó trên trình duyệt này trước khi cookie cũ hết hiệu lực:',
       repairNginx: 'Sửa cấu hình nginx',
       repairHint: 'Thiếu khối gate trong nginx hoặc auth ở cấp server — /api/ có thể lỗi hoặc mất bảo vệ sau nâng cấp. Tự sửa khi restart copanel, hoặc bấm Sửa.',
       totpHint: 'Quét QR bằng Google Authenticator hoặc Microsoft Authenticator.',
@@ -283,6 +313,7 @@ export default function PanelSettings() {
     setSshPort(data.ssh_port);
     setGateEnabled(data.nginx_gate.enabled);
     setGateUser(data.nginx_gate.username || 'copanel');
+    setEntranceEnabled(data.security_entrance?.enabled ?? false);
     setSiteTitle(data.branding?.site_title || 'CoPanel');
     setSiteSubtitle(data.branding?.site_subtitle || 'Lightweight VPS Management');
     setFaviconDataUrl(data.branding?.favicon_data_url || null);
@@ -476,6 +507,42 @@ export default function PanelSettings() {
       await api('/api/panel_settings/nginx-gate/repair', { method: 'POST' });
       setMsg(t.saved);
       await load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEntrance = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await api<SecurityEntranceSettings & { message?: string }>('/api/panel_settings/security-entrance', {
+        method: 'PUT',
+        body: { enabled: entranceEnabled },
+      });
+      setEntranceNotice(data.url || data.message || t.saved);
+      setMsg(data.message || t.saved);
+      await load().catch(() => undefined);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rotateEntrance = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await api<SecurityEntranceSettings & { message?: string }>(
+        '/api/panel_settings/security-entrance/rotate',
+        { method: 'POST' },
+      );
+      setEntranceNotice(data.url || '');
+      setMsg(t.entranceRotated);
+      await load().catch(() => undefined);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -733,6 +800,53 @@ export default function PanelSettings() {
           >
             {t.saveGate}
           </button>
+        </div>
+      )}
+
+      {tab === 'gate' && settings.security_entrance && (
+        <div className={`${card} mt-4`}>
+          <h2 className="text-sm font-semibold mb-2">{t.entranceTitle}</h2>
+          <p className={`text-sm mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.entranceHint}</p>
+          <label className={label}>{t.entranceTitle}</label>
+          <input
+            className={`${input} font-mono`}
+            readOnly
+            value={settings.security_entrance.url || settings.security_entrance.path || ''}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          {entranceNotice && (
+            <p className={`mt-3 text-sm break-all font-mono ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+              {entranceNotice}
+            </p>
+          )}
+          <label className="flex items-center gap-2 text-sm mt-4 mb-3">
+            <input
+              type="checkbox"
+              checked={entranceEnabled}
+              onChange={(e) => setEntranceEnabled(e.target.checked)}
+            />
+            {t.entranceEnable}
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium disabled:opacity-50"
+              disabled={busy || !settings.is_linux}
+              onClick={saveEntrance}
+            >
+              {t.entranceSave}
+            </button>
+            <button
+              className="px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-medium disabled:opacity-50"
+              disabled={busy || !settings.is_linux || !settings.security_entrance.configured}
+              onClick={rotateEntrance}
+            >
+              {t.entranceRotate}
+            </button>
+          </div>
+          <p className={`text-xs mt-4 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.entranceRecover}</p>
+          <p className={`text-xs mt-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.entranceCert}</p>
+          <p className="text-xs font-mono mt-1 break-all">{settings.security_entrance.cert_path}</p>
+          <p className="text-xs font-mono break-all">{settings.security_entrance.key_path}</p>
         </div>
       )}
 

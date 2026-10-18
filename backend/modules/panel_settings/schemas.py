@@ -28,6 +28,10 @@ class NginxGateRequest(BaseModel):
     password: Optional[str] = None
 
 
+class SecurityEntranceRequest(BaseModel):
+    enabled: bool
+
+
 class BrandingSettingsRequest(BaseModel):
     site_title: str = Field(..., min_length=1, max_length=80)
     site_subtitle: Optional[str] = Field(None, max_length=120)

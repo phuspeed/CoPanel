@@ -1,6 +1,6 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.1.4-blue)
+![Version](https://img.shields.io/badge/version-1.1.5-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -167,15 +167,28 @@ Trình cài đặt sẽ:
 - ✅ Tạo môi trường ảo Python (virtual environment)
 - ✅ Cài đặt các thư viện phụ thuộc của backend & frontend
 - ✅ Xây dựng các tệp tĩnh frontend (build assets)
-- ✅ Cấu hình máy chủ proxy ngược Nginx (cổng 8686)
+- ✅ Cấu hình Nginx (HTTPS cổng 8686)
+- ✅ Tạo chứng chỉ tự ký và đường dẫn bảo mật
 - ✅ Thiết lập dịch vụ Systemd
 - ✅ Khởi chạy tất cả các dịch vụ
 
-### Truy Cập
+### Đăng nhập lần đầu
 
-- **Giao diện Web**: http://localhost:8686
-- **Backend API**: http://localhost:8000
-- **Tài liệu API**: http://localhost:8000/docs
+Cuối lệnh cài, script in URL:
+
+```text
+https://<ip-máy>:8686/<token>/
+```
+
+Mở đúng URL đó, chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. Chưa mở URL này thì trang đăng nhập và `/api/auth/login` trả **404**. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
+
+Mất liên kết: SSH vào máy và chạy `copanel-entrance` (thêm `rotate`, `disable`, `enable`). Cùng các nút đó trong **Cài đặt → Bảo vệ truy cập panel**. Cài lại không đổi token hay chứng chỉ.
+
+Thay chứng chỉ thật: ghi đè `/opt/copanel/config/ssl/panel.crt` và `panel.key` (key mode 0600), rồi `sudo nginx -t && sudo systemctl reload nginx`.
+
+- **Giao diện Web**: `https://<ip>:8686/<token>/` (in ở cuối `install.sh`)
+- **Backend API**: http://127.0.0.1:8000 (chỉ localhost)
+- **Tài liệu API**: http://127.0.0.1:8000/docs (chỉ localhost)
 
 ## 🔌 Tạo Một Module Mới
 

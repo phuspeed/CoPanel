@@ -1,6 +1,6 @@
 # CoPanel - Lightweight Linux VPS Management Panel
 
-![Version](https://img.shields.io/badge/version-1.1.4-blue)
+![Version](https://img.shields.io/badge/version-1.1.5-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -182,15 +182,46 @@ The installer will:
 - ✅ Create Python virtual environment
 - ✅ Install backend & frontend dependencies
 - ✅ Build frontend assets
-- ✅ Configure Nginx reverse proxy (port 8686)
+- ✅ Configure Nginx reverse proxy (HTTPS on port 8686)
+- ✅ Create a self-signed panel certificate and a secret entrance path
 - ✅ Set up Systemd service
 - ✅ Start all services
 
-### Access
+### First login
 
-- **Web UI**: http://localhost:8686
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+The installer prints a one-time entrance URL:
+
+```text
+https://<server-ip>:8686/<token>/
+```
+
+Open that URL first and accept the self-signed certificate warning. It sets a browser cookie and redirects to the login page. Any other request to port 8686 (including `/` and `/api/auth/login`) returns **404** until then. Sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`).
+
+Plain `http://<ip>:8686/...` redirects to HTTPS. The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
+
+Lost the entrance link? On the server:
+
+```bash
+copanel-entrance          # print the URL
+copanel-entrance rotate   # new URL; the old one stops working
+copanel-entrance disable  # panel is reachable at https://<ip>:8686/ again
+copanel-entrance enable
+```
+
+The same controls are in the panel under **Settings → Panel access gate** after you are signed in. Reinstall keeps the token and the certificate.
+
+To use a real certificate later, replace these files and reload nginx (do not rename them):
+
+```bash
+sudo cp fullchain.pem /opt/copanel/config/ssl/panel.crt
+sudo cp privkey.pem /opt/copanel/config/ssl/panel.key
+sudo chmod 600 /opt/copanel/config/ssl/panel.key
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+- **Web UI**: `https://<server-ip>:8686/<token>/` (printed at the end of `install.sh`)
+- **Backend API**: http://127.0.0.1:8000 (localhost only)
+- **API Docs**: http://127.0.0.1:8000/docs (localhost only)
 
 ## 🔌 Creating a New Module
 
