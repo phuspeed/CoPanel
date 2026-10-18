@@ -21,6 +21,7 @@ from core.loader import ModuleLoader
 from core import api as core_api
 from core.auth import api_auth_middleware
 from core.jobs import jobs as job_manager
+from core.security_entrance import maybe_auto_repair, security_entrance_middleware
 
 try:
     from core import module_reload as module_reload
@@ -79,6 +80,10 @@ async def lifespan(app: FastAPI):
             maybe_auto_repair_nginx_gate()
         except Exception as exc:
             logger.warning("panel_settings startup hook: %s", exc)
+        try:
+            maybe_auto_repair()
+        except Exception as exc:
+            logger.warning("security entrance startup hook: %s", exc)
 
     threading.Thread(
         target=_nginx_gate_repair_bg,
@@ -110,6 +115,9 @@ app.add_middleware(
 # Must run for every API request so DevTools UI bypass cannot reach panel actions.
 app.middleware("http")(api_auth_middleware)
 app.middleware("http")(core_api.request_context_middleware)
+# Outermost: security entrance returns 404 before auth, so scanners do not
+# learn that a login API exists. Registered last so it runs first.
+app.middleware("http")(security_entrance_middleware)
 core_api.install_exception_handlers(app)
 
 

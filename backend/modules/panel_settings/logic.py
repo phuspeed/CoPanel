@@ -24,7 +24,7 @@ import pyotp
 
 from passlib.hash import apr_md5_crypt
 
-from core import user_model
+from core import security_entrance, user_model
 from core.security import verify_password
 
 IS_WINDOWS = os.name == "nt"
@@ -830,12 +830,17 @@ def _nginx_gate_at_server_level(content: Optional[str] = None) -> bool:
     return loc_idx == -1 or gate_idx < loc_idx
 
 
-def get_settings() -> Dict[str, Any]:
+def get_settings(entrance_host: Optional[str] = None, entrance_proto: str = "https") -> Dict[str, Any]:
     store = _load_store()
     gate = store.get("nginx_gate") or {}
     admin = _admin_user()
     want_gate = bool(gate.get("enabled"))
     has_gate = _nginx_has_gate()
+    entrance = security_entrance.describe(
+        security_entrance.load_state(security_entrance.resolve_config_dir()),
+        host=entrance_host,
+        proto=entrance_proto or "https",
+    )
     return {
         "ssh_port": _read_ssh_port(),
         "panel_port": PANEL_PORT,
@@ -847,6 +852,7 @@ def get_settings() -> Dict[str, Any]:
             "needs_repair": _nginx_gate_at_server_level()
             or (want_gate and HTPASSWD_PATH.is_file() and not has_gate),
         },
+        "security_entrance": entrance,
         "totp": {
             "enabled": bool(admin.get("totp_enabled")) if admin else False,
             "username": admin.get("username") if admin else "admin",
@@ -1319,6 +1325,66 @@ def maybe_auto_repair_nginx_gate() -> Optional[Dict[str, Any]]:
     except Exception as exc:
         logger.warning("Nginx gate auto-repair failed (edit nginx manually or use Settings): %s", exc)
         return None
+
+
+def _restore_entrance_state(config: Path, previous: "security_entrance.EntranceState") -> None:
+    if security_entrance.TOKEN_RE.fullmatch(previous.token or ""):
+        security_entrance.save_state(config, previous)
+        return
+    path = security_entrance.entrance_file(config)
+    if path.is_file():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _apply_security_entrance(
+    state: "security_entrance.EntranceState",
+    *,
+    host: Optional[str] = None,
+    proto: str = "https",
+) -> Dict[str, Any]:
+    if IS_WINDOWS:
+        raise ValueError("Security entrance is Linux-only.")
+    site = _nginx_site_path()
+    if not site.is_file():
+        raise RuntimeError(f"Nginx site config not found: {site}")
+    reload_ok = security_entrance.apply_and_reload(site, state)
+    described = security_entrance.describe(state, host=host, proto=proto)
+    described["reload_ok"] = reload_ok
+    described["message"] = (
+        "Security entrance updated. Open the printed URL in this browser before continuing."
+        if state.enabled
+        else "Security entrance disabled. The panel is reachable at the site root."
+    )
+    return described
+
+
+def configure_security_entrance(
+    enabled: bool, *, host: Optional[str] = None, proto: str = "https"
+) -> Dict[str, Any]:
+    config = security_entrance.resolve_config_dir()
+    previous = security_entrance.load_state(config)
+    state = security_entrance.set_enabled(config, enabled)
+    try:
+        return _apply_security_entrance(state, host=host, proto=proto)
+    except Exception:
+        _restore_entrance_state(config, previous)
+        raise
+
+
+def rotate_security_entrance(*, host: Optional[str] = None, proto: str = "https") -> Dict[str, Any]:
+    config = security_entrance.resolve_config_dir()
+    previous = security_entrance.load_state(config)
+    state = security_entrance.rotate_state(config)
+    try:
+        result = _apply_security_entrance(state, host=host, proto=proto)
+    except Exception:
+        _restore_entrance_state(config, previous)
+        raise
+    result["message"] = "Security entrance rotated. The previous link no longer works."
+    return result
 
 
 def totp_setup(username: str) -> Dict[str, Any]:

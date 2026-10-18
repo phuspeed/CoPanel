@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from core.api import ApiError, ok
 from core.audit import record_audit
@@ -18,6 +18,7 @@ from .schemas import (
     NetworkConfigRequest,
     NginxGateRequest,
     RootPasswordRequest,
+    SecurityEntranceRequest,
     SshPortRequest,
     TotpDisableRequest,
     TotpVerifyRequest,
@@ -32,8 +33,10 @@ def get_version(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any
 
 
 @router.get("/")
-def get_settings(_user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
-    return ok(logic.get_settings())
+def get_settings(request: Request, _user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    return ok(logic.get_settings(entrance_host=host, entrance_proto=proto))
 
 
 @router.get("/branding/public")
@@ -121,6 +124,54 @@ def set_nginx_gate(req: NginxGateRequest, user: Dict[str, Any] = Depends(require
         actor=user.get("username"),
         actor_id=user.get("id"),
         meta={"enabled": req.enabled},
+    )
+    return ok(result)
+
+
+@router.put("/security-entrance")
+def set_security_entrance(
+    req: SecurityEntranceRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    try:
+        result = logic.configure_security_entrance(req.enabled, host=host, proto=proto)
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.security_entrance",
+        module="panel_settings",
+        target="nginx",
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+        meta={"enabled": req.enabled},
+    )
+    return ok(result)
+
+
+@router.post("/security-entrance/rotate")
+def rotate_security_entrance(
+    request: Request, user: Dict[str, Any] = Depends(require_admin)
+) -> Dict[str, Any]:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    try:
+        result = logic.rotate_security_entrance(host=host, proto=proto)
+    except ValueError as exc:
+        raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)
+    except RuntimeError as exc:
+        raise ApiError("SERVICE_ERROR", str(exc), http_status=503)
+    record_audit(
+        "panel_settings.security_entrance.rotate",
+        module="panel_settings",
+        target="nginx",
+        actor=user.get("username"),
+        actor_id=user.get("id"),
+        meta={"rotated": True},
     )
     return ok(result)
 

@@ -21,7 +21,8 @@
 # 
 # Features:
 # - Python virtual environment setup
-# - Nginx reverse proxy configuration (port 8686)
+# - Nginx on port 8686 over HTTPS (self-signed until you replace the cert)
+# - Secret security entrance path (copanel-entrance prints or rotates it)
 # - Systemd service installation
 # - Sparse git checkout (runtime paths only; skips README/.md/website)
 # - Idempotent (safe to run multiple times)
@@ -1019,7 +1020,7 @@ copanel_rpm_mgr() {
 # Packages that exist on Alma/Rocky/RHEL 8+. ufw and certbot are not among them.
 copanel_rpm_required_packages() {
     printf '%s\n' \
-        python3 python3-pip nginx cronie \
+        python3 python3-pip nginx openssl cronie \
         curl wget git unzip zip rsync \
         gcc gcc-c++ make
 }
@@ -1337,7 +1338,8 @@ copanel_strip_nginx_ipv6_if_needed() {
     if copanel_host_has_ipv6; then
         return 0
     fi
-    sed -i '/listen \[::\]:8686;/d' "$file"
+    # Matches "listen [::]:8686;" and "listen [::]:8686 ssl;".
+    sed -i '/listen \[::\]:8686/d' "$file"
 }
 
 copanel_ensure_nginx_package() {
@@ -1399,7 +1401,7 @@ install_dependencies() {
         apt_update_or_recover || { copanel_remove_apt_timeouts; exit 1; }
         apt-get install -y \
             python3 python3-pip python3-venv \
-            nginx cron \
+            nginx openssl cron \
             curl ca-certificates wget git unzip zip rsync \
             build-essential \
             ufw inotify-tools certbot python3-certbot-nginx \
@@ -1661,7 +1663,9 @@ copanel_lock_down_secrets() {
         "${CoPanel_HOME}/config/jwt_secret" \
         "${CoPanel_HOME}/config/copanel.env" \
         "${CoPanel_HOME}/config/admin_password.txt" \
-        "${CoPanel_HOME}/config/mysql_credentials.txt"
+        "${CoPanel_HOME}/config/mysql_credentials.txt" \
+        "${CoPanel_HOME}/config/security_entrance.json" \
+        "${CoPanel_HOME}/config/ssl/panel.key"
     do
         if [[ -f "$f" ]]; then
             chmod 600 "$f" || true
@@ -1974,11 +1978,62 @@ copanel_write_ui_track() {
 }
 
 ###############################################################################
+# Security entrance + panel TLS
+# Token and certificate logic live in backend/core/security_entrance.py so
+# reinstalls keep the same secret and the same certificate files.
+###############################################################################
+
+copanel_entrance_cli() {
+    local py="python3"
+    local script here
+    if [[ -x "${CoPanel_HOME}/venv/bin/python" ]]; then
+        py="${CoPanel_HOME}/venv/bin/python"
+    fi
+    if [[ -f "${CoPanel_HOME}/backend/core/security_entrance.py" ]]; then
+        script="${CoPanel_HOME}/backend/core/security_entrance.py"
+    else
+        here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        script="${here}/../backend/core/security_entrance.py"
+    fi
+    "$py" "$script" --home "$CoPanel_HOME" "$@"
+}
+
+copanel_detect_panel_ip() {
+    if [[ -n "${COPANEL_PANEL_IP:-}" ]]; then
+        printf '%s' "$COPANEL_PANEL_IP"
+        return 0
+    fi
+    local ip=""
+    if [[ "${COPANEL_SKIP_PUBLIC_IP:-}" != "1" ]]; then
+        ip="$(curl -4fsS --max-time 3 https://api.ipify.org 2>/dev/null || true)"
+        ip="${ip//$'\r'/}"
+        ip="${ip//$'\n'/}"
+    fi
+    if [[ -z "$ip" ]]; then
+        ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+    printf '%s' "${ip:-127.0.0.1}"
+}
+
+copanel_install_entrance_command() {
+    mkdir -p /usr/local/bin
+    cat > /usr/local/bin/copanel-entrance << 'EOF'
+#!/bin/sh
+exec /opt/copanel/venv/bin/python /opt/copanel/backend/core/security_entrance.py "$@"
+EOF
+    chmod 755 /usr/local/bin/copanel-entrance
+}
+
+###############################################################################
 # Step 5: Nginx Configuration
 ###############################################################################
 
 setup_nginx() {
-    log_info "Configuring Nginx reverse proxy..."
+    log_info "Configuring Nginx reverse proxy (HTTPS on port ${NGINX_PORT})..."
+
+    copanel_entrance_cli ensure
+    copanel_entrance_cli ensure-cert
+    copanel_lock_down_secrets
 
     copanel_ensure_nginx_package || { log_error "nginx is required."; exit 1; }
 
@@ -2010,11 +2065,20 @@ upstream php_fpm {
 }
 
 server {
-    listen 8686;
-    listen [::]:8686;
-    
+    listen 8686 ssl;
+    listen [::]:8686 ssl;
+
     server_name _;
-    
+
+    ssl_certificate     /opt/copanel/config/ssl/panel.crt;
+    ssl_certificate_key /opt/copanel/config/ssl/panel.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+
+    # Plain HTTP on this TLS port is status 497. Send the browser to HTTPS.
+    error_page 497 =301 https://$host:$server_port$request_uri;
+
     client_max_body_size 100M;
     
     # Frontend (static files)
@@ -2056,14 +2120,19 @@ server {
         proxy_send_timeout 300s;
     }
     
-    # Health check
+    # Health check. X-Real-IP lets the API tell localhost probes from proxied clients.
     location /health {
         proxy_pass http://copanel_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 EOF
 
     copanel_strip_nginx_ipv6_if_needed "$NGINX_CONF"
+    copanel_entrance_cli apply-nginx "$NGINX_CONF"
     
     # Enable site (Debian layout only; conf.d is included by nginx.conf)
     if [[ -n "$NGINX_ENABLED" && ! -L "$NGINX_ENABLED" ]]; then
@@ -2093,6 +2162,13 @@ EOF
     # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
+    # Gate restore rewrites the site. Re-apply the entrance so a future edit
+    # cannot drop it, then reload if nginx is already up.
+    copanel_entrance_cli apply-nginx "$NGINX_CONF"
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx >/dev/null 2>&1 || true
+    fi
+    copanel_install_entrance_command
 
     # UFW alone does not open the panel on Oracle Cloud Ubuntu: UFW is often
     # inactive, and iptables REJECTs new connections to 8686/80/443.
@@ -2227,18 +2303,26 @@ verify_installation() {
     
     sleep 2
     
-    # Check backend health
-    if curl -s http://localhost:8000/health | grep -q "healthy"; then
+    # Check backend health (direct localhost, no entrance cookie).
+    if curl -sf --max-time 5 http://127.0.0.1:8000/health | grep -q "healthy"; then
         log_success "Backend health check passed"
     else
         log_warning "Could not verify backend health"
     fi
     
-    # Check Nginx
-    if curl -s http://localhost:8686/health | grep -q "healthy"; then
-        log_success "Nginx reverse proxy working"
+    # Nginx serves HTTPS. Loopback /health is exempt from the security entrance.
+    if curl -skf --max-time 5 "https://127.0.0.1:${NGINX_PORT}/health" | grep -q "healthy"; then
+        log_success "Nginx HTTPS reverse proxy working"
     else
-        log_warning "Could not verify Nginx proxy"
+        log_warning "Could not verify Nginx HTTPS proxy"
+    fi
+
+    local http_code
+    http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${NGINX_PORT}/health" || true)"
+    if [[ "$http_code" == "301" ]]; then
+        log_success "Plain HTTP on port ${NGINX_PORT} redirects to HTTPS"
+    else
+        log_warning "Plain HTTP on port ${NGINX_PORT} did not redirect (status ${http_code:-none})"
     fi
 }
 
@@ -2256,6 +2340,22 @@ print_summary() {
         LOWMEM_SUMMARY="🧠 Low-memory mode:  ${COPANEL_SWAP_SIZE_MB:-2048} MB swap, Node heap ${COPANEL_NODE_HEAP_MB:-1536} MB"
     fi
 
+    local panel_ip entrance_json entrance_url entrance_on access_block
+    panel_ip="$(copanel_detect_panel_ip)"
+    entrance_json="$(copanel_entrance_cli --host "$panel_ip" show --json 2>/dev/null || true)"
+    entrance_url="$(ENTRANCE_JSON="$entrance_json" python3 -c 'import json,os; print(json.loads(os.environ.get("ENTRANCE_JSON") or "{}").get("url",""))' 2>/dev/null || true)"
+    entrance_on="$(ENTRANCE_JSON="$entrance_json" python3 -c 'import json,os; print("yes" if json.loads(os.environ.get("ENTRANCE_JSON") or "{}").get("enabled") else "no")' 2>/dev/null || true)"
+    if [[ "$entrance_on" == "yes" && -n "$entrance_url" ]]; then
+        access_block="🔐 Panel URL:         ${GREEN}${entrance_url}${NC}
+   ${YELLOW}Open that link first. Anywhere else on port ${NGINX_PORT} returns 404.${NC}
+   ${YELLOW}The browser will warn about the self-signed certificate.${NC}
+   Lost this link?      ${GREEN}copanel-entrance${NC}"
+    else
+        access_block="🔐 Panel URL:         ${GREEN}https://${panel_ip}:${NGINX_PORT}/${NC}
+   ${YELLOW}Security entrance is disabled. HTTP on ${NGINX_PORT} redirects to HTTPS.${NC}
+   Lost the entrance?   ${GREEN}copanel-entrance${NC}"
+    fi
+
     cat <<EOF
 
 ${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}
@@ -2269,9 +2369,9 @@ ${BLUE}Installation Summary:${NC}
 📍 Admin Password:   ${GREEN}${ADMIN_PWD}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
-🌐 Access URL:        http://localhost:${NGINX_PORT}
+${access_block}
 📊 Backend API:       http://127.0.0.1:${BACKEND_PORT} (localhost only)
-📜 phpMyAdmin:        http://localhost:${NGINX_PORT}/phpmyadmin
+📜 phpMyAdmin:        https://${panel_ip}:${NGINX_PORT}/phpmyadmin
    ${YELLOW}(Install MariaDB + phpMyAdmin via Package Manager inside CoPanel)${NC}
 ${LOWMEM_SUMMARY}
 ${BLUE}Useful Commands:${NC}
@@ -2292,7 +2392,7 @@ Frontend modules:     ${CoPanel_HOME}/frontend/src/modules/
 
 ${YELLOW}Next Steps:${NC}
 
-1. Open browser: http://localhost:${NGINX_PORT}
+1. Open the panel URL printed above (https://<ip>:${NGINX_PORT}/<entrance>/)
 2. Go to Package Manager to install MariaDB / PostgreSQL / phpMyAdmin
 3. Review logs: journalctl -u copanel -f
 
