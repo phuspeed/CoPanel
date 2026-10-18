@@ -106,6 +106,13 @@ grep -q 'error_page 497 =301 https://$http_host$request_uri;' "$nginx_file"
 grep -q "location /phpmyadmin" "$nginx_file"
 grep -q 'proxy_set_header Upgrade' "$nginx_file"
 grep -q 'listen 8686 ssl http2;' "$nginx_file"
+grep -q 'listen 127.0.0.1:8687;' "$nginx_file"
+if grep -q 'listen 8687;' "$nginx_file"; then
+    printf 'FAIL %s\n' "tunnel origin is loopback only" >&2
+    FAILS=$((FAILS + 1))
+else
+    printf 'ok  %s\n' "tunnel origin is loopback only"
+fi
 
 url="$(copanel_entrance_cli --host 203.0.113.10 show --url-only)"
 assert_eq "show prints the https panel url" "https://203.0.113.10:8686/" "$url"

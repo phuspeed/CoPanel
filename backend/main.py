@@ -75,15 +75,17 @@ async def lifespan(app: FastAPI):
     # systemd TimeoutStartSec and leave the API in a 502 crash loop.
     def _nginx_gate_repair_bg() -> None:
         try:
+            # TLS repair rewrites the tunnel server. Run it before the access
+            # gate so basic auth is injected into that server afterwards.
+            maybe_auto_repair()
+        except Exception as exc:
+            logger.warning("panel TLS startup hook: %s", exc)
+        try:
             from modules.panel_settings.logic import maybe_auto_repair_nginx_gate
 
             maybe_auto_repair_nginx_gate()
         except Exception as exc:
             logger.warning("panel_settings startup hook: %s", exc)
-        try:
-            maybe_auto_repair()
-        except Exception as exc:
-            logger.warning("panel TLS startup hook: %s", exc)
 
     threading.Thread(
         target=_nginx_gate_repair_bg,

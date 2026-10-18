@@ -1,6 +1,6 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.1.6-blue)
+![Version](https://img.shields.io/badge/version-1.1.7-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -182,7 +182,16 @@ https://<ip-máy>:8686/
 
 Chấp nhận cảnh báo chứng chỉ tự ký, rồi đăng nhập bằng mật khẩu admin vừa in. HTTP thường trên cổng 8686 được chuyển sang HTTPS.
 
-Cloudflare Tunnel không cần mở firewall 8686 ra internet. Origin là `https://127.0.0.1:8686` với `noTLSVerify: true`. Tên `local` không phân giải và không có trên chứng chỉ, nên origin phải là `127.0.0.1`. Trang public là `https://<tên-miền>/`.
+Cloudflare Tunnel không cần mở firewall 8686 ra internet. Chứng chỉ panel là tự ký, nên origin `https://<ip-lan>:8686` hoặc `https://localhost:8686` bị cloudflared từ chối và Cloudflare hiện **502 Bad Gateway**. Origin đúng là HTTP trên loopback, cổng này không mở ra firewall:
+
+```yaml
+ingress:
+  - hostname: panel.example.com
+    service: http://127.0.0.1:8687
+  - service: http_status:404
+```
+
+Trang public là `https://<tên-miền>/`. Trên LAN, mở `https://<ip-lan>:8686/` và bấm Continue khi trình duyệt cảnh báo chứng chỉ.
 
 Thay chứng chỉ thật: ghi đè `/opt/copanel/config/ssl/panel.crt` và `panel.key` (key mode 0600), rồi `sudo nginx -t && sudo systemctl reload nginx`.
 

@@ -41,7 +41,7 @@ The browser warns about the self-signed certificate; continue to the login page.
 
 Re-running `install.sh` keeps the certificate. Replace `/opt/copanel/config/ssl/panel.crt` and `panel.key`, then `nginx -t && systemctl reload nginx`, to install a real certificate.
 
-Cloudflare Tunnel does not need port 8686 open to the internet. Set the origin to `https://127.0.0.1:8686` with `noTLSVerify: true`, then open `https://<your-domain>/`. `https://local:8686` does not work.
+Cloudflare Tunnel does not need port 8686 open to the internet. The self-signed certificate makes `https://<lan-ip>:8686` and `https://localhost:8686` return Bad Gateway. Set the origin to `http://127.0.0.1:8687`, then open `https://<your-domain>/`.
 
 ## 📊 What's Included
 
