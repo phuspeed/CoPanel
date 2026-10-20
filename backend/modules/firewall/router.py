@@ -84,9 +84,10 @@ def validate_ufw_port(port: str) -> str:
 
 
 def parse_ufw_rule_line(line_strip: str) -> Optional[Dict[str, str]]:
-    """Parse one ``ufw status`` rule line into port/action/comment."""
+    """Parse one ``ufw status`` rule line into port/action/from/comment."""
     if not line_strip or "Status:" in line_strip or "To " in line_strip or "Action " in line_strip or "---" in line_strip:
         return None
+    line_strip = re.sub(r"^\[\s*\d+\]\s*", "", line_strip)
     match = re.search(r"^(.*?)\s+(ALLOW(?:\s+IN)?|DENY(?:\s+IN)?)\s+(.*)$", line_strip, re.IGNORECASE)
     if not match:
         return None
@@ -94,11 +95,14 @@ def parse_ufw_rule_line(line_strip: str) -> Optional[Dict[str, str]]:
     action = match.group(2).replace(" IN", "").replace(" in", "").strip().upper()
     tail = match.group(3).strip()
     comment = ""
-    if tail and tail.lower() not in {"anywhere", "anywhere (v6)"} and not re.match(r"^[\d.:a-fA-F/]+$", tail):
-        comment = tail
-    if "(v6)" in port:
-        return None
-    return {"port": port, "action": action, "comment": comment}
+    from_spec = ""
+    if "#" in tail:
+        left, right = tail.split("#", 1)
+        from_spec = left.strip()
+        comment = right.strip()
+    else:
+        from_spec = tail.strip()
+    return {"port": port, "action": action, "from": from_spec, "comment": comment}
 
 
 def find_ufw_path() -> str:

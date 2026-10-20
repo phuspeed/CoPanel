@@ -44,8 +44,10 @@ class PhpPackageTests(unittest.TestCase):
     def test_php_ext_package_names(self):
         self.assertEqual(php_extension_package("mysqli", "8.3", "apt"), "php8.3-mysql")
         self.assertEqual(php_extension_package("mysqli", "8.3", "rpm"), "php-mysqlnd")
-        with self.assertRaises(UnknownPhpExtension):
+        # ValueError: UnknownPhpExtension may be redefined after test_modules_syntax reloads logic.
+        with self.assertRaises(ValueError) as ctx:
             php_extension_package("not-a-real-ext", "8.3", "apt")
+        self.assertIn("not-a-real-ext", str(ctx.exception))
 
     def test_resolve_php_version(self):
         running = [{"version": "8.3", "status": "running"}]
