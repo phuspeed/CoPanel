@@ -790,7 +790,7 @@ async def stack_overview() -> Dict[str, Any]:
         "web_servers": ws.get("services", []),
         "php_fpm": logic.list_php_fpm_versions(),
         "database_services": logic.database_service_rows(),
-        "apache_detected": detect_apache_layout() is not None,
+        "apache_detected": logic.is_apache_installed(),
     }
 
 

@@ -341,6 +341,29 @@ def detect_apache_layout() -> Optional[ApacheLayout]:
     return None
 
 
+def is_apache_installed() -> bool:
+    """True when Apache httpd is actually installed, not merely configured paths on disk."""
+    if IS_WINDOWS:
+        return detect_apache_layout() is not None
+    if shutil.which("apache2") or shutil.which("httpd"):
+        return True
+    for pkg in ("apache2", "httpd"):
+        if shutil.which("dpkg-query"):
+            res = subprocess.run(
+                ["dpkg-query", "-W", "-f=${Status}", pkg],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if "install ok installed" in (res.stdout or ""):
+                return True
+        if shutil.which("rpm"):
+            res = subprocess.run(["rpm", "-q", pkg], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                return True
+    return False
+
+
 def _run_cmd(cmd: List[str], timeout: int = 120) -> subprocess.CompletedProcess:
     return sysexec.run(cmd, timeout=timeout)
 

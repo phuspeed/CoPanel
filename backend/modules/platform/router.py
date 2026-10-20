@@ -19,6 +19,7 @@ from core.api import ApiError, ok
 from core.audit import query_audit, record_audit
 from core.auth import optional_user_sse, require_admin, require_user
 from core.events import sse_stream
+from core.job_secrets import redact_job_row, user_may_access_job
 from core.jobs import jobs
 from core import notifications as notif
 from core import panel_update
@@ -34,6 +35,13 @@ def platform_health() -> Dict[str, Any]:
 
 # ----- Jobs --------------------------------------------------------------
 
+def _visible_jobs(user: Dict[str, Any], *, limit: int, module: Optional[str]) -> List[Dict[str, Any]]:
+    rows = jobs.list(limit=limit, module=module)
+    if user.get("role") == "superadmin":
+        return [redact_job_row(r) for r in rows]
+    return [redact_job_row(r) for r in rows if user_may_access_job(user, r)]
+
+
 @router.get("/jobs")
 def list_jobs(
     user: Dict[str, Any] = Depends(require_user),
@@ -41,7 +49,7 @@ def list_jobs(
     module: Optional[str] = None,
 ) -> Dict[str, Any]:
     """List recent jobs (newest first)."""
-    return ok(jobs.list(limit=limit, module=module))
+    return ok(_visible_jobs(user, limit=limit, module=module))
 
 
 @router.get("/jobs/{job_id}")
@@ -49,11 +57,18 @@ def job_detail(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dic
     job = jobs.get(job_id, include_logs=True)
     if not job:
         raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
-    return ok(job)
+    if not user_may_access_job(user, job):
+        raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
+    return ok(redact_job_row(job, include_logs=True))
 
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    job = jobs.get(job_id, include_logs=False)
+    if not job:
+        raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
+    if not user_may_access_job(user, job):
+        raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
     if not jobs.cancel(job_id):
         raise ApiError("INVALID_STATE", "Job is not cancellable.", http_status=400)
     record_audit(
@@ -232,7 +247,7 @@ def metrics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     JSON-friendly and visualised by the dashboard. Heavier observability
     (long-term metrics, alert rules) can be layered on later.
     """
-    job_list = jobs.list(limit=200)
+    job_list = _visible_jobs(user, limit=200, module=None)
     by_status: Dict[str, int] = {}
     for j in job_list:
         by_status[j["status"]] = by_status.get(j["status"], 0) + 1

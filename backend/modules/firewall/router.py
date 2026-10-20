@@ -43,6 +43,47 @@ class UnbanRequest(BaseModel):
     ip: str
 
 
+_UFW_PORT_RE = re.compile(
+    r"^(?P<port>(?:\d{1,5})(?:/(?:tcp|udp))?|\d{1,5}:(?:tcp|udp))\s*$",
+    re.IGNORECASE,
+)
+
+
+def validate_ufw_port(port: str) -> str:
+    """Return normalized port spec or raise ValueError."""
+    spec = (port or "").strip()
+    if not spec or "\n" in spec or "\r" in spec:
+        raise ValueError("Port is required.")
+    if not _UFW_PORT_RE.match(spec):
+        raise ValueError(f"Invalid port specification: {spec}")
+    base = spec.split("/", 1)[0].split(":", 1)[0]
+    try:
+        n = int(base)
+    except ValueError:
+        raise ValueError(f"Invalid port: {spec}")
+    if n < 1 or n > 65535:
+        raise ValueError(f"Port out of range: {n}")
+    return spec
+
+
+def parse_ufw_rule_line(line_strip: str) -> Optional[Dict[str, str]]:
+    """Parse one ``ufw status`` rule line into port/action/comment."""
+    if not line_strip or "Status:" in line_strip or "To " in line_strip or "Action " in line_strip or "---" in line_strip:
+        return None
+    match = re.search(r"^(.*?)\s+(ALLOW(?:\s+IN)?|DENY(?:\s+IN)?)\s+(.*)$", line_strip, re.IGNORECASE)
+    if not match:
+        return None
+    port = match.group(1).strip()
+    action = match.group(2).replace(" IN", "").replace(" in", "").strip().upper()
+    tail = match.group(3).strip()
+    comment = ""
+    if tail and tail.lower() not in {"anywhere", "anywhere (v6)"} and not re.match(r"^[\d.:a-fA-F/]+$", tail):
+        comment = tail
+    if "(v6)" in port:
+        return None
+    return {"port": port, "action": action, "comment": comment}
+
+
 def find_ufw_path() -> str:
     for p in ["/usr/sbin/ufw", "/sbin/ufw", "/usr/bin/ufw", "/bin/ufw"]:
         if os.path.exists(p) and os.access(p, os.X_OK):
@@ -169,24 +210,9 @@ async def get_firewall_status() -> Dict[str, Any]:
         rules = []
         lines = out.splitlines()
         for line in lines:
-            line_strip = line.strip()
-            if not line_strip or "Status:" in line_strip or "To " in line_strip or "Action " in line_strip or "---" in line_strip:
-                continue
-            
-            match = re.search(r'^(.*?)\s+(ALLOW(?:\s+IN)?|DENY(?:\s+IN)?)\s+(.*?)$', line_strip, re.IGNORECASE)
-            if match:
-                port = match.group(1).strip()
-                action = match.group(2).replace(" IN", "").replace(" in", "").strip().upper()
-                comment = match.group(3).strip()
-
-                if "(v6)" in port:
-                    continue
-
-                rules.append({
-                    "port": port,
-                    "action": action,
-                    "comment": comment
-                })
+            parsed = parse_ufw_rule_line(line.strip())
+            if parsed:
+                rules.append(parsed)
 
         return {
             "status": "success",
@@ -272,12 +298,17 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
             detail="Cannot add a rule blocking SSH port 22 to prevent lockout."
         )
 
+    try:
+        port_spec = validate_ufw_port(req.port)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     if IS_WINDOWS:
         for rule in MOCK_RULES:
-            if rule["port"] == req.port:
+            if rule["port"] == port_spec:
                 raise HTTPException(status_code=400, detail="Rule already exists.")
         MOCK_RULES.append({
-            "port": req.port,
+            "port": port_spec,
             "action": req.action.upper(),
             "comment": req.comment or ""
         })
@@ -287,12 +318,14 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
         }
 
     try:
-        if not run_ufw_cmd(req.action.lower(), req.port):
+        if not run_ufw_cmd(req.action.lower(), port_spec):
             ufw_path = find_ufw_path()
-            dbg = _run_with_optional_sudo([ufw_path, req.action.lower(), req.port])
+            dbg = _run_with_optional_sudo([ufw_path, req.action.lower(), port_spec])
             detail = (dbg.stderr or dbg.stdout or "").strip()
             if "password is required" in detail.lower() or "a password is required" in detail.lower():
                 detail = "Permission denied to run UFW non-interactively. Configure sudoers for the CoPanel service user."
+            if "invalid" in detail.lower() or "bad port" in detail.lower():
+                raise HTTPException(status_code=400, detail=detail or "Invalid port.")
             raise HTTPException(status_code=500, detail=detail or "Failed to apply firewall rule via ufw CLI.")
 
         return {

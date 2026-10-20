@@ -6,6 +6,7 @@ Includes full system access for SuperAdmins and isolated sandbox for regular Use
 import os
 import json
 import shutil
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
@@ -50,15 +51,25 @@ def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
     if not p_folders:
         p_folders = ["/home"]
 
-    abs_requested = os.path.abspath(requested_path)
-    # Check if starts with any allowed user path
+    try:
+        abs_requested = Path(requested_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=403, detail="Access denied: invalid path.")
+
     for p in p_folders:
         try:
-            abs_p = os.path.abspath(p)
-            if abs_requested.startswith(abs_p):
-                return abs_requested
-        except:
+            abs_p = Path(p).resolve()
+        except (OSError, RuntimeError, ValueError):
             continue
+        try:
+            if abs_requested == abs_p or abs_requested.is_relative_to(abs_p):
+                return str(abs_requested)
+        except AttributeError:
+            # Python < 3.9 fallback (not expected on panel hosts)
+            prefix = str(abs_p)
+            req_s = str(abs_requested)
+            if req_s == prefix or req_s.startswith(prefix + os.sep):
+                return req_s
 
     raise HTTPException(
         status_code=403,
