@@ -1583,6 +1583,15 @@ copanel_git_extra_module_ids() {
     fi
 }
 
+copanel_deploy_tree_rsync_excludes() {
+    local -n _out=$1
+    _out+=(
+        --exclude "frontend/dist/"
+        --exclude "frontend/.build-staging/"
+        --exclude "frontend/.dist-prev/"
+    )
+}
+
 copanel_rsync_with_module_preservation() {
     local src="$1" dst="$2"
     local -a rsync_args=(
@@ -1598,6 +1607,7 @@ copanel_rsync_with_module_preservation() {
         --exclude "*.MD"
         --exclude "COMPLETION_REPORT.txt"
     )
+    copanel_deploy_tree_rsync_excludes rsync_args
     local mod
     while IFS= read -r mod; do
         [[ -z "$mod" ]] && continue
@@ -1606,6 +1616,30 @@ copanel_rsync_with_module_preservation() {
         rsync_args+=( --exclude "frontend/src/modules/${mod}/" )
     done < <(copanel_module_ids_not_in_source "$src" "$dst")
     rsync "${rsync_args[@]}" "$src/" "$dst/"
+}
+
+copanel_tar_copy_with_module_preservation() {
+    local src="$1" dst="$2"
+    local -a tar_excludes=(
+        --exclude=./venv
+        --exclude=./node_modules
+        --exclude=./.git
+        --exclude=./config
+        --exclude=./backend/data
+        --exclude=./website
+        --exclude=./.github
+        --exclude=./frontend/dist
+        --exclude=./frontend/.build-staging
+        --exclude=./frontend/.dist-prev
+    )
+    local mod
+    while IFS= read -r mod; do
+        [[ -z "$mod" ]] && continue
+        log_info "Preserving installed module not in upgrade source: ${mod}"
+        tar_excludes+=( --exclude=./backend/modules/"$mod" )
+        tar_excludes+=( --exclude=./frontend/src/modules/"$mod" )
+    done < <(copanel_module_ids_not_in_source "$src" "$dst")
+    (cd "$src" && tar "${tar_excludes[@]}" -cf - .) | (cd "$dst" && tar -xf -)
 }
 
 ###############################################################################
@@ -1640,7 +1674,12 @@ setup_user_and_dirs() {
             git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
                 || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
-            local -a git_clean_excludes=( --exclude=config )
+            local -a git_clean_excludes=(
+                --exclude=config
+                --exclude=frontend/dist
+                --exclude=frontend/.build-staging
+                --exclude=frontend/.dist-prev
+            )
             local preserve_mod
             while IFS= read -r preserve_mod; do
                 [[ -z "$preserve_mod" ]] && continue
@@ -1731,7 +1770,7 @@ setup_user_and_dirs() {
         if command -v rsync &> /dev/null; then
             copanel_rsync_with_module_preservation "$REPO_DIR" "$CoPanel_HOME"
         else
-            cp -an "$REPO_DIR"/. "$CoPanel_HOME"/
+            copanel_tar_copy_with_module_preservation "$REPO_DIR" "$CoPanel_HOME"
         fi
         copanel_prune_nonessential_files "$CoPanel_HOME"
     fi
@@ -2069,16 +2108,43 @@ copanel_frontend_staging_dir() {
     printf '%s' "$CoPanel_HOME/frontend/.build-staging"
 }
 
+copanel_frontend_source_dir() {
+    printf '%s' "${COPANEL_REPO_DIR:-${REPO_DIR:-$CoPanel_HOME}}"
+}
+
+copanel_frontend_preserved_module_ids() {
+    local src
+    src="$(copanel_frontend_source_dir)"
+    local -A ids=()
+    local mod
+    while IFS= read -r mod; do
+        [[ -z "$mod" ]] && continue
+        ids["$mod"]=1
+    done < <(copanel_module_ids_not_in_source "$src" "$CoPanel_HOME")
+    if [[ -d "$src/.git" ]]; then
+        while IFS= read -r mod; do
+            [[ -z "$mod" ]] && continue
+            ids["$mod"]=1
+        done < <(copanel_git_extra_module_ids "$src")
+    fi
+    for mod in "${!ids[@]}"; do
+        printf '%s\n' "$mod"
+    done | sort -u
+}
+
 copanel_frontend_has_extra_modules() {
-    copanel_git_extra_module_ids "$CoPanel_HOME" | grep -q .
+    copanel_frontend_preserved_module_ids | grep -q .
 }
 
 copanel_prepare_frontend_tsc() {
+    export COPANEL_REPO_DIR="$(copanel_frontend_source_dir)"
     local extra=""
-    if copanel_frontend_has_extra_modules; then
-        extra="$(copanel_git_extra_module_ids "$CoPanel_HOME" | tr '\n' ' ')"
+    extra="$(copanel_frontend_preserved_module_ids | tr '\n' ' ')"
+    if [[ -n "${extra// }" ]]; then
         export COPANEL_EXTRA_FRONTEND_MODULES="$extra"
         log_info "Excluding App Store frontend modules from tsc: $(echo "$extra" | xargs)"
+    else
+        unset COPANEL_EXTRA_FRONTEND_MODULES
     fi
     if [[ -f ./scripts/sync-tsc-excludes.mjs ]]; then
         node ./scripts/sync-tsc-excludes.mjs || return 1
