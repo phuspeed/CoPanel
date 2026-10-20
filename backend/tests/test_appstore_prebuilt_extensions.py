@@ -15,6 +15,7 @@ from modules.appstore_manager.logic import (
     _is_prebuilt_extension_bundle_dir,
     _normalize_frontend_install,
     _prebuilt_panel_dist_ready,
+    _write_extensions_index,
     register_preserved_prebuilt_extensions,
 )
 
@@ -138,6 +139,49 @@ def test_register_preserved_prebuilt_from_module_tree(panel_dist, tmp_path, monk
     n = register_preserved_prebuilt_extensions(frontend, ["demo_mod"], logs)
     assert n >= 1
     assert (frontend / "dist" / "extensions" / "demo_mod" / "module.js").is_file()
+
+
+def test_write_extensions_index_omits_missing_module_js(panel_dist, tmp_path, monkeypatch):
+    home = tmp_path
+    monkeypatch.setattr("modules.appstore_manager.logic.get_copanel_home", lambda: home)
+    frontend_dir = home / "frontend"
+    shutil_copytree(panel_dist, frontend_dir / "dist")
+
+    registry_path = home / "config" / "frontend_extensions.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "file_manager": {
+                    "id": "file_manager",
+                    "path": "/files",
+                    "name": "Files",
+                    "manifest_url": "/extensions/file_manager/manifest.json",
+                    "module_url": "/extensions/file_manager/module.js",
+                },
+                "module_redis": {
+                    "id": "module_redis",
+                    "path": "/redis",
+                    "name": "Redis",
+                    "manifest_url": "/extensions/module_redis/manifest.json",
+                    "module_url": "/extensions/module_redis/module.js",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ext = frontend_dir / "dist" / "extensions" / "file_manager"
+    ext.mkdir(parents=True)
+    (ext / "module.js").write_text("export default null", encoding="utf-8")
+
+    _write_extensions_index(frontend_dir)
+    index = json.loads((frontend_dir / "dist" / "extensions" / "index.json").read_text())
+    ids = {e["id"] for e in index["extensions"]}
+    assert ids == {"file_manager"}
+    registry = json.loads(registry_path.read_text())
+    assert "file_manager" in registry
+    assert "module_redis" not in registry
 
 
 def test_zip_layout_extracted_prebuilt(tmp_path):

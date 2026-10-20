@@ -1803,6 +1803,24 @@ copanel_lock_down_secrets() {
 
 # Create the JWT secret once and point systemd at it. Reinstalls keep the
 # existing file so sessions stay valid across upgrades.
+copanel_persist_no_avx_mode() {
+    if copanel_cpu_has_avx; then
+        return 0
+    fi
+    local cfg="${CoPanel_HOME}/config"
+    local env_file="${cfg}/copanel.env"
+    mkdir -p "$cfg"
+    local tmp
+    tmp="$(mktemp)"
+    if [[ -f "$env_file" ]]; then
+        grep -v '^COPANEL_FORCE_NO_AVX=' "$env_file" > "$tmp" || true
+    fi
+    printf 'COPANEL_FORCE_NO_AVX=1\n' >> "$tmp"
+    ( umask 077; cat "$tmp" > "$env_file" )
+    rm -f "$tmp"
+    chmod 600 "$env_file" 2>/dev/null || true
+}
+
 ensure_panel_secrets() {
     local cfg="${CoPanel_HOME}/config"
     local secret_file="${cfg}/jwt_secret"
@@ -2098,7 +2116,7 @@ copanel_noavx_register_extensions() {
 import json, os, sys
 from pathlib import Path
 
-home = Path(os.environ["CoPanel_HOME"])
+home = Path(os.environ["COPANEL_HOME"])
 sys.path.insert(0, str(home / "backend"))
 from modules.appstore_manager.logic import register_preserved_prebuilt_extensions
 
@@ -2135,8 +2153,20 @@ copanel_use_prebuilt_frontend() {
     fi
     [[ -n "$archive" && -f "$archive" ]] || return 1
     log_info "CPU without AVX — installing the prebuilt frontend. Vite is not run on this CPU."
+    local ext_backup=""
+    if [[ -d dist/extensions ]]; then
+        ext_backup="$(mktemp -d)"
+        cp -a dist/extensions/. "$ext_backup/"
+    fi
     rm -rf dist
     tar -xzf "$archive"
+    if [[ -n "$ext_backup" ]]; then
+        mkdir -p dist/extensions
+        if compgen -G "$ext_backup/*" >/dev/null 2>&1; then
+            cp -a "$ext_backup/." dist/extensions/
+        fi
+        rm -rf "$ext_backup"
+    fi
     if [[ ! -f dist/index.html ]]; then
         log_error "Prebuilt frontend archive did not contain dist/index.html"
         return 1
@@ -2261,30 +2291,59 @@ copanel_run_vite_build_noavx() {
     return "$code"
 }
 
+copanel_module_has_frontend_src() {
+    local mod_dir="$1"
+    [[ -d "$mod_dir" ]] || return 1
+    if compgen -G "$mod_dir"/*.tsx >/dev/null 2>&1 \
+        || compgen -G "$mod_dir"/*.ts >/dev/null 2>&1 \
+        || compgen -G "$mod_dir"/*/*.tsx >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+copanel_module_has_prebuilt_bundle() {
+    local mod_dir="$1"
+    [[ -f "$mod_dir/dist/module.js" || -f "$mod_dir/dist/index.js" ]] \
+        && [[ -f "$mod_dir/dist/manifest.json" ]] && return 0
+    [[ -f "$mod_dir/prebuilt/module.js" || -f "$mod_dir/prebuilt/index.js" ]] \
+        && [[ -f "$mod_dir/prebuilt/manifest.json" ]] && return 0
+    return 1
+}
+
 copanel_noavx_merge_prebuilt_with_extra_modules() {
+    # no-AVX hosts cannot run Vite (segfault). Prebuilt/register path only; warn on gaps.
     if copanel_cpu_has_avx; then
         return 0
     fi
     if ! copanel_frontend_has_extra_modules; then
         return 0
     fi
-    local modules
-    modules="$(copanel_frontend_preserved_module_ids | tr '\n' ' ' | xargs)"
-    log_info "Rebuilding frontend to include preserved App Store modules: ${modules}"
-    copanel_ensure_modern_npm
-    copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
-    if ! copanel_frontend_npm_install_wasm; then
-        log_warning "WASM toolchain setup failed — keeping prebuilt dist (missing UI for: ${modules})"
+    local modules_root="${CoPanel_HOME}/frontend/src/modules"
+    local mod missing=() needs_vite=()
+    while IFS= read -r mod; do
+        [[ -z "$mod" ]] && continue
+        local mod_dir="${modules_root}/${mod}"
+        if [[ -f "${CoPanel_HOME}/frontend/dist/extensions/${mod}/module.js" ]]; then
+            continue
+        fi
+        if copanel_module_has_prebuilt_bundle "$mod_dir"; then
+            continue
+        fi
+        missing+=("$mod")
+        if copanel_module_has_frontend_src "$mod_dir"; then
+            needs_vite+=("$mod")
+        fi
+    done < <(copanel_frontend_preserved_module_ids)
+    if [[ ${#missing[@]} -eq 0 ]]; then
         return 0
     fi
-    copanel_frontend_build_env
-    copanel_prepare_frontend_tsc || true
-    rm -rf node_modules/.vite
-    if copanel_run_vite_build_noavx && copanel_finalize_frontend_build 0; then
-        log_success "Frontend rebuilt with App Store modules"
-        return 0
+    if [[ ${#needs_vite[@]} -gt 0 ]]; then
+        log_warning "Preserved App Store modules lack prebuilt UI and cannot be built on this CPU (no AVX): ${needs_vite[*]}"
     fi
-    log_warning "App Store frontend rebuild failed — keeping prebuilt dist (missing UI for: ${modules})"
+    if [[ ${#missing[@]} -gt ${#needs_vite[@]} ]]; then
+        log_warning "Some preserved modules are missing extension bundles in dist: ${missing[*]}"
+    fi
     return 0
 }
 
@@ -2765,8 +2824,13 @@ PY
 setup_systemd_service() {
     log_info "Creating Systemd service..."
     ensure_panel_secrets
-    
-    cat > /etc/systemd/system/copanel.service << 'EOF'
+    copanel_persist_no_avx_mode
+    local noavx_systemd_env=""
+    if ! copanel_cpu_has_avx; then
+        noavx_systemd_env='Environment="COPANEL_FORCE_NO_AVX=1"'
+    fi
+
+    cat > /etc/systemd/system/copanel.service << EOF
 [Unit]
 Description=CoPanel - Linux VPS Management Panel
 After=network.target network-online.target nginx.service
@@ -2779,6 +2843,7 @@ Group=root
 WorkingDirectory=/opt/copanel/backend
 
 Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+${noavx_systemd_env}
 EnvironmentFile=-/opt/copanel/config/copanel.env
 ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
 
