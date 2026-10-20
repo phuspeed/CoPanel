@@ -81,6 +81,21 @@ assert_eq "nested rollup is wasm" "@rollup/wasm-node" \
 assert_false "native @esbuild directory is gone" test -d node_modules/@esbuild
 assert_false "native rollup optional package is gone" test -d node_modules/@rollup/rollup-linux-x64-gnu
 
+prebuilt="$(mktemp -d)"
+mkdir -p "$prebuilt/src/dist"
+printf '%s\n' '<!doctype html><title>prebuilt</title>' > "$prebuilt/src/dist/index.html"
+tar -C "$prebuilt/src" -czf "$prebuilt/dist.tar.gz" dist
+(
+    cd "$prebuilt/work" 2>/dev/null || mkdir -p "$prebuilt/work"
+    cd "$prebuilt/work"
+    COPANEL_PREBUILT_FRONTEND="$prebuilt/dist.tar.gz"
+    copanel_use_prebuilt_frontend >/tmp/copanel-prebuilt-noavx.log
+)
+assert_true "prebuilt archive extracts index.html" test -f "$prebuilt/work/dist/index.html"
+assert_eq "prebuilt index is the archive copy" "<!doctype html><title>prebuilt</title>" \
+    "$(cat "$prebuilt/work/dist/index.html")"
+rm -rf "$prebuilt"
+
 if [[ "$FAILS" -eq 0 ]]; then
     printf 'no-avx installer checks passed\n'
 else

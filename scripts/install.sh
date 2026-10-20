@@ -1909,6 +1909,29 @@ if (existsSync('node_modules/@esbuild')) {
 EOF
 }
 
+copanel_use_prebuilt_frontend() {
+    # CPUs without AVX segfault inside esbuild, both the native Go binary and
+    # the WASM build running under Node. The panel that worked before the
+    # HTTPS upgrade already had a compiled dist; do not compile one here.
+    local archive="${COPANEL_PREBUILT_FRONTEND:-}"
+    if [[ -z "$archive" ]]; then
+        if [[ -f prebuilt/dist.tar.gz ]]; then
+            archive="prebuilt/dist.tar.gz"
+        elif [[ -n "${CoPanel_HOME:-}" && -f "${CoPanel_HOME}/frontend/prebuilt/dist.tar.gz" ]]; then
+            archive="${CoPanel_HOME}/frontend/prebuilt/dist.tar.gz"
+        fi
+    fi
+    [[ -n "$archive" && -f "$archive" ]] || return 1
+    log_info "CPU without AVX — installing the prebuilt frontend. Vite is not run on this CPU."
+    rm -rf dist
+    tar -xzf "$archive"
+    if [[ ! -f dist/index.html ]]; then
+        log_error "Prebuilt frontend archive did not contain dist/index.html"
+        return 1
+    fi
+    log_success "Prebuilt frontend ready"
+}
+
 copanel_frontend_npm_install_wasm() {
     log_info "Reinstalling node_modules with WASM Rollup/esbuild (no native AVX binaries)..."
     local lockbak=""
@@ -2004,10 +2027,16 @@ setup_frontend() {
     if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
         cd "$CoPanel_HOME/frontend"
 
+        if ! copanel_cpu_has_avx && copanel_use_prebuilt_frontend; then
+            cd - >/dev/null || true
+            return 0
+        fi
+
         copanel_ensure_modern_npm
         copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
 
         if ! copanel_cpu_has_avx; then
+            log_warning "Prebuilt frontend archive is missing. Trying a local build."
             copanel_frontend_npm_install_wasm
         else
             log_info "Installing npm packages..."

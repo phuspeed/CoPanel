@@ -17,7 +17,7 @@ All notable changes to CoPanel are documented in this file.
 
 **Fixed**
 
-- `install.sh` on a CPU without AVX no longer builds the frontend with the native esbuild/Rollup binaries. Those binaries segfault (`Segmentation fault` inside `github.com/evanw/esbuild`). The installer now installs `esbuild-wasm` and `@rollup/wasm-node` in place of the locked native packages and starts Vite only after the WASM module is initialized.
+- `install.sh` on a CPU without AVX installs `frontend/prebuilt/dist.tar.gz` and does not run Vite. Native esbuild and esbuild-wasm both segfault on that CPU (`Segmentation fault`, including `runtime/asm_wasm.s`). The panel that worked before the HTTPS upgrade already had a compiled `dist`; the upgrade was deleting it and compiling on the NUC.
 
 **Security**
 
@@ -43,7 +43,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
-- Máy không có AVX (Intel NUC đời cũ) build được frontend: installer thay esbuild/Rollup native bằng bản WASM, không còn segfault khi `vite build`.
+- Máy không có AVX (Intel NUC) không còn chạy Vite lúc cài. Installer giải nén frontend đã build sẵn, vì esbuild native và WASM đều bị segfault trên CPU này.
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
 - Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký, origin loopback `127.0.0.1:8687` và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
