@@ -37,6 +37,7 @@ coverage.xml
 
 # Generated frontend typecheck config (App Store module excludes)
 frontend/tsconfig.build.json
+frontend/.copanel-skip-tsc
 
 # Virtual environments
 venv/
