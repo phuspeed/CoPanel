@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from core.job_secrets import redact_job_row, user_may_access_job
 from modules.cron_manager.schedule_validate import validate_cron_command, validate_cron_schedule
-from modules.firewall.router import parse_ufw_rule_line, validate_ufw_port
+from modules.firewall.router import parse_ufw_rule_line, validate_ufw_comment, validate_ufw_port
 from modules.file_manager.router import check_safe_path
 
 
@@ -76,6 +76,14 @@ class FirewallValidationTests(unittest.TestCase):
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["port"], "8686/tcp")
         self.assertEqual(parsed["comment"], "")
+
+    def test_ufw_comment_validation(self):
+        self.assertEqual(validate_ufw_comment("  Web Traffic  "), "Web Traffic")
+        self.assertIsNone(validate_ufw_comment(""))
+        with self.assertRaises(ValueError):
+            validate_ufw_comment("a" * 81)
+        with self.assertRaises(ValueError):
+            validate_ufw_comment("bad\nline")
 
 
 if __name__ == "__main__":

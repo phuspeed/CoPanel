@@ -49,6 +49,23 @@ _UFW_PORT_RE = re.compile(
 )
 
 
+_UFW_COMMENT_MAX_LEN = 80
+
+
+def validate_ufw_comment(comment: Optional[str]) -> Optional[str]:
+    """Return a safe UFW rule comment or None when empty."""
+    text = (comment or "").strip()
+    if not text:
+        return None
+    if "\n" in text or "\r" in text or "\0" in text:
+        raise ValueError("Comment cannot contain newlines.")
+    if len(text) > _UFW_COMMENT_MAX_LEN:
+        raise ValueError(f"Comment must be at most {_UFW_COMMENT_MAX_LEN} characters.")
+    if re.search(r"[\"';|&$`\\]", text):
+        raise ValueError("Comment contains invalid characters.")
+    return text
+
+
 def validate_ufw_port(port: str) -> str:
     """Return normalized port spec or raise ValueError."""
     spec = (port or "").strip()
@@ -228,11 +245,15 @@ async def get_firewall_status() -> Dict[str, Any]:
         }
 
 
-def run_ufw_cmd(action: str, port: str) -> bool:
+def run_ufw_cmd(action: str, port: str, comment: Optional[str] = None) -> bool:
     """Helper to run UFW commands natively."""
     ufw_path = find_ufw_path()
+    cmd: List[str] = [ufw_path, action, port]
+    safe_comment = validate_ufw_comment(comment)
+    if safe_comment:
+        cmd.extend(["comment", safe_comment])
     try:
-        res = _run_with_optional_sudo([ufw_path, action, port])
+        res = _run_with_optional_sudo(cmd)
         if res.returncode == 0:
             return True
     except Exception:
@@ -300,6 +321,7 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
 
     try:
         port_spec = validate_ufw_port(req.port)
+        rule_comment = validate_ufw_comment(req.comment)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -318,9 +340,12 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
         }
 
     try:
-        if not run_ufw_cmd(req.action.lower(), port_spec):
+        if not run_ufw_cmd(req.action.lower(), port_spec, rule_comment):
             ufw_path = find_ufw_path()
-            dbg = _run_with_optional_sudo([ufw_path, req.action.lower(), port_spec])
+            dbg_cmd: List[str] = [ufw_path, req.action.lower(), port_spec]
+            if rule_comment:
+                dbg_cmd.extend(["comment", rule_comment])
+            dbg = _run_with_optional_sudo(dbg_cmd)
             detail = (dbg.stderr or dbg.stdout or "").strip()
             if "password is required" in detail.lower() or "a password is required" in detail.lower():
                 detail = "Permission denied to run UFW non-interactively. Configure sudoers for the CoPanel service user."

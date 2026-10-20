@@ -304,6 +304,39 @@ def _pkg_manager() -> Optional[str]:
     return None
 
 
+def _apt_output_text(res: subprocess.CompletedProcess) -> str:
+    return f"{res.stdout or ''}{res.stderr or ''}"
+
+
+def _dpkg_was_interrupted(res: subprocess.CompletedProcess) -> bool:
+    return res.returncode == 100 and "dpkg was interrupted" in _apt_output_text(res).lower()
+
+
+def _apt_install_with_dpkg_recovery(pm: str, os_pkgs: List[str]) -> None:
+    """Run apt install; recover once from interrupted dpkg state."""
+    install_cmd = [pm, "install", "-y"] + os_pkgs
+    res = _run_with_optional_sudo(install_cmd, check=False)
+    if res.returncode == 0:
+        return
+    if pm == "apt-get" and _dpkg_was_interrupted(res):
+        configure = _run_with_optional_sudo(["dpkg", "--configure", "-a"], check=False)
+        if configure.returncode != 0:
+            tail = _apt_output_text(configure)[-800:]
+            raise RuntimeError(
+                "apt install failed because dpkg was interrupted; "
+                f"`dpkg --configure -a` also failed. {tail}"
+            )
+        retry = _run_with_optional_sudo(install_cmd, check=False)
+        if retry.returncode != 0:
+            tail = _apt_output_text(retry)[-800:]
+            raise RuntimeError(
+                "Retried apt install after `dpkg --configure -a` but install still failed. "
+                f"{tail}"
+            )
+        return
+    _run_with_optional_sudo(install_cmd, check=True)
+
+
 def _run_with_optional_sudo(cmd: List[str], check: bool = True) -> subprocess.CompletedProcess:
     if IS_WINDOWS:
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -416,7 +449,9 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
                 raise RuntimeError("No supported package manager found.")
             if pm == "apt-get":
                 _run_with_optional_sudo([pm, "update", "-y"], check=False)
-            _run_with_optional_sudo([pm, "install", "-y"] + os_pkgs, check=True)
+                _apt_install_with_dpkg_recovery(pm, os_pkgs)
+            else:
+                _run_with_optional_sudo([pm, "install", "-y"] + os_pkgs, check=True)
 
         svc = _service_name(target_pkg)
         if svc:

@@ -1817,19 +1817,23 @@ def _install_package_files(
                     if run_frontend_build:
                         task["logs"].append(f"«{pkg_id}» — starting frontend build...")
                         task["frontend_status"] = "building"
-                        return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
-                        for line in build_lines:
-                            task["logs"].append(line)
-                        task["frontend_status"] = "success" if return_code == 0 else "failed"
-                        if return_code != 0 and _cpu_lacks_avx():
-                            _restore_frontend_module(dst_frontend, module_backup, task["logs"])
+                        try:
+                            return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                            for line in build_lines:
+                                task["logs"].append(line)
+                            task["frontend_status"] = "success" if return_code == 0 else "failed"
+                            if return_code != 0 and _cpu_lacks_avx():
+                                _restore_frontend_module(dst_frontend, module_backup, task["logs"])
+                                module_backup = None
+                        finally:
+                            _discard_frontend_module_backup(module_backup)
                             module_backup = None
+                    else:
+                        task["logs"].append(f"«{pkg_id}» — frontend copied (build deferred to batch).")
+                        task["frontend_status"] = "pending"
+                        result["needs_rebuild"] = True
                 finally:
                     _discard_frontend_module_backup(module_backup)
-                else:
-                    task["logs"].append(f"«{pkg_id}» — frontend copied (build deferred to batch).")
-                    task["frontend_status"] = "pending"
-                    result["needs_rebuild"] = True
             else:
                 task["logs"].append(f"«{pkg_id}» — no frontend in package, skipping npm build.")
                 task["frontend_status"] = "skipped"

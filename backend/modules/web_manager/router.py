@@ -756,11 +756,12 @@ async def list_web_services() -> Dict[str, Any]:
     installed_ids = set()
     for s in services:
         sid = s["id"]
-        bin_exists = shutil.which(sid) or shutil.which("openlitespeed" if sid == "litespeed" else sid)
         if sid == "apache2":
-            bin_exists = bin_exists or shutil.which("apache2") or shutil.which("httpd")
-            bin_exists = bin_exists or os.path.isdir("/etc/apache2") or os.path.isdir("/etc/httpd")
-        if bin_exists or os.path.exists(f"/etc/{sid}"):
+            service_installed = logic.is_apache_installed()
+        else:
+            bin_exists = shutil.which(sid) or shutil.which("openlitespeed" if sid == "litespeed" else sid)
+            service_installed = bool(bin_exists or os.path.exists(f"/etc/{sid}"))
+        if service_installed:
             s["installed"] = True
             installed_ids.add(sid)
             try:
