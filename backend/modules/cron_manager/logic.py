@@ -18,6 +18,8 @@ from typing import Any, Dict, List
 
 from core.cron_system import ensure_cron_service, get_cron_daemon_status, has_crontab as _has_crontab
 
+from .schedule_validate import validate_cron_command, validate_cron_schedule
+
 MARKER = "# copanel-id="
 BLOCK_START = "# BEGIN COPANEL CRON"
 BLOCK_END = "# END COPANEL CRON"
@@ -234,8 +236,8 @@ def add_job(schedule: Dict[str, str], command: str) -> Dict[str, Any]:
             "System crontab unavailable. Open Cron Manager and click «Install cron», "
             "or run: apt install cron && systemctl enable --now cron"
         )
-    if not command or not command.strip():
-        raise ValueError("Command is required.")
+    validate_cron_schedule(schedule)
+    validate_cron_command(command)
     cid = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
     job = {

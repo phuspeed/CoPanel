@@ -1909,6 +1909,24 @@ if (existsSync('node_modules/@esbuild')) {
 EOF
 }
 
+copanel_download_prebuilt_frontend() {
+    local dest="$1"
+    [[ -n "$dest" ]] || return 1
+    command -v curl &>/dev/null || return 1
+    local api="https://api.github.com/repos/phuspeed/CoPanel/releases/latest"
+    local asset_url=""
+    asset_url="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" "$api" 2>/dev/null \
+        | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*dist\.tar\.gz\)".*/\1/p' | head -1)"
+    [[ -n "$asset_url" ]] || return 1
+    log_info "Downloading prebuilt frontend from GitHub release..."
+    if ! curl -fsSL --max-time 300 -o "$dest" "$asset_url"; then
+        rm -f "$dest"
+        return 1
+    fi
+    [[ -s "$dest" ]] || { rm -f "$dest"; return 1; }
+    return 0
+}
+
 copanel_use_prebuilt_frontend() {
     # CPUs without AVX segfault inside esbuild, both the native Go binary and
     # the WASM build running under Node. The panel that worked before the
@@ -1919,6 +1937,14 @@ copanel_use_prebuilt_frontend() {
             archive="prebuilt/dist.tar.gz"
         elif [[ -n "${CoPanel_HOME:-}" && -f "${CoPanel_HOME}/frontend/prebuilt/dist.tar.gz" ]]; then
             archive="${CoPanel_HOME}/frontend/prebuilt/dist.tar.gz"
+        else
+            local tmp_archive
+            tmp_archive="$(mktemp /tmp/copanel-frontend-dist.XXXXXX.tar.gz)"
+            if copanel_download_prebuilt_frontend "$tmp_archive"; then
+                archive="$tmp_archive"
+            else
+                rm -f "$tmp_archive"
+            fi
         fi
     fi
     [[ -n "$archive" && -f "$archive" ]] || return 1

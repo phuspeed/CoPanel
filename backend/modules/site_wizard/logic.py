@@ -470,13 +470,43 @@ def _wp_config_db_define_replacements(database: Dict[str, Any]) -> List[tuple[st
     ]
 
 
+def _read_wp_config_database(root: Path) -> Optional[Dict[str, Any]]:
+    """Parse DB_* defines from an existing wp-config.php (password stays server-side)."""
+    wp_config = root / "wp-config.php"
+    if not wp_config.is_file():
+        return None
+    cfg = wp_config.read_text(encoding="utf-8", errors="ignore")
+    out: Dict[str, Any] = {}
+    for key, php_key in (
+        ("name", "DB_NAME"),
+        ("user", "DB_USER"),
+        ("password", "DB_PASSWORD"),
+        ("host", "DB_HOST"),
+    ):
+        m = re.search(
+            rf"define\s*\(\s*['\"]{php_key}['\"]\s*,\s*['\"]([^'\"]*)['\"]\s*\)\s*;",
+            cfg,
+        )
+        if m:
+            out[key] = m.group(1)
+    if "name" not in out or "user" not in out:
+        return None
+    out.setdefault("host", "localhost")
+    return out
+
+
 def _apply_wp_config_db_defines(cfg: str, database: Dict[str, Any]) -> str:
     updated = cfg
     if "database_name_here" in updated:
         updated = updated.replace("database_name_here", database["name"])
         updated = updated.replace("username_here", database["user"])
-        updated = updated.replace("password_here", database["password"])
-    for pattern, replacement in _wp_config_db_define_replacements(database):
+        pwd = database.get("password")
+        if pwd:
+            updated = updated.replace("password_here", pwd)
+    replacements = _wp_config_db_define_replacements(database)
+    if database.get("password") is None:
+        replacements = [pair for pair in replacements if "DB_PASSWORD" not in pair[1]]
+    for pattern, replacement in replacements:
         if re.search(pattern, updated):
             updated = re.sub(pattern, replacement, updated, count=1)
     return updated
@@ -973,6 +1003,10 @@ def _download_wordpress_core(root: Path, job_id: str = "wizard") -> None:
 def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
     root = Path(doc_root)
     root.mkdir(parents=True, exist_ok=True)
+    if database.get("password") is None:
+        from_cfg = _read_wp_config_database(root)
+        if from_cfg:
+            database = {**database, **{k: v for k, v in from_cfg.items() if v is not None}}
     files_present = _wordpress_files_present(root)
     if not files_present:
         _download_wordpress_core(root, job_id=domain)
@@ -1287,11 +1321,12 @@ def _provision(job, req, template_id, domain, doc_root, rollback, DBManager, SSL
                     "password_unchanged": True,
                 }
             elif _wordpress_files_present(Path(doc_root)) and (Path(doc_root) / "wp-config.php").is_file():
+                cfg_db = _read_wp_config_database(Path(doc_root)) or {}
                 result.database = {
                     "name": db_name,
                     "user": db_user,
-                    "password": None,
-                    "host": "localhost",
+                    "password": cfg_db.get("password"),
+                    "host": cfg_db.get("host") or "localhost",
                     "password_unchanged": True,
                 }
             else:

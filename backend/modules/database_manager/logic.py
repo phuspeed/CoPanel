@@ -358,17 +358,32 @@ GROUP BY s.schema_name;
 
         try:
             # Query MySQL for user names
-            res = _mysql_stdin("SELECT user, host FROM mysql.user;", timeout=30)
+            argv = sysexec.prepare_argv(
+                ["mysql", "-u", "root", "-N", "-B", "-e", "SELECT user, host FROM mysql.user;"],
+                as_root=True,
+            )
+            res = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                shell=False,
+            )
             if res.returncode != 0:
                 raise RuntimeError((res.stderr or res.stdout or "mysql failed").strip())
             lines = res.stdout.strip().splitlines()
             users = []
             for line in lines:
-                parts = line.strip().split()
+                parts = line.strip().split("\t")
+                if len(parts) < 2:
+                    parts = line.strip().split()
                 if parts and len(parts) >= 2:
                     username = parts[0]
                     host = parts[1]
-                    if username not in ["user", "root", "mysql.session", "mysql.sys", "debian-sys-maint"]:
+                    if username.lower() in {"user", "host"}:
+                        continue
+                    if username not in ["root", "mysql.session", "mysql.sys", "debian-sys-maint"]:
                         users.append({"user": username, "host": host, "db": "ALL / Selected"})
             return users
         except Exception:

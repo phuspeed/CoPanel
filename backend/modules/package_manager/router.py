@@ -1,9 +1,11 @@
 """
 Package Manager Module - Router
 """
+import asyncio
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from core.auth import require_module
+from core.jobs import jobs
 from pydantic import BaseModel
 
 from . import logic
@@ -38,20 +40,42 @@ def list_all_packages() -> Dict[str, Any]:
 
 
 @router.post("/{pkg_id}/install")
-def install_pkg(pkg_id: str) -> Dict[str, Any]:
-    """Installs the selected package."""
+async def install_pkg(pkg_id: str) -> Dict[str, Any]:
+    """Install the selected package as a background platform job."""
     pkg = logic.get_package(pkg_id)
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
-    
-    try:
-        updated_pkg = logic.install_package(pkg_id)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    active = jobs.find_active(kind="package_manager.install", payload_key="pkg_id", payload_value=pkg_id)
+    if active:
+        return {
+            "status": "success",
+            "message": f"Install for {pkg_id} is already running.",
+            "job_id": active,
+        }
+
+    async def _handler(job, package_id: str):
+        job.update(progress=5, message=f"Installing {package_id}")
+        try:
+            updated_pkg = await asyncio.to_thread(logic.install_package, package_id)
+        except Exception as exc:
+            job.log(str(exc), level="error")
+            raise
+        job.update(progress=100, message="Install finished")
+        return {"package": updated_pkg, "message": f"Successfully installed package {package_id}"}
+
+    job = jobs.submit(
+        kind="package_manager.install",
+        title=f"Install {pkg_id}",
+        module="package_manager",
+        payload={"pkg_id": pkg_id},
+        handler=_handler,
+        args=(pkg_id,),
+    )
     return {
         "status": "success",
-        "message": f"Successfully installed package {pkg_id}",
-        "package": updated_pkg
+        "message": f"Package install started for {pkg_id}",
+        "job_id": job.id,
     }
 
 
