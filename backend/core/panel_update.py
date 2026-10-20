@@ -20,6 +20,10 @@ VERSION_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/conten
 RELEASES_LATEST_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 REMOTE_VERSION_RAW = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/VERSION"
 GITHUB_COMPARE = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/compare"
+GITHUB_RELEASES = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases"
+RELEASE_TAG_API = (
+    f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{{tag}}"
+)
 
 _CACHE: Dict[str, Any] = {}
 _CACHE_AT: float = 0.0
@@ -100,6 +104,22 @@ def _classify_fetch_error(exc: BaseException) -> Tuple[str, str]:
     return "unknown", msg
 
 
+def release_url_for_version(version: str) -> str:
+    """GitHub release page for a semver, aligned with remote_version from VERSION."""
+    v = normalize_version(version)
+    if not v or v == "0.0.0":
+        return f"{GITHUB_COMPARE}/main"
+    return f"{GITHUB_RELEASES}/tag/v{v}"
+
+
+def _fetch_release_by_tag(version: str) -> Optional[Dict[str, Any]]:
+    tag = f"v{normalize_version(version)}"
+    try:
+        return _http_get_json(RELEASE_TAG_API.format(tag=tag))
+    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError, ValueError):
+        return None
+
+
 def _fetch_remote_version() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Return (version, fetch_error, fetch_error_kind)."""
     attempts: Tuple[Tuple[str, bool], ...] = (
@@ -135,15 +155,24 @@ def check_for_update() -> Dict[str, Any]:
     release_url = f"{GITHUB_COMPARE}/{local}...main"
 
     if remote:
-        try:
-            rel = _http_get_json(RELEASES_LATEST_API)
-            tag = normalize_version(str(rel.get("tag_name", "")))
-            if tag == remote:
+        release_url = release_url_for_version(remote)
+        rel = _fetch_release_by_tag(remote)
+        if rel:
+            if rel.get("body"):
                 changelog = rel.get("body")
             if rel.get("html_url"):
                 release_url = str(rel["html_url"])
-        except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError, ValueError):
-            pass
+        else:
+            try:
+                rel_latest = _http_get_json(RELEASES_LATEST_API)
+                tag = normalize_version(str(rel_latest.get("tag_name", "")))
+                if tag == remote:
+                    if rel_latest.get("body"):
+                        changelog = rel_latest.get("body")
+                    if rel_latest.get("html_url"):
+                        release_url = str(rel_latest["html_url"])
+            except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError, ValueError):
+                pass
 
     update_available = bool(remote) and compare_versions(local, remote) < 0
 
