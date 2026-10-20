@@ -475,6 +475,15 @@ def _cpu_lacks_avx() -> bool:
         return False
 
 
+def _noavx_node_heap_mb() -> int:
+    from core.noavx_build import node_heap_mb_for_noavx
+
+    override = os.environ.get("COPANEL_NODE_HEAP_MB", "").strip()
+    if override.isdigit():
+        return int(override)
+    return node_heap_mb_for_noavx()
+
+
 ESBUILD_WASM_VERSION = "0.21.5"
 ROLLUP_WASM_VERSION = "4.60.2"
 
@@ -1131,7 +1140,13 @@ def _frontend_build_env(*, serial: bool = False) -> dict:
     import os
 
     env = os.environ.copy()
-    heap = "2048" if serial else "1536"
+    if _cpu_lacks_avx():
+        heap = str(_noavx_node_heap_mb())
+        env["COPANEL_NOAVX"] = "1"
+        env["VITE_BUILD_LOW_MEMORY"] = "1"
+        serial = True
+    else:
+        heap = "2048" if serial else "1536"
     extra = f"--max-old-space-size={heap}"
     existing = env.get("NODE_OPTIONS", "").strip()
     env["NODE_OPTIONS"] = f"{existing} {extra}".strip() if existing else extra
@@ -1171,11 +1186,27 @@ def _is_oom_build_failure(return_code: int, log_lines: Optional[List[str]] = Non
     return "heap out of memory" in blob or "javascript heap" in blob
 
 
+def _is_wasm_render_build_failure(return_code: int, log_lines: Optional[List[str]] = None) -> bool:
+    from core.noavx_build import is_wasm_render_failure
+
+    return is_wasm_render_failure(return_code, _log_blob(log_lines))
+
+
 def _is_retriable_build_failure(return_code: int, log_lines: Optional[List[str]] = None) -> bool:
-    return _is_segfault_build_failure(return_code, log_lines) or _is_oom_build_failure(return_code, log_lines)
+    return (
+        _is_segfault_build_failure(return_code, log_lines)
+        or _is_oom_build_failure(return_code, log_lines)
+        or _is_wasm_render_build_failure(return_code, log_lines)
+    )
 
 
 def _build_failure_hint(return_code: int, log_lines: Optional[List[str]]) -> str:
+    if _is_wasm_render_build_failure(return_code, log_lines):
+        return (
+            "💡 esbuild-wasm crashed during Vite render (SIGPIPE/SIGSEGV). "
+            "CoPanel retries with COPANEL_NOAVX=1 (no esbuild minify). "
+            "Ensure swap is available and re-run the build."
+        )
     if _is_segfault_build_failure(return_code, log_lines):
         return (
             "💡 Native esbuild/Rollup crash (exit 139) on a CPU without AVX. "
@@ -1263,14 +1294,20 @@ def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
         max_attempts = 3
         for attempt in range(max_attempts):
             if attempt == 1:
-                if _is_segfault_build_failure(return_code, lines):
+                if _is_wasm_render_build_failure(return_code, lines):
+                    lines.append(
+                        "⚠️ esbuild-wasm render/minify failure — retrying with COPANEL_NOAVX conservative Vite settings..."
+                    )
+                    vite_cache = frontend_dir / "node_modules" / ".vite"
+                    shutil.rmtree(vite_cache, ignore_errors=True)
+                elif _is_segfault_build_failure(return_code, lines):
                     if _maybe_apply_rollup_wasm_override(frontend_dir, lines, force_reinstall=True):
                         lines.append("⚠️ Segfault (exit 139) — reinstalled WASM esbuild/Rollup, retrying...")
                     else:
                         lines.append("⚠️ Segfault (exit 139) — retrying with serial chunk rendering...")
                 elif _is_oom_build_failure(return_code, lines):
                     lines.append("⚠️ Build OOM (exit 137) — retrying with reduced memory settings...")
-                else:
+                elif not _is_retriable_build_failure(return_code, lines):
                     break
             elif attempt == 2:
                 if not _is_retriable_build_failure(return_code, lines):
