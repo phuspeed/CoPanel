@@ -90,12 +90,16 @@ tar -C "$prebuilt/src" -czf "$prebuilt/dist.tar.gz" dist
 (
     cd "$prebuilt/work" 2>/dev/null || mkdir -p "$prebuilt/work"
     cd "$prebuilt/work"
+    mkdir -p dist/extensions/keep_me
+    printf '%s\n' '{"extensions":[]}' > dist/extensions/index.json
+    printf '%s\n' 'export default null' > dist/extensions/keep_me/module.js
     COPANEL_PREBUILT_FRONTEND="$prebuilt/dist.tar.gz"
     copanel_use_prebuilt_frontend >/tmp/copanel-prebuilt-noavx.log
 )
 assert_true "prebuilt archive extracts index.html" test -f "$prebuilt/work/dist/index.html"
 assert_eq "prebuilt index is the archive copy" "<!doctype html><title>prebuilt</title>" \
     "$(cat "$prebuilt/work/dist/index.html")"
+assert_true "prebuilt extract kept dist/extensions tree" test -f "$prebuilt/work/dist/extensions/keep_me/module.js"
 rm -rf "$prebuilt"
 
 if [[ "$FAILS" -eq 0 ]]; then

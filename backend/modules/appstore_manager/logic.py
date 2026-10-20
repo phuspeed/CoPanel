@@ -751,8 +751,15 @@ def _save_extensions_registry(registry: Dict[str, Any]) -> None:
 def _write_extensions_index(frontend_dir: Path) -> None:
     registry = _load_extensions_registry()
     entries = []
+    dist_ext = frontend_dir / "dist" / "extensions"
+    stale_ids: List[str] = []
     for pkg_id, meta in sorted(registry.items()):
         if not isinstance(meta, dict):
+            stale_ids.append(pkg_id)
+            continue
+        module_js = dist_ext / pkg_id / "module.js"
+        if not module_js.is_file():
+            stale_ids.append(pkg_id)
             continue
         entries.append(
             {
@@ -763,7 +770,11 @@ def _write_extensions_index(frontend_dir: Path) -> None:
                 "module_url": meta.get("module_url") or f"/extensions/{pkg_id}/module.js",
             }
         )
-    ext_dir = frontend_dir / "dist" / "extensions"
+    if stale_ids:
+        for pkg_id in stale_ids:
+            registry.pop(pkg_id, None)
+        _save_extensions_registry(registry)
+    ext_dir = dist_ext
     ext_dir.mkdir(parents=True, exist_ok=True)
     (ext_dir / "index.json").write_text(
         json.dumps({"extensions": entries}, indent=2) + "\n",

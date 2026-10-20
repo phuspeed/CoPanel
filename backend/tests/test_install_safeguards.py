@@ -74,6 +74,41 @@ def test_noavx_prebuilt_merge_after_extra_modules():
     assert "copanel_noavx_merge_prebuilt_with_extra_modules" in block
 
 
+def test_noavx_register_extensions_uses_copanel_home_env():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_noavx_register_extensions()")
+    fn_end = text.index("copanel_use_prebuilt_frontend()", fn_start)
+    block = text[fn_start:fn_end]
+    assert 'os.environ["COPANEL_HOME"]' in block
+    assert 'os.environ["CoPanel_HOME"]' not in block
+
+
+def test_prebuilt_extract_preserves_dist_extensions():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_use_prebuilt_frontend()")
+    fn_end = text.index("copanel_frontend_npm_install_wasm()", fn_start)
+    block = text[fn_start:fn_end]
+    assert "dist/extensions" in block
+    assert "ext_backup" in block
+
+
+def test_noavx_merge_does_not_run_vite():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_noavx_merge_prebuilt_with_extra_modules()")
+    fn_end = text.index("copanel_frontend_staging_dir()", fn_start)
+    block = text[fn_start:fn_end]
+    assert "copanel_run_vite_build_noavx" not in block
+
+
+def test_systemd_persists_no_avx_when_needed():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    assert "copanel_persist_no_avx_mode" in text
+    svc_start = text.index("setup_systemd_service()")
+    svc_end = text.index("# Step 7:", svc_start)
+    block = text[svc_start:svc_end]
+    assert "COPANEL_FORCE_NO_AVX=1" in block
+
+
 def test_install_never_cats_admin_password_in_summary():
     text = INSTALL_SH.read_text(encoding="utf-8")
     summary_start = text.index("print_summary()")
