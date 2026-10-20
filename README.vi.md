@@ -1,6 +1,6 @@
 # CoPanel - Bảng Điều Khiển Quản Lý VPS Linux Gọn Nhẹ
 
-![Version](https://img.shields.io/badge/version-1.1.8-blue)
+![Version](https://img.shields.io/badge/version-1.1.9-blue)
 ![Status](https://img.shields.io/badge/status-beta-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
