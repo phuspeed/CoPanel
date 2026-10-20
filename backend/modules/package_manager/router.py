@@ -1,9 +1,12 @@
 """
 Package Manager Module - Router
 """
+import asyncio
 from typing import Dict, Any, List
+
 from fastapi import APIRouter, Depends, HTTPException
 from core.auth import require_module
+from core.jobs import jobs
 from pydantic import BaseModel
 
 from . import logic
@@ -38,20 +41,34 @@ def list_all_packages() -> Dict[str, Any]:
 
 
 @router.post("/{pkg_id}/install")
-def install_pkg(pkg_id: str) -> Dict[str, Any]:
-    """Installs the selected package."""
+async def install_pkg(
+    pkg_id: str,
+    user: Dict[str, Any] = Depends(require_module("package_manager")),
+) -> Dict[str, Any]:
+    """Install the selected package in a background job (Task Center)."""
     pkg = logic.get_package(pkg_id)
     if not pkg:
         raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found.")
-    
-    try:
-        updated_pkg = logic.install_package(pkg_id)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    async def _handler(job, package_id: str):
+        job.update(progress=10, message=f"Installing {package_id}")
+        updated = await asyncio.to_thread(logic.install_package, package_id)
+        job.update(progress=100, message=f"Installed {package_id}")
+        return {"package": updated, "message": f"Successfully installed package {package_id}"}
+
+    job = jobs.submit(
+        kind="package_manager.install",
+        title=f"Install {pkg.get('name') or pkg_id}",
+        module="package_manager",
+        actor=user.get("username"),
+        payload={"package_id": pkg_id},
+        handler=_handler,
+        args=(pkg_id,),
+    )
     return {
         "status": "success",
-        "message": f"Successfully installed package {pkg_id}",
-        "package": updated_pkg
+        "job_id": job.id,
+        "message": f"Install started for {pkg_id}. Track progress in Task Center.",
     }
 
 

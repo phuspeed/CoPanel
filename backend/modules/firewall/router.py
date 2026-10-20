@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from core.auth import require_module
 from pydantic import BaseModel, Field
 
+from .validation import parse_ufw_status_lines, validate_port_spec
+
 router = APIRouter(dependencies=[Depends(require_module("firewall"))])
 
 IS_WINDOWS = os.name == 'nt'
@@ -164,29 +166,7 @@ async def get_firewall_status() -> Dict[str, Any]:
         out = res.stdout if res.returncode == 0 else res.stderr
 
         is_active = "Status: active" in out
-
-        # Extract rules
-        rules = []
-        lines = out.splitlines()
-        for line in lines:
-            line_strip = line.strip()
-            if not line_strip or "Status:" in line_strip or "To " in line_strip or "Action " in line_strip or "---" in line_strip:
-                continue
-            
-            match = re.search(r'^(.*?)\s+(ALLOW(?:\s+IN)?|DENY(?:\s+IN)?)\s+(.*?)$', line_strip, re.IGNORECASE)
-            if match:
-                port = match.group(1).strip()
-                action = match.group(2).replace(" IN", "").replace(" in", "").strip().upper()
-                comment = match.group(3).strip()
-
-                if "(v6)" in port:
-                    continue
-
-                rules.append({
-                    "port": port,
-                    "action": action,
-                    "comment": comment
-                })
+        rules = parse_ufw_status_lines(out.splitlines())
 
         return {
             "status": "success",
@@ -272,13 +252,22 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
             detail="Cannot add a rule blocking SSH port 22 to prevent lockout."
         )
 
+    try:
+        port_spec = validate_port_spec(req.port)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    action = (req.action or "ALLOW").strip().upper()
+    if action not in {"ALLOW", "DENY"}:
+        raise HTTPException(status_code=400, detail="Action must be ALLOW or DENY.")
+
     if IS_WINDOWS:
         for rule in MOCK_RULES:
-            if rule["port"] == req.port:
+            if rule["port"] == port_spec:
                 raise HTTPException(status_code=400, detail="Rule already exists.")
         MOCK_RULES.append({
-            "port": req.port,
-            "action": req.action.upper(),
+            "port": port_spec,
+            "action": action,
             "comment": req.comment or ""
         })
         return {
@@ -287,9 +276,9 @@ async def add_firewall_rule(req: RuleRequest) -> Dict[str, Any]:
         }
 
     try:
-        if not run_ufw_cmd(req.action.lower(), req.port):
+        if not run_ufw_cmd(action.lower(), port_spec):
             ufw_path = find_ufw_path()
-            dbg = _run_with_optional_sudo([ufw_path, req.action.lower(), req.port])
+            dbg = _run_with_optional_sudo([ufw_path, action.lower(), port_spec])
             detail = (dbg.stderr or dbg.stdout or "").strip()
             if "password is required" in detail.lower() or "a password is required" in detail.lower():
                 detail = "Permission denied to run UFW non-interactively. Configure sudoers for the CoPanel service user."

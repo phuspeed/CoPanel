@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from modules.auth.router import get_current_user
+from modules.file_manager.path_safety import resolve_allowed_path
 
 router = APIRouter()
 
@@ -50,15 +51,12 @@ def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
     if not p_folders:
         p_folders = ["/home"]
 
-    abs_requested = os.path.abspath(requested_path)
-    # Check if starts with any allowed user path
-    for p in p_folders:
-        try:
-            abs_p = os.path.abspath(p)
-            if abs_requested.startswith(abs_p):
-                return abs_requested
-        except:
-            continue
+    try:
+        return resolve_allowed_path(requested_path, p_folders)
+    except PermissionError as exc:
+        abs_requested = str(exc.args[0]) if exc.args else requested_path
+    except Exception:
+        abs_requested = os.path.abspath(requested_path)
 
     raise HTTPException(
         status_code=403,

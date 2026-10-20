@@ -448,9 +448,52 @@ def _php_single_quoted(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
+def _parse_wp_config_database(root: Path) -> Optional[Dict[str, str]]:
+    """Read DB_* defines from an existing wp-config.php."""
+    wp_config = root / "wp-config.php"
+    if not wp_config.is_file():
+        return None
+    cfg = wp_config.read_text(encoding="utf-8", errors="ignore")
+    out: Dict[str, str] = {}
+    for key, php_key in (
+        ("name", "DB_NAME"),
+        ("user", "DB_USER"),
+        ("password", "DB_PASSWORD"),
+        ("host", "DB_HOST"),
+    ):
+        match = re.search(
+            rf"define\s*\(\s*['\"]{php_key}['\"]\s*,\s*['\"]([^'\"]*)['\"]\s*\)",
+            cfg,
+        )
+        if match:
+            out[key] = match.group(1)
+    if not out.get("name") or not out.get("user"):
+        return None
+    return {
+        "name": out["name"],
+        "user": out["user"],
+        "password": out.get("password", ""),
+        "host": out.get("host") or "localhost",
+    }
+
+
+def _merge_wp_database(root: Path, database: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Fill missing DB password from wp-config when re-running the wizard."""
+    if not database:
+        return database
+    merged = dict(database)
+    if merged.get("password"):
+        return merged
+    parsed = _parse_wp_config_database(root)
+    if parsed and parsed.get("password"):
+        merged["password"] = parsed["password"]
+        merged.setdefault("host", parsed.get("host") or "localhost")
+    return merged
+
+
 def _wp_config_db_define_replacements(database: Dict[str, Any]) -> List[tuple[str, str]]:
     host = database.get("host", "localhost")
-    return [
+    replacements = [
         (
             r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
             f"define('DB_NAME', {_php_single_quoted(database['name'])});",
@@ -460,14 +503,19 @@ def _wp_config_db_define_replacements(database: Dict[str, Any]) -> List[tuple[st
             f"define('DB_USER', {_php_single_quoted(database['user'])});",
         ),
         (
-            r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
-            f"define('DB_PASSWORD', {_php_single_quoted(database['password'])});",
-        ),
-        (
             r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
             f"define('DB_HOST', {_php_single_quoted(host)});",
         ),
     ]
+    if database.get("password") is not None:
+        replacements.insert(
+            2,
+            (
+                r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"][^'\"]*['\"]\s*\)\s*;",
+                f"define('DB_PASSWORD', {_php_single_quoted(str(database['password']))});",
+            ),
+        )
+    return replacements
 
 
 def _apply_wp_config_db_defines(cfg: str, database: Dict[str, Any]) -> str:
@@ -475,7 +523,8 @@ def _apply_wp_config_db_defines(cfg: str, database: Dict[str, Any]) -> str:
     if "database_name_here" in updated:
         updated = updated.replace("database_name_here", database["name"])
         updated = updated.replace("username_here", database["user"])
-        updated = updated.replace("password_here", database["password"])
+        if database.get("password") is not None:
+            updated = updated.replace("password_here", str(database["password"]))
     for pattern, replacement in _wp_config_db_define_replacements(database):
         if re.search(pattern, updated):
             updated = re.sub(pattern, replacement, updated, count=1)
@@ -973,6 +1022,7 @@ def _download_wordpress_core(root: Path, job_id: str = "wizard") -> None:
 def _install_wordpress_core(doc_root: str, domain: str, database: Dict[str, Any]) -> Dict[str, Any]:
     root = Path(doc_root)
     root.mkdir(parents=True, exist_ok=True)
+    database = _merge_wp_database(root, database) or database
     files_present = _wordpress_files_present(root)
     if not files_present:
         _download_wordpress_core(root, job_id=domain)
@@ -1301,7 +1351,8 @@ def _provision(job, req, template_id, domain, doc_root, rollback, DBManager, SSL
                 )
 
     job.update(progress=58, message="Deploying application")
-    deploy_info = _deploy_template_app(template_id, doc_root, domain, result.database if result.database and result.database.get("password") else result.database)
+    deploy_db = _merge_wp_database(Path(doc_root), result.database) if result.database else None
+    deploy_info = _deploy_template_app(template_id, doc_root, domain, deploy_db)
     if deploy_info.get("status") == "partial":
         detail = deploy_info.get("install_error") or deploy_info.get("message") or "application install failed"
         raise RuntimeError(f"Deploy failed: {detail}")

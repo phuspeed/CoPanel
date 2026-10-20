@@ -48,7 +48,7 @@ def _mysql_missing() -> Dict[str, Any]:
 
 def _mysql_stdin(sql: str, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run SQL as root via stdin so statements never appear in process argv."""
-    argv = sysexec.prepare_argv(["mysql", "-u", "root", "--batch"], as_root=True)
+    argv = sysexec.prepare_argv(["mysql", "-u", "root", "-N", "--batch"], as_root=True)
     return subprocess.run(
         argv,
         input=sql,
@@ -368,7 +368,9 @@ GROUP BY s.schema_name;
                 if parts and len(parts) >= 2:
                     username = parts[0]
                     host = parts[1]
-                    if username not in ["user", "root", "mysql.session", "mysql.sys", "debian-sys-maint"]:
+                    if username.lower() in ("user", "host"):
+                        continue
+                    if username not in ["root", "mysql.session", "mysql.sys", "debian-sys-maint"]:
                         users.append({"user": username, "host": host, "db": "ALL / Selected"})
             return users
         except Exception:

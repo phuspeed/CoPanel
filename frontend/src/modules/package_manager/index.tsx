@@ -9,6 +9,7 @@ import WindowModal from '../../core/shell/WindowModal';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import { useLocation } from 'react-router-dom';
 import { cn } from '../../lib/utils';
+import { jobsApi } from '../../core/platform';
 import * as Icons from 'lucide-react';
 
 interface Package {
@@ -171,6 +172,21 @@ export default function PackageManagerDashboard() {
     return () => clearTimeout(tmr);
   }, [actionMsg]);
 
+  const waitForPackageJob = async (jobId: string): Promise<{ ok: boolean; message: string }> => {
+    const started = Date.now();
+    while (Date.now() - started < 30 * 60 * 1000) {
+      const job = await jobsApi.get(jobId);
+      if (job.status === 'success') {
+        return { ok: true, message: job.message || job.result?.message || 'Install finished.' };
+      }
+      if (job.status === 'failed' || job.status === 'cancelled') {
+        return { ok: false, message: job.error || job.message || 'Install failed.' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return { ok: false, message: 'Install still running. Check Task Center.' };
+  };
+
   const handleAction = async (id: string, action: 'install' | 'restart' | 'stop' | 'remove' | 'start') => {
     if (id === 'pm2' && action === 'install') {
       const nodeOk = packages.some((p) => p.id === 'nodejs' && p.status !== 'not_installed');
@@ -188,7 +204,14 @@ export default function PackageManagerDashboard() {
         headers: authHeaders,
       });
       if (res.ok) {
-        setActionMsg({ msg: `${id}: ${action} success`, isError: false });
+        const data = await res.json().catch(() => ({}));
+        if (action === 'install' && data.job_id) {
+          setActionMsg({ msg: data.message || `${id}: install started`, isError: false });
+          const done = await waitForPackageJob(data.job_id);
+          setActionMsg({ msg: done.message, isError: !done.ok });
+        } else {
+          setActionMsg({ msg: `${id}: ${action} success`, isError: false });
+        }
         fetchPackages();
         if (id === 'phpmyadmin') fetchMysqlCreds();
       } else {

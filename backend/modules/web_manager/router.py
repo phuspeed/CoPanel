@@ -758,9 +758,10 @@ async def list_web_services() -> Dict[str, Any]:
         sid = s["id"]
         bin_exists = shutil.which(sid) or shutil.which("openlitespeed" if sid == "litespeed" else sid)
         if sid == "apache2":
-            bin_exists = bin_exists or shutil.which("apache2") or shutil.which("httpd")
-            bin_exists = bin_exists or os.path.isdir("/etc/apache2") or os.path.isdir("/etc/httpd")
-        if bin_exists or os.path.exists(f"/etc/{sid}"):
+            installed = logic.is_apache_installed()
+        else:
+            installed = bool(bin_exists) or os.path.exists(f"/etc/{sid}")
+        if installed:
             s["installed"] = True
             installed_ids.add(sid)
             try:
@@ -790,7 +791,7 @@ async def stack_overview() -> Dict[str, Any]:
         "web_servers": ws.get("services", []),
         "php_fpm": logic.list_php_fpm_versions(),
         "database_services": logic.database_service_rows(),
-        "apache_detected": detect_apache_layout() is not None,
+        "apache_detected": logic.is_apache_installed(),
     }
 
 

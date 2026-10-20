@@ -335,14 +335,30 @@ class JobManager:
             return job.to_dict(include_logs=include_logs)
         return self._fetch_persisted(job_id, include_logs=include_logs)
 
-    def list(self, *, limit: int = 50, module: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        module: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         conn = get_db_connection()
         try:
             cur = conn.cursor()
-            if module:
+            if module and actor:
+                cur.execute(
+                    "SELECT * FROM jobs WHERE module = ? AND actor = ? ORDER BY created_at DESC LIMIT ?",
+                    (module, actor, int(limit)),
+                )
+            elif module:
                 cur.execute(
                     "SELECT * FROM jobs WHERE module = ? ORDER BY created_at DESC LIMIT ?",
                     (module, int(limit)),
+                )
+            elif actor:
+                cur.execute(
+                    "SELECT * FROM jobs WHERE actor = ? ORDER BY created_at DESC LIMIT ?",
+                    (actor, int(limit)),
                 )
             else:
                 cur.execute(

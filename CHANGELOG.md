@@ -6,6 +6,18 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**Security & reliability (panel `1.2.0`)**
+
+- Platform jobs API: non-admin users only see their own jobs; superadmin sees all. Passwords and similar fields are redacted in job payload/result. (`platform` **1.0.2**)
+- File Manager: path checks use `realpath` + `commonpath` containment so `/home/alice2` is not reachable via `/home/alice` prefix tricks. (`file_manager` **1.0.12**)
+- Site Wizard: re-running WordPress 1-click reuses wp-config DB credentials instead of clearing the password or failing host verification. (`site_wizard` **1.2.1**)
+- Database Manager: MySQL user list uses batch mode without column headers (no fake `User`/`Host` row). (`database_manager` **1.1.1**)
+- Cron Manager: cron fields and commands are validated; newlines are rejected before writing root crontab. (`cron_manager` **1.0.10**)
+- Web Manager: Apache detection requires an installed package/binary/unit, not only `/etc/apache2` directories. (`web_manager` **1.3.1**)
+- Package Manager: OS package installs (e.g. MariaDB) run as background jobs; UI polls Task Center. (`package_manager` **1.0.7**)
+- Firewall: invalid ports return HTTP 400; UFW rule comments are parsed from `#` suffix, not the `From` column. (`firewall` **1.0.9**)
+- Pin `httpx<0.28` for FastAPI 0.104 / Starlette TestClient compatibility.
+
 **Fixed / Improved (`site_wizard` 1.2.0, `web_manager` 1.3.0, `database_manager` 1.1.0, `ssl_manager` 1.1.4, `appstore_manager` 1.0.39)**
 
 - Web 1-click runs package installs, downloads, and certbot off the API event loop, so the panel stays usable while a site is provisioning. The installer nginx `/api/` location now allows 300s proxy read/send timeouts.

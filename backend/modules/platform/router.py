@@ -19,6 +19,7 @@ from core.api import ApiError, ok
 from core.audit import query_audit, record_audit
 from core.auth import optional_user_sse, require_admin, require_user
 from core.events import sse_stream
+from core.job_secrets import job_visible_to_user, sanitize_job_for_api
 from core.jobs import jobs
 from core import notifications as notif
 from core import panel_update
@@ -41,19 +42,24 @@ def list_jobs(
     module: Optional[str] = None,
 ) -> Dict[str, Any]:
     """List recent jobs (newest first)."""
-    return ok(jobs.list(limit=limit, module=module))
+    rows = jobs.list(limit=limit, module=module, actor=None if user.get("role") == "superadmin" else user.get("username"))
+    visible = [sanitize_job_for_api(row) for row in rows if job_visible_to_user(row, user)]
+    return ok(visible)
 
 
 @router.get("/jobs/{job_id}")
 def job_detail(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     job = jobs.get(job_id, include_logs=True)
-    if not job:
+    if not job or not job_visible_to_user(job, user):
         raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
-    return ok(job)
+    return ok(sanitize_job_for_api(job, include_logs=True))
 
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    job = jobs.get(job_id, include_logs=False)
+    if not job or not job_visible_to_user(job, user):
+        raise ApiError("NOT_FOUND", "Job not found.", http_status=404)
     if not jobs.cancel(job_id):
         raise ApiError("INVALID_STATE", "Job is not cancellable.", http_status=400)
     record_audit(
@@ -232,7 +238,10 @@ def metrics(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     JSON-friendly and visualised by the dashboard. Heavier observability
     (long-term metrics, alert rules) can be layered on later.
     """
-    job_list = jobs.list(limit=200)
+    job_list = jobs.list(
+        limit=200,
+        actor=None if user.get("role") == "superadmin" else user.get("username"),
+    )
     by_status: Dict[str, int] = {}
     for j in job_list:
         by_status[j["status"]] = by_status.get(j["status"], 0) + 1
