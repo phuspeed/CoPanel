@@ -1807,6 +1807,9 @@ copanel_ensure_modern_npm() {
 }
 
 copanel_cpu_has_avx() {
+    if [[ "${COPANEL_FORCE_NO_AVX:-}" == "1" ]]; then
+        return 1
+    fi
     [[ -r /proc/cpuinfo ]] || return 0
     grep -q avx /proc/cpuinfo 2>/dev/null
 }
@@ -1832,42 +1835,110 @@ fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
 copanel_maybe_apply_rollup_wasm_override() {
     local pkg="$1"
     [[ -f "$pkg" ]] || return 0
+    # package.json overrides do not replace packages already pinned in
+    # package-lock.json, so writing them left Vite on the native esbuild
+    # binary. Strip any leftover overrides; the no-AVX install swaps the
+    # packages on disk instead.
     if copanel_cpu_has_avx; then
         copanel_strip_wasm_overrides "$pkg"
-        return 0
     fi
-    local major
-    major="$(copanel_npm_major_version)"
-    if [[ -z "$major" || "$major" -lt 10 ]]; then
-        log_warning "CPU without AVX and npm < 10 — WASM overrides skipped (upgrade npm first)."
-        return 0
+}
+
+copanel_install_wasm_toolchain() {
+    # npm's lockfile keeps native esbuild and rollup even after an override
+    # is written into package.json. Put the WASM builds in their place and
+    # delete the native binaries so Node cannot load them.
+    if [[ -d node_modules/esbuild-wasm ]]; then
+        rm -rf node_modules/esbuild
+        mv node_modules/esbuild-wasm node_modules/esbuild
     fi
-    log_info "CPU without AVX — configuring Rollup + esbuild WASM overrides..."
-    node -e '
-const fs = require("fs");
-const pkg = process.argv[1];
-const data = JSON.parse(fs.readFileSync(pkg, "utf8"));
-data.overrides = data.overrides || {};
-let changed = false;
-if (!String(data.overrides.rollup || "").includes("wasm")) {
-  data.overrides.rollup = "npm:@rollup/wasm-node@4.60.2";
-  changed = true;
+    if [[ -d node_modules/@rollup/wasm-node ]]; then
+        rm -rf node_modules/rollup
+        mv node_modules/@rollup/wasm-node node_modules/rollup
+    fi
+    rm -rf node_modules/@esbuild
+    if [[ -d node_modules/@rollup ]]; then
+        find node_modules/@rollup -mindepth 1 -maxdepth 1 -type d -name 'rollup-*' -exec rm -rf {} +
+    fi
+    local dest
+    if [[ -d node_modules/esbuild ]]; then
+        while IFS= read -r dest; do
+            [[ -n "$dest" ]] || continue
+            rm -rf "$dest"
+            mkdir -p "$(dirname "$dest")"
+            cp -a node_modules/esbuild "$dest"
+        done < <(find node_modules -type d -name esbuild \
+            -not -path 'node_modules/esbuild' \
+            -not -path 'node_modules/esbuild/*')
+    fi
+    if [[ -d node_modules/rollup ]]; then
+        while IFS= read -r dest; do
+            [[ -n "$dest" ]] || continue
+            rm -rf "$dest"
+            mkdir -p "$(dirname "$dest")"
+            cp -a node_modules/rollup "$dest"
+        done < <(find node_modules -type d -name rollup \
+            -not -path 'node_modules/rollup' \
+            -not -path 'node_modules/rollup/*' \
+            -not -path 'node_modules/@rollup/*')
+    fi
 }
-if (!String(data.overrides.esbuild || "").includes("wasm")) {
-  data.overrides.esbuild = "npm:esbuild-wasm@0.21.5";
-  changed = true;
+
+copanel_frontend_wasm_ready() {
+    node --input-type=module <<'EOF'
+import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+const require = createRequire(`${process.cwd()}/package.json`)
+const esPkgPath = require.resolve('esbuild/package.json')
+const esPkg = require(esPkgPath)
+const esDir = dirname(esPkgPath)
+if (!String(esPkg.name || '').includes('wasm') || !existsSync(join(esDir, 'esbuild.wasm'))) {
+  console.error(`esbuild is still native (${esPkg.name || 'unknown'})`)
+  process.exit(1)
 }
-if (changed) {
-  fs.writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
-  process.stdout.write("changed");
+const rollPkg = require(require.resolve('rollup/package.json'))
+if (!String(rollPkg.name || '').includes('wasm')) {
+  console.error(`rollup is still native (${rollPkg.name || 'unknown'})`)
+  process.exit(1)
 }
-' "$pkg"
+if (existsSync('node_modules/@esbuild')) {
+  console.error('native @esbuild binaries are still installed')
+  process.exit(1)
+}
+EOF
 }
 
 copanel_frontend_npm_install_wasm() {
     log_info "Reinstalling node_modules with WASM Rollup/esbuild (no native AVX binaries)..."
+    local lockbak=""
+    if [[ -f package-lock.json ]]; then
+        lockbak="$(mktemp)"
+        cp package-lock.json "$lockbak"
+    fi
+    restore_lock() {
+        if [[ -n "$lockbak" && -f "$lockbak" ]]; then
+            cp "$lockbak" package-lock.json
+            rm -f "$lockbak"
+            lockbak=""
+        fi
+    }
     rm -rf node_modules
-    npm install --legacy-peer-deps || npm install --legacy-peer-deps
+    if ! npm install --legacy-peer-deps; then
+        npm install --legacy-peer-deps || { restore_lock; return 1; }
+    fi
+    if ! npm install --no-save --legacy-peer-deps esbuild-wasm@0.21.5 @rollup/wasm-node@4.60.2; then
+        log_error "Could not download esbuild-wasm and @rollup/wasm-node."
+        restore_lock
+        return 1
+    fi
+    copanel_install_wasm_toolchain
+    restore_lock
+    if ! copanel_frontend_wasm_ready; then
+        log_error "esbuild/rollup are still native binaries. A CPU without AVX cannot run that frontend build."
+        return 1
+    fi
+    log_success "Using WASM esbuild and Rollup"
 }
 
 copanel_run_vite_build_noavx() {
@@ -1879,8 +1950,16 @@ copanel_run_vite_build_noavx() {
         heap_default="${COPANEL_NODE_HEAP_MB:-1536}"
     fi
     set +e
+    if [[ ! -f ./scripts/preload-esbuild-wasm.mjs ]]; then
+        log_error "Missing frontend/scripts/preload-esbuild-wasm.mjs"
+        rm -f "$log"
+        set -e
+        return 1
+    fi
     NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=${heap_default}}" \
-        VITE_BUILD_LOW_MEMORY=1 npm run build:appstore 2>&1 | tee "$log"
+        VITE_BUILD_LOW_MEMORY=1 \
+        node --import ./scripts/preload-esbuild-wasm.mjs ./node_modules/vite/bin/vite.js build \
+        2>&1 | tee "$log"
     code="${PIPESTATUS[0]}"
     set -e
     if grep -qiE 'segmentation fault|segfault|core dumped' "$log"; then

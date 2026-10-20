@@ -15,6 +15,10 @@ All notable changes to CoPanel are documented in this file.
 - Alma/RHEL nginx sites go in `conf.d`, and the PHP-FPM socket is `/run/php-fpm/www.sock` only when `php -v` matches. SSL is off unless the user asks for it, and Let’s Encrypt is skipped when DNS does not point at this server. Site files are chowned to the PHP-FPM user. Commands do not call `sudo` when the panel is already root.
 - The wizard UI shows job errors and a warning when polling loses contact. App Store waits up to 10 minutes before restarting `copanel` if a job is still running.
 
+**Fixed**
+
+- `install.sh` on a CPU without AVX no longer builds the frontend with the native esbuild/Rollup binaries. Those binaries segfault (`Segmentation fault` inside `github.com/evanw/esbuild`). The installer now installs `esbuild-wasm` and `@rollup/wasm-node` in place of the locked native packages and starts Vite only after the WASM module is initialized.
+
 **Security**
 
 - Port 8686 is plain HTTP again. The self-signed HTTPS listener, the loopback `127.0.0.1:8687` tunnel origin, and the `/<token>/` entrance are removed because Cloudflare Tunnel could not complete a TLS handshake to the panel (`502 Bad Gateway`). Upgrade rewrites nginx to `listen 8686` and deletes a leftover token file. Open `http://<lan-ip>:8686/`. Tunnel origin: `http://<lan-ip>:8686` or `http://localhost:8686`. (`panel_settings` **1.1.4**)
@@ -39,6 +43,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- Máy không có AVX (Intel NUC đời cũ) build được frontend: installer thay esbuild/Rollup native bằng bản WASM, không còn segfault khi `vite build`.
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
 - Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký, origin loopback `127.0.0.1:8687` và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.
 - JWT không còn secret mặc định công khai; file secret giữ lại khi cài lại. Đổi mật khẩu hoặc đăng xuất làm token cũ hết hiệu lực.
