@@ -53,6 +53,8 @@ unset COPANEL_FORCE_NO_AVX || true
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 cd "$tmpdir"
+mkdir -p scripts
+cp "$ROOT/frontend/scripts/wasm-toolchain.mjs" scripts/wasm-toolchain.mjs
 printf '%s\n' '{"name":"wasm-fixture","private":true}' > package.json
 
 mkdir -p node_modules/esbuild node_modules/esbuild-wasm \

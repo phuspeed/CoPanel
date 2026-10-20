@@ -464,6 +464,8 @@ def remove_local_package_record(pkg_id: str) -> None:
 
 def _cpu_lacks_avx() -> bool:
     """True on older x86 CPUs (e.g. Celeron J3455) where Rollup native may segfault under parallel I/O."""
+    if os.environ.get("COPANEL_FORCE_NO_AVX", "").strip() in ("1", "true", "yes"):
+        return True
     if platform.system() != "Linux":
         return False
     try:
@@ -471,6 +473,10 @@ def _cpu_lacks_avx() -> bool:
             return "avx" not in f.read().lower()
     except OSError:
         return False
+
+
+ESBUILD_WASM_VERSION = "0.21.5"
+ROLLUP_WASM_VERSION = "4.60.2"
 
 
 def _is_desktop_ui_track() -> bool:
@@ -488,6 +494,39 @@ def _is_desktop_ui_track() -> bool:
 
 def _is_desktop_appstore_frontend(dst: Path) -> bool:
     return (dst / "components" / "AppStoreSidebar.tsx").is_file()
+
+
+def _backup_frontend_module(module_dir: Path) -> Optional[Path]:
+    if not module_dir.is_dir():
+        return None
+    root = Path(tempfile.mkdtemp(prefix="copanel-mod-backup-"))
+    shutil.copytree(module_dir, root / "module", dirs_exist_ok=True)
+    return root
+
+
+def _restore_frontend_module(
+    module_dir: Path,
+    backup_root: Optional[Path],
+    log_lines: Optional[List[str]] = None,
+) -> bool:
+    if not backup_root:
+        return False
+    src = backup_root / "module"
+    if not src.is_dir():
+        return False
+    shutil.rmtree(module_dir, ignore_errors=True)
+    shutil.copytree(src, module_dir, dirs_exist_ok=True)
+    shutil.rmtree(backup_root, ignore_errors=True)
+    if log_lines is not None:
+        log_lines.append(
+            "⚠️ Rolled back src/modules/ after failed frontend build (panel dist was not replaced)."
+        )
+    return True
+
+
+def _discard_frontend_module_backup(backup_root: Optional[Path]) -> None:
+    if backup_root and backup_root.is_dir():
+        shutil.rmtree(backup_root, ignore_errors=True)
 
 
 def _install_frontend_module_tree(
@@ -854,7 +893,7 @@ def _should_run_npm_install(frontend_dir: Path) -> bool:
     nm_mtime = node_modules.stat().st_mtime
     if pkg_mtime > nm_mtime or lock_mtime > nm_mtime:
         return True
-    if _cpu_lacks_avx() and not _rollup_wasm_configured(frontend_dir):
+    if _cpu_lacks_avx() and not _frontend_wasm_ready(frontend_dir):
         return True
     return False
 
@@ -924,55 +963,155 @@ def _strip_wasm_overrides(frontend_dir: Path, log_lines: Optional[List[str]] = N
     return True
 
 
-def _rollup_wasm_configured(frontend_dir: Path) -> bool:
-    pkg = frontend_dir / "package.json"
-    if not pkg.is_file():
-        return False
-    try:
-        data = json.loads(pkg.read_text(encoding="utf-8"))
-        overrides = data.get("overrides") or {}
-        rollup = str(overrides.get("rollup") or "")
-        esbuild = str(overrides.get("esbuild") or "")
-        return "wasm" in rollup.lower() and "wasm" in esbuild.lower()
-    except Exception:
-        return False
+def _run_frontend_node_script(
+    frontend_dir: Path,
+    script_rel: str,
+    args: List[str],
+    *,
+    timeout: int = 120,
+) -> subprocess.CompletedProcess:
+    script = frontend_dir / script_rel
+    return subprocess.run(
+        ["node", str(script), *args],
+        cwd=str(frontend_dir),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
 
 
-def _maybe_apply_rollup_wasm_override(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
-    """Apply Rollup + esbuild WASM on no-AVX (same as scripts/install.sh). Returns True if npm install ran."""
+def _frontend_wasm_ready(frontend_dir: Path) -> bool:
+    """True when node_modules resolves esbuild-wasm + @rollup/wasm-node (no native @esbuild / rollup-linux-*)."""
+    script = frontend_dir / "scripts" / "wasm-toolchain.mjs"
+    if not script.is_file():
+        return False
+    proc = _run_frontend_node_script(frontend_dir, "scripts/wasm-toolchain.mjs", ["verify"])
+    return proc.returncode == 0
+
+
+def _log_wasm_toolchain_report(frontend_dir: Path, log_lines: Optional[List[str]]) -> None:
+    if log_lines is None:
+        return
+    proc = _run_frontend_node_script(frontend_dir, "scripts/wasm-toolchain.mjs", ["report"])
+    text = (proc.stdout or proc.stderr or "").strip()
+    if text:
+        for line in text.splitlines():
+            log_lines.append(f"ℹ️ {line}")
+
+
+def _npm_ls_rollup_esbuild(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
+    proc = subprocess.run(
+        ["npm", "ls", "rollup", "esbuild", "esbuild-wasm", "@rollup/wasm-node", "--depth=1"],
+        cwd=str(frontend_dir),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    blob = (proc.stdout or proc.stderr or "").strip()
+    if log_lines is not None and blob:
+        log_lines.append("npm ls (rollup/esbuild):")
+        for line in blob.splitlines()[:40]:
+            log_lines.append(f"  {line}")
+
+
+def _ensure_frontend_wasm_toolchain(
+    frontend_dir: Path,
+    log_lines: Optional[List[str]] = None,
+    *,
+    force_reinstall: bool = False,
+) -> bool:
+    """
+    Install esbuild-wasm + @rollup/wasm-node and swap onto disk.
+
+    package.json overrides do not replace packages pinned in package-lock.json;
+    npm may still install native rollup/esbuild and only mark them overridden in npm ls.
+    """
     if not _cpu_lacks_avx():
         return False
     pkg_path = frontend_dir / "package.json"
     if not pkg_path.is_file():
         return False
+    wasm_script = frontend_dir / "scripts" / "wasm-toolchain.mjs"
+    if not wasm_script.is_file():
+        if log_lines is not None:
+            log_lines.append("❌ Missing frontend/scripts/wasm-toolchain.mjs")
+        return False
+
     _ensure_modern_npm(log_lines)
-    if _npm_major_version() < 10:
+    _strip_wasm_overrides(frontend_dir, log_lines)
+
+    if not force_reinstall and _frontend_wasm_ready(frontend_dir):
         if log_lines is not None:
-            log_lines.append("⚠️ npm < 10 — cannot apply WASM overrides.")
+            log_lines.append("ℹ️ CPU without AVX — WASM esbuild/Rollup already active.")
+        _log_wasm_toolchain_report(frontend_dir, log_lines)
         return False
-    try:
-        data = json.loads(pkg_path.read_text(encoding="utf-8"))
-    except Exception:
+
+    if log_lines is not None:
+        log_lines.append(
+            "ℹ️ CPU without AVX — installing esbuild-wasm + @rollup/wasm-node "
+            "(disk swap; package-lock keeps native pins without this step)..."
+        )
+
+    node_modules = frontend_dir / "node_modules"
+    if force_reinstall and node_modules.is_dir():
+        shutil.rmtree(node_modules, ignore_errors=True)
+
+    if not node_modules.is_dir() or force_reinstall:
+        if not _ensure_frontend_npm_deps(frontend_dir, log_lines):
+            if log_lines is not None:
+                log_lines.append("❌ npm install failed before WASM toolchain swap.")
+            return False
+
+    wasm_install = subprocess.run(
+        [
+            "npm",
+            "install",
+            "--no-save",
+            "--legacy-peer-deps",
+            f"esbuild-wasm@{ESBUILD_WASM_VERSION}",
+            f"@rollup/wasm-node@{ROLLUP_WASM_VERSION}",
+        ],
+        cwd=str(frontend_dir),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if wasm_install.returncode != 0:
+        err = (wasm_install.stderr or wasm_install.stdout or "").strip()
+        if log_lines is not None:
+            log_lines.append(f"❌ Could not install esbuild-wasm / @rollup/wasm-node: {err[-500:]}")
         return False
-    overrides = data.setdefault("overrides", {})
-    changed = False
-    if "wasm" not in str(overrides.get("rollup") or "").lower():
-        overrides["rollup"] = "npm:@rollup/wasm-node@4.60.2"
-        changed = True
-    if "wasm" not in str(overrides.get("esbuild") or "").lower():
-        overrides["esbuild"] = "npm:esbuild-wasm@0.21.5"
-        changed = True
-    if changed:
-        pkg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    swap = _run_frontend_node_script(frontend_dir, "scripts/wasm-toolchain.mjs", ["install"], timeout=180)
+    if swap.returncode != 0:
+        err = (swap.stderr or swap.stdout or "").strip()
         if log_lines is not None:
-            log_lines.append("ℹ️ CPU without AVX — applying Rollup + esbuild WASM overrides (npm install)...")
-    elif log_lines is not None:
-        log_lines.append("ℹ️ CPU without AVX — refreshing node_modules (WASM toolchain)...")
-    if not _should_run_npm_install(frontend_dir):
+            log_lines.append(f"❌ WASM toolchain swap failed: {err[-500:]}")
+        return False
+
+    _npm_ls_rollup_esbuild(frontend_dir, log_lines)
+    _log_wasm_toolchain_report(frontend_dir, log_lines)
+
+    if not _frontend_wasm_ready(frontend_dir):
         if log_lines is not None:
-            log_lines.append("ℹ️ Skipping npm install (node_modules up to date).")
-        return changed
-    return _ensure_frontend_npm_deps(frontend_dir, log_lines)
+            log_lines.append(
+                "❌ esbuild/rollup are still native binaries after WASM install — "
+                "this CPU cannot run Vite safely."
+            )
+        return False
+    if log_lines is not None:
+        log_lines.append("✓ Using WASM esbuild and Rollup (native optional packages removed).")
+    return True
+
+
+def _maybe_apply_rollup_wasm_override(
+    frontend_dir: Path,
+    log_lines: Optional[List[str]] = None,
+    *,
+    force_reinstall: bool = False,
+) -> bool:
+    """Ensure WASM Rollup/esbuild on no-AVX (same strategy as scripts/install.sh)."""
+    return _ensure_frontend_wasm_toolchain(frontend_dir, log_lines, force_reinstall=force_reinstall)
 
 
 def _prefer_serial_vite_build() -> bool:
@@ -1039,9 +1178,11 @@ def _is_retriable_build_failure(return_code: int, log_lines: Optional[List[str]]
 def _build_failure_hint(return_code: int, log_lines: Optional[List[str]]) -> str:
     if _is_segfault_build_failure(return_code, log_lines):
         return (
-            "💡 Rollup native crash (exit 139). This is not low RAM. "
-            "Retry with: cd /opt/copanel/frontend && VITE_BUILD_LOW_MEMORY=1 npm run build:appstore "
-            "or add to package.json overrides: \"rollup\": \"npm:@rollup/wasm-node@4.60.2\" then npm install."
+            "💡 Native esbuild/Rollup crash (exit 139) on a CPU without AVX. "
+            "Lockfile overrides alone leave @rollup/rollup-linux-* installed. "
+            "Run: cd /opt/copanel/frontend && npm install --no-save esbuild-wasm@0.21.5 "
+            "@rollup/wasm-node@4.60.2 && node scripts/wasm-toolchain.mjs install && "
+            "node scripts/wasm-toolchain.mjs verify"
         )
     if _is_oom_build_failure(return_code, log_lines):
         return (
@@ -1058,9 +1199,28 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
     lines: List[str] = []
     env = _frontend_build_env(serial=serial)
     env["VITE_BUILD_OUTDIR"] = str(_staging_dist_dir(frontend_dir))
+
+    build_cmd: List[str]
+    if _cpu_lacks_avx() and not is_win:
+        report = _run_frontend_node_script(frontend_dir, "scripts/wasm-toolchain.mjs", ["report"])
+        if report.stdout:
+            lines.append("Toolchain: " + report.stdout.strip().replace("\n", " | "))
+        preload = frontend_dir / "scripts" / "preload-esbuild-wasm.mjs"
+        vite_bin = frontend_dir / "node_modules" / "vite" / "bin" / "vite.js"
+        if preload.is_file() and vite_bin.is_file():
+            env["VITE_BUILD_LOW_MEMORY"] = "1"
+            node_opts = env.get("NODE_OPTIONS", "").strip()
+            import_flag = f"--import {preload.resolve()}"
+            env["NODE_OPTIONS"] = f"{node_opts} {import_flag}".strip() if node_opts else import_flag
+            build_cmd = ["node", str(vite_bin), "build"]
+        else:
+            build_cmd = _frontend_build_cmd(frontend_dir)
+    else:
+        build_cmd = _frontend_build_cmd(frontend_dir)
+
     try:
         process = subprocess.Popen(
-            _frontend_build_cmd(frontend_dir),
+            build_cmd,
             cwd=str(frontend_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1104,10 +1264,10 @@ def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
         for attempt in range(max_attempts):
             if attempt == 1:
                 if _is_segfault_build_failure(return_code, lines):
-                    if _maybe_apply_rollup_wasm_override(frontend_dir, lines):
-                        lines.append("⚠️ Rollup segfault (exit 139) — retrying with WASM Rollup...")
+                    if _maybe_apply_rollup_wasm_override(frontend_dir, lines, force_reinstall=True):
+                        lines.append("⚠️ Segfault (exit 139) — reinstalled WASM esbuild/Rollup, retrying...")
                     else:
-                        lines.append("⚠️ Rollup segfault (exit 139) — retrying with serial chunk rendering...")
+                        lines.append("⚠️ Segfault (exit 139) — retrying with serial chunk rendering...")
                 elif _is_oom_build_failure(return_code, lines):
                     lines.append("⚠️ Build OOM (exit 137) — retrying with reduced memory settings...")
                 else:
@@ -1115,8 +1275,8 @@ def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
             elif attempt == 2:
                 if not _is_retriable_build_failure(return_code, lines):
                     break
-                _maybe_apply_rollup_wasm_override(frontend_dir, lines)
-                lines.append("⚠️ Final build retry (serial + Rollup WASM)...")
+                _maybe_apply_rollup_wasm_override(frontend_dir, lines, force_reinstall=True)
+                lines.append("⚠️ Final build retry (serial + WASM toolchain reinstall)...")
 
             use_serial = serial_first or attempt > 0
             attempt_code, attempt_lines = _run_frontend_build_once(frontend_dir, serial=use_serial)
@@ -1650,15 +1810,22 @@ def _install_package_files(
         elif install_mode == "rebuild":
             if src_frontend.exists():
                 task["logs"].append(f"«{pkg_id}» — installing frontend to {dst_frontend}...")
-                _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
-                frontend_updated = True
-                if run_frontend_build:
-                    task["logs"].append(f"«{pkg_id}» — starting frontend build...")
-                    task["frontend_status"] = "building"
-                    return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
-                    for line in build_lines:
-                        task["logs"].append(line)
-                    task["frontend_status"] = "success" if return_code == 0 else "failed"
+                module_backup = _backup_frontend_module(dst_frontend)
+                try:
+                    _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
+                    frontend_updated = True
+                    if run_frontend_build:
+                        task["logs"].append(f"«{pkg_id}» — starting frontend build...")
+                        task["frontend_status"] = "building"
+                        return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                        for line in build_lines:
+                            task["logs"].append(line)
+                        task["frontend_status"] = "success" if return_code == 0 else "failed"
+                        if return_code != 0 and _cpu_lacks_avx():
+                            _restore_frontend_module(dst_frontend, module_backup, task["logs"])
+                            module_backup = None
+                finally:
+                    _discard_frontend_module_backup(module_backup)
                 else:
                     task["logs"].append(f"«{pkg_id}» — frontend copied (build deferred to batch).")
                     task["frontend_status"] = "pending"
@@ -2316,20 +2483,29 @@ class AppStoreManager:
                 elif install_mode == "rebuild" and found_frontend and found_frontend.exists():
                     BUILD_TASKS[pkg_id]["logs"].append(f"Installing frontend module to {dst_frontend}...")
                     dst_frontend.parent.mkdir(parents=True, exist_ok=True)
-                    _install_frontend_module_tree(
-                        found_frontend,
-                        dst_frontend,
-                        pkg_id,
-                        BUILD_TASKS[pkg_id]["logs"],
-                    )
-                    frontend_updated = True
-                    BUILD_TASKS[pkg_id]["logs"].append("Starting frontend build (npm run build:appstore → staging)...")
-                    BUILD_TASKS[pkg_id]["progress"] = 65
-                    BUILD_TASKS[pkg_id]["frontend_status"] = "building"
-                    return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
-                    for line in build_lines:
-                        BUILD_TASKS[pkg_id]["logs"].append(line)
-                    BUILD_TASKS[pkg_id]["frontend_status"] = "success" if return_code == 0 else "failed"
+                    module_backup = _backup_frontend_module(dst_frontend)
+                    try:
+                        _install_frontend_module_tree(
+                            found_frontend,
+                            dst_frontend,
+                            pkg_id,
+                            BUILD_TASKS[pkg_id]["logs"],
+                        )
+                        frontend_updated = True
+                        BUILD_TASKS[pkg_id]["logs"].append(
+                            "Starting frontend build (npm run build:appstore → staging)..."
+                        )
+                        BUILD_TASKS[pkg_id]["progress"] = 65
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "building"
+                        return_code, build_lines = _run_frontend_build_with_retry(frontend_cwd)
+                        for line in build_lines:
+                            BUILD_TASKS[pkg_id]["logs"].append(line)
+                        BUILD_TASKS[pkg_id]["frontend_status"] = "success" if return_code == 0 else "failed"
+                        if return_code != 0 and _cpu_lacks_avx():
+                            _restore_frontend_module(dst_frontend, module_backup, BUILD_TASKS[pkg_id]["logs"])
+                            module_backup = None
+                    finally:
+                        _discard_frontend_module_backup(module_backup)
                 else:
                     BUILD_TASKS[pkg_id]["logs"].append("ℹ️ No frontend work for this ZIP.")
                     BUILD_TASKS[pkg_id]["frontend_status"] = "skipped"
