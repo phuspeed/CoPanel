@@ -1515,6 +1515,99 @@ copanel_prune_nonessential_files() {
     \) -delete 2>/dev/null || true
 }
 
+# App Store / manually installed modules live under backend/modules and
+# frontend/src/modules but are not in the git checkout. rsync --delete and
+# git clean -fd would remove them on upgrade unless explicitly preserved.
+copanel_module_ids_not_in_source() {
+    local src="$1" dst="$2"
+    local -A extra=()
+    local mod d
+    if [[ -d "$dst/backend/modules" ]]; then
+        for d in "$dst/backend/modules"/*; do
+            [[ -d "$d" ]] || continue
+            mod="$(basename "$d")"
+            if [[ ! -d "$src/backend/modules/$mod" ]]; then
+                extra["$mod"]=1
+            fi
+        done
+    fi
+    if [[ -d "$dst/frontend/src/modules" ]]; then
+        for d in "$dst/frontend/src/modules"/*; do
+            [[ -d "$d" ]] || continue
+            mod="$(basename "$d")"
+            if [[ ! -d "$src/frontend/src/modules/$mod" ]]; then
+                extra["$mod"]=1
+            fi
+        done
+    fi
+    local ids=()
+    for mod in "${!extra[@]}"; do
+        ids+=("$mod")
+    done
+    if ((${#ids[@]} > 0)); then
+        printf '%s\n' "${ids[@]}" | sort -u
+    fi
+}
+
+copanel_git_extra_module_ids() {
+    local repo="$1"
+    [[ -d "$repo/.git" ]] || return 0
+    local -A extra=()
+    local mod listed d
+    if [[ -d "$repo/backend/modules" ]]; then
+        listed="$(git -C "$repo" ls-tree -d --name-only HEAD:backend/modules 2>/dev/null || true)"
+        for d in "$repo/backend/modules"/*; do
+            [[ -d "$d" ]] || continue
+            mod="$(basename "$d")"
+            if ! printf '%s\n' "$listed" | grep -Fxq "$mod"; then
+                extra["$mod"]=1
+            fi
+        done
+    fi
+    if [[ -d "$repo/frontend/src/modules" ]]; then
+        listed="$(git -C "$repo" ls-tree -d --name-only HEAD:frontend/src/modules 2>/dev/null || true)"
+        for d in "$repo/frontend/src/modules"/*; do
+            [[ -d "$d" ]] || continue
+            mod="$(basename "$d")"
+            if ! printf '%s\n' "$listed" | grep -Fxq "$mod"; then
+                extra["$mod"]=1
+            fi
+        done
+    fi
+    local ids=()
+    for mod in "${!extra[@]}"; do
+        ids+=("$mod")
+    done
+    if ((${#ids[@]} > 0)); then
+        printf '%s\n' "${ids[@]}" | sort -u
+    fi
+}
+
+copanel_rsync_with_module_preservation() {
+    local src="$1" dst="$2"
+    local -a rsync_args=(
+        -a --delete
+        --exclude "venv"
+        --exclude "node_modules"
+        --exclude ".git"
+        --exclude "config"
+        --exclude "backend/data"
+        --exclude "website"
+        --exclude ".github"
+        --exclude "*.md"
+        --exclude "*.MD"
+        --exclude "COMPLETION_REPORT.txt"
+    )
+    local mod
+    while IFS= read -r mod; do
+        [[ -z "$mod" ]] && continue
+        log_info "Preserving installed module not in upgrade source: ${mod}"
+        rsync_args+=( --exclude "backend/modules/${mod}/" )
+        rsync_args+=( --exclude "frontend/src/modules/${mod}/" )
+    done < <(copanel_module_ids_not_in_source "$src" "$dst")
+    rsync "${rsync_args[@]}" "$src/" "$dst/"
+}
+
 ###############################################################################
 # Step 2: Create CoPanel User & Directories
 ###############################################################################
@@ -1547,7 +1640,15 @@ setup_user_and_dirs() {
             git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
                 || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
-            git clean -fd --exclude=config || true
+            local -a git_clean_excludes=( --exclude=config )
+            local preserve_mod
+            while IFS= read -r preserve_mod; do
+                [[ -z "$preserve_mod" ]] && continue
+                log_info "Preserving installed module during git clean: ${preserve_mod}"
+                git_clean_excludes+=( --exclude "backend/modules/${preserve_mod}" )
+                git_clean_excludes+=( --exclude "frontend/src/modules/${preserve_mod}" )
+            done < <(copanel_git_extra_module_ids "$CoPanel_HOME")
+            git clean -fd "${git_clean_excludes[@]}" || true
             git pull origin "${COPANEL_GIT_BRANCH}" --force || true
             git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
             copanel_apply_sparse_checkout "$CoPanel_HOME"
@@ -1628,18 +1729,7 @@ setup_user_and_dirs() {
     if [[ "$REPO_DIR" != "$CoPanel_HOME" ]]; then
         log_info "Syncing project files from $REPO_DIR to $CoPanel_HOME..."
         if command -v rsync &> /dev/null; then
-            rsync -a --delete \
-                --exclude "venv" \
-                --exclude "node_modules" \
-                --exclude ".git" \
-                --exclude "config" \
-                --exclude "backend/data" \
-                --exclude "website" \
-                --exclude ".github" \
-                --exclude "*.md" \
-                --exclude "*.MD" \
-                --exclude "COMPLETION_REPORT.txt" \
-                "$REPO_DIR/" "$CoPanel_HOME/"
+            copanel_rsync_with_module_preservation "$REPO_DIR" "$CoPanel_HOME"
         else
             cp -an "$REPO_DIR"/. "$CoPanel_HOME"/
         fi

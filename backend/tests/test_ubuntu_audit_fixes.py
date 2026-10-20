@@ -75,7 +75,25 @@ class FirewallValidationTests(unittest.TestCase):
         parsed = parse_ufw_rule_line("8686/tcp                     ALLOW       Anywhere")
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["port"], "8686/tcp")
+        self.assertEqual(parsed["from"], "Anywhere")
         self.assertEqual(parsed["comment"], "")
+
+    def test_ufw_parsing_ipv4_from_and_hash_comment(self):
+        line = "80/tcp                     ALLOW IN    Anywhere                   # rtest2"
+        parsed = parse_ufw_rule_line(line)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["port"], "80/tcp")
+        self.assertEqual(parsed["action"], "ALLOW")
+        self.assertEqual(parsed["from"], "Anywhere")
+        self.assertEqual(parsed["comment"], "rtest2")
+
+    def test_ufw_parsing_ipv6_rule_line(self):
+        line = "8686/tcp (v6)              ALLOW IN    Anywhere (v6)              # Panel UI"
+        parsed = parse_ufw_rule_line(line)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["port"], "8686/tcp (v6)")
+        self.assertEqual(parsed["from"], "Anywhere (v6)")
+        self.assertEqual(parsed["comment"], "Panel UI")
 
     def test_ufw_comment_validation(self):
         self.assertEqual(validate_ufw_comment("  Web Traffic  "), "Web Traffic")
