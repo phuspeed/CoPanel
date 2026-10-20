@@ -26,7 +26,7 @@ export interface Package {
   system_packages?: string[];
   pip_packages?: string[];
   /** rebuild | extension | none — from packages.json catalog */
-  frontend_install?: 'rebuild' | 'extension' | 'none';
+  frontend_install?: 'rebuild' | 'extension' | 'prebuilt' | 'none';
   requires_copanel_restart?: boolean;
   changelog_en?: string;
   changelog_vi?: string;

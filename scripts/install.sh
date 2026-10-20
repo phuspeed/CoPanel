@@ -2006,6 +2006,57 @@ copanel_download_prebuilt_frontend() {
     return 0
 }
 
+copanel_verify_prebuilt_panel_dist() {
+    local dist_dir="${1:-dist}"
+    local script=""
+    if [[ -f "$CoPanel_HOME/frontend/scripts/verify-prebuilt-dist.mjs" ]]; then
+        script="$CoPanel_HOME/frontend/scripts/verify-prebuilt-dist.mjs"
+    elif [[ -f ./scripts/verify-prebuilt-dist.mjs ]]; then
+        script="./scripts/verify-prebuilt-dist.mjs"
+    fi
+    [[ -n "$script" ]] || return 0
+    if ! node "$script" "$dist_dir"; then
+        log_warning "Prebuilt panel dist is missing import map or vendor chunks — AppStore extensions may not load."
+        return 1
+    fi
+    return 0
+}
+
+copanel_noavx_register_extensions() {
+    # Restore extension artifacts and register preserved App Store modules' prebuilt bundles.
+    local frontend="${CoPanel_HOME}/frontend"
+    local py="${CoPanel_HOME}/backend/venv/bin/python"
+    [[ -d "$frontend/dist" ]] || return 0
+    if [[ ! -x "$py" ]]; then
+        py="$(command -v python3 2>/dev/null || true)"
+    fi
+    [[ -n "$py" ]] || return 0
+    local ids_json="[]"
+    if copanel_frontend_has_extra_modules; then
+        ids_json="$(copanel_frontend_preserved_module_ids | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')"
+        log_info "Registering prebuilt UI for preserved modules (no Vite): $(copanel_frontend_preserved_module_ids | xargs)"
+    else
+        log_info "Restoring App Store extension bundles into prebuilt dist..."
+    fi
+    if ! COPANEL_HOME="$CoPanel_HOME" PRESERVED_MODULE_IDS="$ids_json" "$py" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+home = Path(os.environ["CoPanel_HOME"])
+sys.path.insert(0, str(home / "backend"))
+from modules.appstore_manager.logic import register_preserved_prebuilt_extensions
+
+ids = json.loads(os.environ.get("PRESERVED_MODULE_IDS", "[]"))
+logs: list[str] = []
+register_preserved_prebuilt_extensions(home / "frontend", ids, logs)
+for line in logs:
+    print(line, flush=True)
+PY
+    then
+        log_warning "Could not register App Store extensions after prebuilt frontend install."
+    fi
+}
+
 copanel_use_prebuilt_frontend() {
     # CPUs without AVX segfault inside esbuild, both the native Go binary and
     # the WASM build running under Node. The panel that worked before the
@@ -2034,6 +2085,7 @@ copanel_use_prebuilt_frontend() {
         log_error "Prebuilt frontend archive did not contain dist/index.html"
         return 1
     fi
+    copanel_verify_prebuilt_panel_dist "$(pwd)/dist" || true
     log_success "Prebuilt frontend ready"
 }
 
@@ -2260,6 +2312,7 @@ setup_frontend() {
         cd "$CoPanel_HOME/frontend"
 
         if ! copanel_cpu_has_avx && copanel_use_prebuilt_frontend; then
+            copanel_noavx_register_extensions
             cd - >/dev/null || true
             return 0
         fi
