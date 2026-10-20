@@ -1845,68 +1845,18 @@ copanel_maybe_apply_rollup_wasm_override() {
 }
 
 copanel_install_wasm_toolchain() {
-    # npm's lockfile keeps native esbuild and rollup even after an override
-    # is written into package.json. Put the WASM builds in their place and
-    # delete the native binaries so Node cannot load them.
-    if [[ -d node_modules/esbuild-wasm ]]; then
-        rm -rf node_modules/esbuild
-        mv node_modules/esbuild-wasm node_modules/esbuild
+    # npm's lockfile keeps native esbuild and rollup even when package.json overrides
+    # only pin a version. Swap WASM builds onto disk (see frontend/scripts/wasm-toolchain.mjs).
+    if [[ ! -f ./scripts/wasm-toolchain.mjs ]]; then
+        log_error "Missing frontend/scripts/wasm-toolchain.mjs"
+        return 1
     fi
-    if [[ -d node_modules/@rollup/wasm-node ]]; then
-        rm -rf node_modules/rollup
-        mv node_modules/@rollup/wasm-node node_modules/rollup
-    fi
-    rm -rf node_modules/@esbuild
-    if [[ -d node_modules/@rollup ]]; then
-        find node_modules/@rollup -mindepth 1 -maxdepth 1 -type d -name 'rollup-*' -exec rm -rf {} +
-    fi
-    local dest
-    if [[ -d node_modules/esbuild ]]; then
-        while IFS= read -r dest; do
-            [[ -n "$dest" ]] || continue
-            rm -rf "$dest"
-            mkdir -p "$(dirname "$dest")"
-            cp -a node_modules/esbuild "$dest"
-        done < <(find node_modules -type d -name esbuild \
-            -not -path 'node_modules/esbuild' \
-            -not -path 'node_modules/esbuild/*')
-    fi
-    if [[ -d node_modules/rollup ]]; then
-        while IFS= read -r dest; do
-            [[ -n "$dest" ]] || continue
-            rm -rf "$dest"
-            mkdir -p "$(dirname "$dest")"
-            cp -a node_modules/rollup "$dest"
-        done < <(find node_modules -type d -name rollup \
-            -not -path 'node_modules/rollup' \
-            -not -path 'node_modules/rollup/*' \
-            -not -path 'node_modules/@rollup/*')
-    fi
+    node ./scripts/wasm-toolchain.mjs install
 }
 
 copanel_frontend_wasm_ready() {
-    node --input-type=module <<'EOF'
-import { createRequire } from 'node:module'
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-const require = createRequire(`${process.cwd()}/package.json`)
-const esPkgPath = require.resolve('esbuild/package.json')
-const esPkg = require(esPkgPath)
-const esDir = dirname(esPkgPath)
-if (!String(esPkg.name || '').includes('wasm') || !existsSync(join(esDir, 'esbuild.wasm'))) {
-  console.error(`esbuild is still native (${esPkg.name || 'unknown'})`)
-  process.exit(1)
-}
-const rollPkg = require(require.resolve('rollup/package.json'))
-if (!String(rollPkg.name || '').includes('wasm')) {
-  console.error(`rollup is still native (${rollPkg.name || 'unknown'})`)
-  process.exit(1)
-}
-if (existsSync('node_modules/@esbuild')) {
-  console.error('native @esbuild binaries are still installed')
-  process.exit(1)
-}
-EOF
+    [[ -f ./scripts/wasm-toolchain.mjs ]] || return 1
+    node ./scripts/wasm-toolchain.mjs verify >/dev/null
 }
 
 copanel_download_prebuilt_frontend() {
@@ -1981,12 +1931,14 @@ copanel_frontend_npm_install_wasm() {
         restore_lock
         return 1
     fi
-    copanel_install_wasm_toolchain
+    copanel_install_wasm_toolchain || { restore_lock; return 1; }
     restore_lock
     if ! copanel_frontend_wasm_ready; then
         log_error "esbuild/rollup are still native binaries. A CPU without AVX cannot run that frontend build."
         return 1
     fi
+    log_info "npm ls rollup esbuild (post-WASM swap):"
+    npm ls rollup esbuild esbuild-wasm @rollup/wasm-node --depth=1 2>/dev/null | sed 's/^/  /' || true
     log_success "Using WASM esbuild and Rollup"
 }
 
