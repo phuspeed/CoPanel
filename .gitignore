@@ -35,6 +35,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Generated frontend typecheck config (App Store module excludes)
+frontend/tsconfig.build.json
+
 # Virtual environments
 venv/
 ENV/

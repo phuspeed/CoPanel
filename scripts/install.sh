@@ -2056,20 +2056,117 @@ copanel_run_vite_build_noavx() {
     if grep -qiE 'segmentation fault|segfault|core dumped' "$log"; then
         code=139
     fi
-    if [[ ! -f dist/index.html ]]; then
+    local staging_index
+    staging_index="$(copanel_frontend_staging_dir)/index.html"
+    if [[ ! -f "$staging_index" ]]; then
         code=1
     fi
     rm -f "$log"
     return "$code"
 }
 
+copanel_frontend_staging_dir() {
+    printf '%s' "$CoPanel_HOME/frontend/.build-staging"
+}
+
+copanel_frontend_has_extra_modules() {
+    copanel_git_extra_module_ids "$CoPanel_HOME" | grep -q .
+}
+
+copanel_prepare_frontend_tsc() {
+    local extra=""
+    if copanel_frontend_has_extra_modules; then
+        extra="$(copanel_git_extra_module_ids "$CoPanel_HOME" | tr '\n' ' ')"
+        export COPANEL_EXTRA_FRONTEND_MODULES="$extra"
+        log_info "Excluding App Store frontend modules from tsc: $(echo "$extra" | xargs)"
+    fi
+    if [[ -f ./scripts/sync-tsc-excludes.mjs ]]; then
+        node ./scripts/sync-tsc-excludes.mjs || return 1
+    fi
+    return 0
+}
+
+copanel_promote_frontend_staging() {
+    local frontend="$CoPanel_HOME/frontend"
+    local staging prev dist
+    staging="$(copanel_frontend_staging_dir)"
+    if [[ ! -f "$staging/index.html" ]]; then
+        return 1
+    fi
+    dist="$frontend/dist"
+    prev="$frontend/.dist-prev"
+    rm -rf "$prev"
+    if [[ -d "$dist" ]]; then
+        mv "$dist" "$prev"
+    fi
+    mv "$staging" "$dist"
+    rm -rf "$prev"
+    return 0
+}
+
+copanel_finalize_frontend_build() {
+    local code="$1"
+    if [[ "$code" -eq 0 ]]; then
+        if copanel_promote_frontend_staging; then
+            return 0
+        fi
+        log_error "Build succeeded but staging dist is missing index.html"
+        return 1
+    fi
+    rm -rf "$(copanel_frontend_staging_dir)"
+    log_warning "Frontend build failed — previous dist/ (if any) was left unchanged."
+    return "$code"
+}
+
+copanel_frontend_build_env() {
+    export VITE_BUILD_OUTDIR="$(copanel_frontend_staging_dir)"
+    rm -rf "$VITE_BUILD_OUTDIR"
+    mkdir -p "$VITE_BUILD_OUTDIR"
+}
+
+copanel_run_standard_frontend_build() {
+    local code=0
+    copanel_frontend_build_env
+    copanel_prepare_frontend_tsc || return 1
+    set +e
+    if copanel_frontend_has_extra_modules; then
+        log_info "Using vite-only build (preserved App Store modules; tsc skipped)."
+        npm run build:appstore
+    else
+        npm run build
+    fi
+    code=$?
+    set -e
+    copanel_finalize_frontend_build "$code"
+    return $?
+}
+
+copanel_ensure_panel_services_running() {
+    if ! command_exists systemctl; then
+        return 0
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable copanel.service >/dev/null 2>&1 || true
+    if ! systemctl restart copanel.service >/dev/null 2>&1; then
+        systemctl start copanel.service >/dev/null 2>&1 \
+            || log_warning "Could not restart copanel.service — check: journalctl -u copanel -n 50"
+    fi
+    systemctl enable nginx >/dev/null 2>&1 || true
+    if ! systemctl restart nginx >/dev/null 2>&1; then
+        systemctl start nginx >/dev/null 2>&1 \
+            || log_warning "Could not restart nginx — check: nginx -t && journalctl -u nginx -n 30"
+    fi
+}
+
 copanel_frontend_build_noavx() {
     local attempt
+    copanel_frontend_build_env
     for attempt in 1 2 3; do
-        rm -rf dist node_modules/.vite
+        rm -rf node_modules/.vite
         copanel_run_vite_build_noavx
         local code=$?
         if [[ "$code" -eq 0 ]]; then
+            copanel_finalize_frontend_build 0
             return 0
         fi
         if grep -qi avx /proc/cpuinfo 2>/dev/null; then
@@ -2086,6 +2183,7 @@ copanel_frontend_build_noavx() {
             sleep 2
         fi
     done
+    copanel_finalize_frontend_build 1
     return 1
 }
 
@@ -2121,13 +2219,21 @@ setup_frontend() {
         if ! copanel_cpu_has_avx; then
             if ! copanel_frontend_build_noavx; then
                 log_warning "build:appstore failed — last resort: vite only (low-memory, WASM deps)..."
-                rm -rf dist node_modules/.vite
+                copanel_frontend_build_env
+                rm -rf node_modules/.vite
                 copanel_frontend_npm_install_wasm
-                copanel_run_vite_build_noavx || return 1
+                if ! copanel_run_vite_build_noavx; then
+                    copanel_finalize_frontend_build 1
+                    cd - >/dev/null || true
+                    return 1
+                fi
+                copanel_finalize_frontend_build 0 || {
+                    cd - >/dev/null || true
+                    return 1
+                }
             fi
         else
-            rm -rf dist
-            if ! npm run build; then
+            if ! copanel_run_standard_frontend_build; then
                 log_error "Frontend build failed. On a 1 GB VPS, confirm swap is active (swapon --show) and re-run install.sh."
                 cd - >/dev/null || true
                 return 1
@@ -2607,7 +2713,11 @@ EOF
     setup_backend
 
     log_step "Step 4: Build & Provision Frontend"
-    setup_frontend
+    local frontend_build_failed=0
+    if ! setup_frontend; then
+        frontend_build_failed=1
+        log_warning "Frontend build failed. Keeping the previous dist/ when present; continuing to restart services."
+    fi
     copanel_write_ui_track
 
     log_step "Step 5: Configure Nginx & Firewall"
@@ -2621,6 +2731,13 @@ EOF
 
     log_step "Step 8: System Readiness Checklist"
     verify_installation
+
+    if [[ "$frontend_build_failed" -eq 1 ]]; then
+        copanel_ensure_panel_services_running
+        echo ""
+        log_error "Install finished with frontend build errors. copanel and nginx were restarted; the API should respond. Fix build errors and re-run install.sh or panel update."
+        exit 1
+    fi
     
     echo ""
     # Re-read after clone/rsync so summary matches on-disk VERSION / git.
