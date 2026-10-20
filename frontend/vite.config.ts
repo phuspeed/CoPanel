@@ -4,6 +4,9 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 
 const lowMemory = process.env.VITE_BUILD_LOW_MEMORY === '1'
+/** CPUs without AVX: WASM esbuild can SIGPIPE during minify/render — avoid esbuild minify. */
+const noAvx = process.env.COPANEL_NOAVX === '1'
+const conservativeBuild = lowMemory || noAvx
 const outDir = process.env.VITE_BUILD_OUTDIR || 'dist'
 
 const VENDOR_CHUNK_NAMES = new Set([
@@ -104,15 +107,15 @@ export default defineConfig({
   },
   build: {
     outDir,
-    target: lowMemory ? 'es2020' : 'modules',
-    minify: lowMemory ? false : 'esbuild',
-    cssMinify: !lowMemory,
-    sourcemap: !lowMemory,
-    reportCompressedSize: !lowMemory,
-    cssCodeSplit: !lowMemory,
-    modulePreload: !lowMemory,
+    target: conservativeBuild ? 'es2020' : 'modules',
+    minify: conservativeBuild ? false : 'esbuild',
+    cssMinify: !conservativeBuild,
+    sourcemap: !conservativeBuild,
+    reportCompressedSize: !conservativeBuild,
+    cssCodeSplit: !conservativeBuild,
+    modulePreload: !conservativeBuild,
     rollupOptions: {
-      maxParallelFileOps: lowMemory ? 1 : undefined,
+      maxParallelFileOps: conservativeBuild ? 1 : undefined,
       output: {
         // Always emit named vendor chunks so AppStore extension ESM can resolve
         // react / lucide via import map (including no-AVX / low-memory builds).
@@ -124,13 +127,13 @@ export default defineConfig({
       },
     },
   },
-  esbuild: lowMemory
+  esbuild: conservativeBuild
     ? {
         target: 'es2020',
         legalComments: 'none',
       }
     : undefined,
-  optimizeDeps: lowMemory
+  optimizeDeps: conservativeBuild
     ? {
         esbuildOptions: { target: 'es2020' },
       }

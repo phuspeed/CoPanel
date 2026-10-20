@@ -1826,6 +1826,60 @@ ensure_panel_secrets() {
 }
 
 ###############################################################################
+# Admin password summary (never echo an existing password in the installer log)
+###############################################################################
+
+copanel_admin_password_file() {
+    printf '%s' "${CoPanel_HOME}/config/admin_password.txt"
+}
+
+copanel_mark_admin_password_before_install() {
+    if [[ -s "$(copanel_admin_password_file)" ]]; then
+        COPANEL_ADMIN_PASSWORD_BEFORE_INSTALL=1
+    else
+        COPANEL_ADMIN_PASSWORD_BEFORE_INSTALL=0
+    fi
+}
+
+copanel_note_admin_password_after_install() {
+    local pwfile
+    pwfile="$(copanel_admin_password_file)"
+    if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+        COPANEL_ADMIN_PASSWORD_SUMMARY="set via ADMIN_PASSWORD (not shown)"
+        return 0
+    fi
+    if [[ "${COPANEL_ADMIN_PASSWORD_BEFORE_INSTALL:-0}" == "0" && -s "$pwfile" ]]; then
+        chmod 600 "$pwfile" 2>/dev/null || true
+        COPANEL_ADMIN_PASSWORD_SUMMARY="new — read ${pwfile} (root only, mode 0600)"
+        return 0
+    fi
+    if [[ -s "$pwfile" ]]; then
+        COPANEL_ADMIN_PASSWORD_SUMMARY="unchanged — ${pwfile}"
+    else
+        COPANEL_ADMIN_PASSWORD_SUMMARY="unchanged"
+    fi
+}
+
+copanel_admin_password_summary_line() {
+    printf '%s' "${COPANEL_ADMIN_PASSWORD_SUMMARY:-unchanged}"
+}
+
+copanel_wait_for_health_url() {
+    local url="$1"
+    local max_wait="${2:-60}"
+    local interval="${3:-2}"
+    local elapsed=0
+    while [[ "$elapsed" -lt "$max_wait" ]]; do
+        if curl -sf --max-time 5 "$url" 2>/dev/null | grep -q "healthy"; then
+            return 0
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+    return 1
+}
+
+###############################################################################
 # Step 3: Backend Setup
 ###############################################################################
 
@@ -1868,12 +1922,14 @@ setup_backend() {
 
     log_info "Initializing CoPanel database..."
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    copanel_mark_admin_password_before_install
     if ! copanel_run_as "$CoPanel_USER" env "ADMIN_PASSWORD=${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
         log_error "Database initialization failed (core.user_model.init_db)."
         deactivate 2>/dev/null || true
         exit 1
     fi
     log_success "Database initialized"
+    copanel_note_admin_password_after_install
     
     # Final ownership check
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
@@ -2123,14 +2179,43 @@ copanel_frontend_npm_install_wasm() {
     log_success "Using WASM esbuild and Rollup"
 }
 
-copanel_run_vite_build_noavx() {
-    local log heap_default
-    log="$(mktemp)"
-    local code=0
-    heap_default=2048
-    if copanel_is_low_memory; then
-        heap_default="${COPANEL_NODE_HEAP_MB:-1536}"
+copanel_noavx_node_heap_mb() {
+    if [[ -n "${COPANEL_NODE_HEAP_MB:-}" && "${COPANEL_NODE_HEAP_MB}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${COPANEL_NODE_HEAP_MB}"
+        return 0
     fi
+    local total_mb heap
+    total_mb="$(copanel_mem_total_mb)"
+    if [[ "$total_mb" =~ ^[0-9]+$ && "$total_mb" -gt 0 ]]; then
+        heap=$(( total_mb * 2 / 5 ))
+        [[ "$heap" -lt 1536 ]] && heap=1536
+        [[ "$heap" -gt 4096 ]] && heap=4096
+        printf '%s' "$heap"
+        return 0
+    fi
+    printf '3072'
+}
+
+copanel_noavx_vite_env() {
+    local heap
+    heap="$(copanel_noavx_node_heap_mb)"
+    export COPANEL_NOAVX=1
+    export VITE_BUILD_LOW_MEMORY=1
+    export NODE_OPTIONS="--max-old-space-size=${heap}"
+}
+
+copanel_noavx_build_log_is_retriable() {
+    local log="$1" code="${2:-1}"
+    if [[ "$code" -eq 139 || "$code" -eq 245 ]]; then
+        return 0
+    fi
+    grep -qiE 'segmentation fault|segfault|core dumped|too many writes on closed pipe|os\.sigpipe|closed pipe|sigpipe' "$log"
+}
+
+copanel_run_vite_build_noavx_once() {
+    local log heap code=0 staging_index
+    log="$(mktemp)"
+    heap="$(copanel_noavx_node_heap_mb)"
     set +e
     if [[ ! -f ./scripts/preload-esbuild-wasm.mjs ]]; then
         log_error "Missing frontend/scripts/preload-esbuild-wasm.mjs"
@@ -2138,22 +2223,69 @@ copanel_run_vite_build_noavx() {
         set -e
         return 1
     fi
-    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=${heap_default}}" \
-        VITE_BUILD_LOW_MEMORY=1 \
+    copanel_noavx_vite_env
+    local node_opts="${NODE_OPTIONS}"
+    node_opts="${node_opts} --import ./scripts/preload-esbuild-wasm.mjs"
+    NODE_OPTIONS="$node_opts" \
         node --import ./scripts/preload-esbuild-wasm.mjs ./node_modules/vite/bin/vite.js build \
         2>&1 | tee "$log"
     code="${PIPESTATUS[0]}"
     set -e
-    if grep -qiE 'segmentation fault|segfault|core dumped' "$log"; then
-        code=139
+    if copanel_noavx_build_log_is_retriable "$log" "$code"; then
+        if [[ "$code" -eq 0 ]]; then
+            code=139
+        fi
     fi
-    local staging_index
     staging_index="$(copanel_frontend_staging_dir)/index.html"
     if [[ ! -f "$staging_index" ]]; then
         code=1
     fi
     rm -f "$log"
     return "$code"
+}
+
+copanel_run_vite_build_noavx() {
+    local attempt code=1
+    for attempt in 1 2; do
+        code=0
+        copanel_run_vite_build_noavx_once || code=$?
+        if [[ "$code" -eq 0 ]]; then
+            return 0
+        fi
+        if [[ "$attempt" -eq 1 ]]; then
+            log_warning "no-AVX Vite build failed (exit ${code}); retrying with conservative WASM settings..."
+            rm -rf node_modules/.vite
+            sleep 2
+        fi
+    done
+    return "$code"
+}
+
+copanel_noavx_merge_prebuilt_with_extra_modules() {
+    if copanel_cpu_has_avx; then
+        return 0
+    fi
+    if ! copanel_frontend_has_extra_modules; then
+        return 0
+    fi
+    local modules
+    modules="$(copanel_frontend_preserved_module_ids | tr '\n' ' ' | xargs)"
+    log_info "Rebuilding frontend to include preserved App Store modules: ${modules}"
+    copanel_ensure_modern_npm
+    copanel_maybe_apply_rollup_wasm_override "$CoPanel_HOME/frontend/package.json"
+    if ! copanel_frontend_npm_install_wasm; then
+        log_warning "WASM toolchain setup failed — keeping prebuilt dist (missing UI for: ${modules})"
+        return 0
+    fi
+    copanel_frontend_build_env
+    copanel_prepare_frontend_tsc || true
+    rm -rf node_modules/.vite
+    if copanel_run_vite_build_noavx && copanel_finalize_frontend_build 0; then
+        log_success "Frontend rebuilt with App Store modules"
+        return 0
+    fi
+    log_warning "App Store frontend rebuild failed — keeping prebuilt dist (missing UI for: ${modules})"
+    return 0
 }
 
 copanel_frontend_staging_dir() {
@@ -2279,6 +2411,7 @@ copanel_ensure_panel_services_running() {
 copanel_frontend_build_noavx() {
     local attempt
     copanel_frontend_build_env
+    copanel_noavx_vite_env
     for attempt in 1 2 3; do
         rm -rf node_modules/.vite
         copanel_run_vite_build_noavx
@@ -2313,6 +2446,7 @@ setup_frontend() {
 
         if ! copanel_cpu_has_avx && copanel_use_prebuilt_frontend; then
             copanel_noavx_register_extensions
+            copanel_noavx_merge_prebuilt_with_extra_modules
             cd - >/dev/null || true
             return 0
         fi
@@ -2702,18 +2836,15 @@ start_services() {
 ###############################################################################
 
 verify_installation() {
-    log_info "Verifying installation..."
+    log_info "Verifying installation (retrying up to ~60s for backend startup)..."
     
-    sleep 2
-    
-    # Check backend health on localhost.
-    if curl -sf --max-time 5 http://127.0.0.1:8000/health | grep -q "healthy"; then
+    if copanel_wait_for_health_url "http://127.0.0.1:8000/health" 60 2; then
         log_success "Backend health check passed"
     else
         log_warning "Could not verify backend health"
     fi
     
-    if curl -sf --max-time 5 "http://127.0.0.1:${NGINX_PORT}/health" | grep -q "healthy"; then
+    if copanel_wait_for_health_url "http://127.0.0.1:${NGINX_PORT}/health" 60 2; then
         log_success "Nginx reverse proxy working"
     else
         log_warning "Could not verify Nginx proxy"
@@ -2725,10 +2856,8 @@ verify_installation() {
 ###############################################################################
 
 print_summary() {
-    ADMIN_PWD="admin (or previously generated)"
-    if [[ -f "${CoPanel_HOME}/config/admin_password.txt" ]]; then
-        ADMIN_PWD=$(cat "${CoPanel_HOME}/config/admin_password.txt")
-    fi
+    local admin_pw_line
+    admin_pw_line="$(copanel_admin_password_summary_line)"
     LOWMEM_SUMMARY=""
     if [[ "${COPANEL_LOWMEM_ACTIVE:-}" == "1" ]]; then
         LOWMEM_SUMMARY="🧠 Low-memory mode:  ${COPANEL_SWAP_SIZE_MB:-2048} MB swap, Node heap ${COPANEL_NODE_HEAP_MB:-1536} MB"
@@ -2752,7 +2881,7 @@ ${BLUE}Installation Summary:${NC}
 
 📦 Panel version:    ${GREEN}v${COPANEL_VER:-?}${NC}
 🖥  Interface:        ${GREEN}$(copanel_ui_track_label)${NC} ${YELLOW}(toggle anytime in panel)${NC}
-📍 Admin Password:   ${GREEN}${ADMIN_PWD}${NC}
+🔐 Admin password:    ${GREEN}${admin_pw_line}${NC}
 📍 Location:          ${CoPanel_HOME}
 👤 Service User:      ${CoPanel_USER}
 ${access_block}
