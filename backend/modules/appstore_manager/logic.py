@@ -262,7 +262,7 @@ def _finalize_module_install(
     global BUILD_TASKS
 
     task_id = task_key or pkg_id
-    extension_mode = frontend_install_mode == "extension"
+    extension_mode = frontend_install_mode in ("extension", "prebuilt")
 
     if frontend_updated:
         if extension_mode:
@@ -773,7 +773,11 @@ def _write_extensions_index(frontend_dir: Path) -> None:
 
 def _extension_runtime_ready(frontend_dir: Path) -> bool:
     """True when dist has an import map so /extensions/*/module.js can resolve react."""
-    dist = frontend_dir / "dist"
+    return _prebuilt_panel_dist_ready(frontend_dir / "dist")
+
+
+def _prebuilt_panel_dist_ready(dist: Path) -> bool:
+    """True when a panel dist/ has import map + React vendor chunks for runtime extensions."""
     index = dist / "index.html"
     if not index.is_file():
         return False
@@ -781,11 +785,57 @@ def _extension_runtime_ready(frontend_dir: Path) -> bool:
         html = index.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
-    if 'type="importmap"' in html or (dist / "importmap.json").is_file():
-        assets = dist / "assets"
-        if assets.is_dir() and any(assets.glob("react-vendor*.js")):
-            return True
-    return False
+    has_map = 'type="importmap"' in html or (dist / "importmap.json").is_file()
+    if not has_map:
+        return False
+    assets = dist / "assets"
+    return assets.is_dir() and any(assets.glob("react-vendor*.js"))
+
+
+def _is_prebuilt_extension_bundle_dir(bundle_dir: Path) -> bool:
+    if not bundle_dir.is_dir():
+        return False
+    if not (bundle_dir / "manifest.json").is_file():
+        return False
+    return (bundle_dir / "module.js").is_file() or (bundle_dir / "index.js").is_file()
+
+
+def _find_package_prebuilt_bundle_dir(extracted_dir: Path) -> Optional[Path]:
+    """AppStore ZIP layout: frontend/dist/{manifest.json,module.js|index.js}."""
+    dist = extracted_dir / "frontend" / "dist"
+    if _is_prebuilt_extension_bundle_dir(dist):
+        return dist
+    return None
+
+
+def _find_module_tree_prebuilt_dir(module_dir: Path) -> Optional[Path]:
+    """Prebuilt bundle kept next to preserved module sources (install/upgrade)."""
+    for name in ("dist", "prebuilt"):
+        candidate = module_dir / name
+        if _is_prebuilt_extension_bundle_dir(candidate):
+            return candidate
+    return None
+
+
+NO_AVX_REBUILD_ERROR = (
+    "This CPU cannot run Vite (no AVX). The package must ship a prebuilt frontend bundle "
+    "(frontend/dist/manifest.json + module.js or index.js) with frontend_install=prebuilt, "
+    "or an extension/ folder with frontend_install=extension. Local npm build was not started."
+)
+
+
+def _coerce_frontend_install_for_cpu(mode: str, extracted_dir: Path) -> str:
+    """On no-AVX hosts, never use rebuild — prefer prebuilt or fail clearly."""
+    if not _cpu_lacks_avx():
+        return mode
+    if mode in ("extension", "none", "prebuilt"):
+        return mode
+    prebuilt = _find_package_prebuilt_bundle_dir(extracted_dir)
+    if prebuilt is not None:
+        return "prebuilt"
+    if mode == "rebuild" and (extracted_dir / "extension" / "manifest.json").is_file():
+        return "extension"
+    raise ValueError(NO_AVX_REBUILD_ERROR)
 
 
 def _warn_extension_importmap(frontend_dir: Path, log_lines: Optional[List[str]] = None) -> None:
@@ -800,6 +850,17 @@ def _warn_extension_importmap(frontend_dir: Path, log_lines: Optional[List[str]]
         log_lines.append(msg)
 
 
+def _stage_extension_bundle_dir(src_bundle: Path) -> Path:
+    """Copy bundle to a temp dir, normalizing index.js → module.js for the runtime loader."""
+    staging = Path(tempfile.mkdtemp(prefix="copanel-ext-bundle-"))
+    shutil.copytree(src_bundle, staging, dirs_exist_ok=True)
+    module_js = staging / "module.js"
+    index_js = staging / "index.js"
+    if not module_js.is_file() and index_js.is_file():
+        shutil.copy2(index_js, module_js)
+    return staging
+
+
 def _install_frontend_extension(
     pkg_id: str,
     src_extension: Path,
@@ -807,20 +868,23 @@ def _install_frontend_extension(
     log_lines: Optional[List[str]] = None,
 ) -> None:
     manifest_src = src_extension / "manifest.json"
-    module_src = src_extension / "module.js"
     if not manifest_src.is_file():
         raise ValueError(f"extension/manifest.json missing for {pkg_id}")
-    if not module_src.is_file():
-        raise ValueError(f"extension/module.js missing for {pkg_id}")
+    if not (src_extension / "module.js").is_file() and not (src_extension / "index.js").is_file():
+        raise ValueError(f"extension/module.js (or index.js) missing for {pkg_id}")
 
-    dest = frontend_dir / "dist" / "extensions" / pkg_id
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src_extension, dest, dirs_exist_ok=True)
+    staged = _stage_extension_bundle_dir(src_extension)
+    try:
+        dest = frontend_dir / "dist" / "extensions" / pkg_id
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(staged, dest, dirs_exist_ok=True)
+    finally:
+        shutil.rmtree(staged, ignore_errors=True)
     # Durable cache so later npm rebuilds (which replace dist/) keep extensions loadable.
     try:
-        _cache_extension_artifact(pkg_id, src_extension)
+        _cache_extension_artifact(pkg_id, dest)
     except Exception:
         pass
 
@@ -839,6 +903,52 @@ def _install_frontend_extension(
     _write_extensions_index(frontend_dir)
     if log_lines is not None:
         log_lines.append(f"✓ Extension installed to dist/extensions/{pkg_id}/ (no npm build).")
+
+
+def _install_frontend_prebuilt(
+    pkg_id: str,
+    src_bundle: Path,
+    frontend_dir: Path,
+    log_lines: Optional[List[str]] = None,
+) -> None:
+    """Install AppStore frontend/dist prebuilt ESM bundle as a runtime extension."""
+    if not _is_prebuilt_extension_bundle_dir(src_bundle):
+        raise ValueError(
+            f"frontend/dist must contain manifest.json and module.js (or index.js) for {pkg_id}"
+        )
+    _install_frontend_extension(pkg_id, src_bundle, frontend_dir, log_lines)
+    if log_lines is not None:
+        log_lines.append(f"✓ Prebuilt frontend bundle registered for «{pkg_id}» (no npm build).")
+
+
+def register_preserved_prebuilt_extensions(
+    frontend_dir: Path,
+    preserved_module_ids: List[str],
+    log_lines: Optional[List[str]] = None,
+) -> int:
+    """no-AVX install: restore cached extensions and register preserved modules' prebuilt dirs."""
+    registered = _restore_extensions_into_dist(frontend_dir, log_lines)
+    modules_root = frontend_dir / "src" / "modules"
+    registry = _load_extensions_registry()
+    for pkg_id in preserved_module_ids:
+        if not pkg_id or pkg_id in registry:
+            continue
+        module_dir = modules_root / pkg_id
+        bundle_dir = _find_module_tree_prebuilt_dir(module_dir)
+        if bundle_dir is None:
+            if log_lines is not None:
+                log_lines.append(
+                    f"⚠️ Preserved module «{pkg_id}» has no frontend/dist or frontend/prebuilt bundle — "
+                    "reinstall from App Store with frontend_install=prebuilt on this CPU."
+                )
+            continue
+        try:
+            _install_frontend_prebuilt(pkg_id, bundle_dir, frontend_dir, log_lines)
+            registered += 1
+        except Exception as exc:
+            if log_lines is not None:
+                log_lines.append(f"⚠️ Could not register prebuilt UI for «{pkg_id}»: {exc}")
+    return registered
 
 
 def _remove_extension_install(pkg_id: str, frontend_dir: Path, log_lines: Optional[List[str]] = None) -> bool:
@@ -871,6 +981,8 @@ def _normalize_frontend_install(
 ) -> str:
     mode = (frontend_install or "").strip().lower()
     if not mode and auto_detect:
+        if _find_package_prebuilt_bundle_dir(extracted_dir) is not None:
+            return "prebuilt"
         if (extracted_dir / "extension" / "manifest.json").is_file():
             return "extension"
         if (extracted_dir / "frontend").is_dir():
@@ -878,11 +990,15 @@ def _normalize_frontend_install(
         return "none"
     if not mode:
         mode = "rebuild"
-    if mode not in ("rebuild", "extension", "none"):
+    if mode not in ("rebuild", "extension", "prebuilt", "none"):
         mode = "rebuild"
     if mode == "extension" and not (extracted_dir / "extension" / "manifest.json").is_file():
         raise ValueError("ZIP missing extension/manifest.json but frontend_install=extension")
-    return mode
+    if mode == "prebuilt" and _find_package_prebuilt_bundle_dir(extracted_dir) is None:
+        raise ValueError(
+            "ZIP missing frontend/dist/manifest.json + module.js (or index.js) but frontend_install=prebuilt"
+        )
+    return _coerce_frontend_install_for_cpu(mode, extracted_dir)
 
 
 def _should_run_npm_install(frontend_dir: Path) -> bool:
@@ -1276,6 +1392,8 @@ def _run_frontend_build_once(frontend_dir: Path, *, serial: bool = False) -> tup
 def _run_frontend_build_with_retry(frontend_dir: Path) -> tuple:
     """Build frontend into staging; promote to dist/ only on success."""
     lines: List[str] = []
+    if _cpu_lacks_avx():
+        return 1, [f"❌ {NO_AVX_REBUILD_ERROR}"]
     try:
         _prepare_frontend_for_build(frontend_dir, lines)
         serial_first = _prefer_serial_vite_build()
@@ -1844,6 +1962,29 @@ def _install_package_files(
                 task["frontend_status"] = "failed"
                 task["logs"].append(f"❌ «{pkg_id}» — extension install failed: {ext_err}")
                 return result
+        elif install_mode == "prebuilt":
+            prebuilt_dir = _find_package_prebuilt_bundle_dir(extracted_dir)
+            if prebuilt_dir is None:
+                task["logs"].append(f"❌ «{pkg_id}» — {NO_AVX_REBUILD_ERROR}")
+                return result
+            task["logs"].append(f"«{pkg_id}» — installing prebuilt frontend bundle...")
+            try:
+                src_frontend_tree = extracted_dir / "frontend"
+                if src_frontend_tree.is_dir() and (src_frontend_tree / "src").is_dir():
+                    task["logs"].append(
+                        f"«{pkg_id}» — copying frontend sources to {dst_frontend} (no Vite build)."
+                    )
+                    _install_frontend_module_tree(src_frontend, dst_frontend, pkg_id, task["logs"])
+                elif dst_frontend.exists():
+                    shutil.rmtree(dst_frontend, ignore_errors=True)
+                _install_frontend_prebuilt(pkg_id, prebuilt_dir, frontend_cwd, task["logs"])
+                _warn_extension_importmap(frontend_cwd, task["logs"])
+                task["frontend_status"] = "success"
+                frontend_updated = True
+            except Exception as prebuilt_err:
+                task["frontend_status"] = "failed"
+                task["logs"].append(f"❌ «{pkg_id}» — prebuilt install failed: {prebuilt_err}")
+                return result
         elif install_mode == "rebuild":
             if src_frontend.exists():
                 task["logs"].append(f"«{pkg_id}» — installing frontend to {dst_frontend}...")
@@ -2230,6 +2371,12 @@ class AppStoreManager:
 
             build_return_code = 0
             if needs_rebuild:
+                if _cpu_lacks_avx():
+                    task["status"] = "failed"
+                    task["error"] = NO_AVX_REBUILD_ERROR
+                    task["logs"].append(f"❌ {NO_AVX_REBUILD_ERROR}")
+                    task["progress"] = 100
+                    return
                 task["logs"].append(
                     f"All {len(install_results)} module(s) copied — running single frontend build..."
                 )
@@ -2518,6 +2665,35 @@ class AppStoreManager:
                         BUILD_TASKS[pkg_id]["logs"].append(
                             f"«{pkg_id}» — removed stale src/modules/{pkg_id} (extension runtime path)."
                         )
+                    _warn_extension_importmap(frontend_cwd, BUILD_TASKS[pkg_id]["logs"])
+                    BUILD_TASKS[pkg_id]["frontend_status"] = "success"
+                    frontend_updated = True
+                elif install_mode == "prebuilt":
+                    prebuilt_dir = _find_package_prebuilt_bundle_dir(extracted_dir)
+                    if prebuilt_dir is None:
+                        BUILD_TASKS[pkg_id]["status"] = "failed"
+                        BUILD_TASKS[pkg_id]["error"] = NO_AVX_REBUILD_ERROR
+                        BUILD_TASKS[pkg_id]["logs"].append(f"❌ {NO_AVX_REBUILD_ERROR}")
+                        BUILD_TASKS[pkg_id]["progress"] = 100
+                        return
+                    BUILD_TASKS[pkg_id]["progress"] = 65
+                    BUILD_TASKS[pkg_id]["logs"].append("Installing prebuilt frontend bundle (no npm build)...")
+                    if found_frontend and found_frontend.exists() and (found_frontend / "src").is_dir():
+                        dst_frontend.parent.mkdir(parents=True, exist_ok=True)
+                        _install_frontend_module_tree(
+                            found_frontend,
+                            dst_frontend,
+                            pkg_id,
+                            BUILD_TASKS[pkg_id]["logs"],
+                        )
+                    elif dst_frontend.exists():
+                        shutil.rmtree(dst_frontend, ignore_errors=True)
+                    _install_frontend_prebuilt(
+                        pkg_id,
+                        prebuilt_dir,
+                        frontend_cwd,
+                        BUILD_TASKS[pkg_id]["logs"],
+                    )
                     _warn_extension_importmap(frontend_cwd, BUILD_TASKS[pkg_id]["logs"])
                     BUILD_TASKS[pkg_id]["frontend_status"] = "success"
                     frontend_updated = True

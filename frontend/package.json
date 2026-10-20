@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "node scripts/sync-tsc-excludes.mjs && (test -f .copanel-skip-tsc && rm -f .copanel-skip-tsc && vite build || (tsc -p tsconfig.build.json && vite build))",
     "build:appstore": "vite build",
+    "build:extension": "node ../scripts/build-extension.mjs",
     "build:noavx": "VITE_BUILD_LOW_MEMORY=1 vite build",
     "preview": "vite preview"
   },
