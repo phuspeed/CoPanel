@@ -127,6 +127,25 @@ def test_install_health_check_retries():
     assert "60" in block
 
 
+def test_promote_staging_restores_extensions_before_prev_removed():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_promote_frontend_staging()")
+    fn_end = text.index("copanel_finalize_frontend_build()", fn_start)
+    block = text[fn_start:fn_end]
+    assert "copanel_restore_appstore_extensions" in block
+    after_promote = block.split('mv "$staging" "$dist"', 1)[1]
+    assert after_promote.index("copanel_restore_appstore_extensions") < after_promote.index(
+        'rm -rf "$prev"'
+    )
+
+
+def test_apt_recovery_targets_failed_sources_only():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    assert "copanel_apt_failed_source_list_files" in text
+    assert "disable_all_launchpad_ppa_files" not in text
+    assert "disable_ondrej_php_launchpad_sources" not in text
+
+
 def test_install_noavx_node_heap_and_vite_env():
     text = INSTALL_SH.read_text(encoding="utf-8")
     assert "copanel_noavx_node_heap_mb" in text

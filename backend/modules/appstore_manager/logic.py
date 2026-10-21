@@ -34,9 +34,16 @@ DESKTOP_UI_PRESERVE_FILES: Dict[str, tuple] = {
 
 
 def get_copanel_home() -> Path:
-    """Production: /opt/copanel. Dev: repo root (directory that contains backend/)."""
+    """Production: /opt/copanel. Dev: COPANEL_HOME/CoPanel_HOME or repo root (contains backend/)."""
     if Path("/opt/copanel").exists():
         return Path("/opt/copanel")
+    for key in ("COPANEL_HOME", "CoPanel_HOME"):
+        env = (os.environ.get(key) or "").strip()
+        if not env:
+            continue
+        root = Path(env).expanduser().resolve()
+        if (root / "backend").is_dir():
+            return root
     # This file: <root>/backend/modules/appstore_manager/logic.py
     return Path(__file__).resolve().parent.parent.parent.parent
 
@@ -651,6 +658,38 @@ def _extension_artifacts_dir(pkg_id: str) -> Path:
     return get_copanel_home() / "config" / "extension_artifacts" / pkg_id
 
 
+def _backend_module_dir(pkg_id: str) -> Path:
+    return get_copanel_home() / "backend" / "modules" / pkg_id
+
+
+def _backend_module_installed(pkg_id: str) -> bool:
+    return _backend_module_dir(pkg_id).is_dir()
+
+
+def _prune_extension_artifact(pkg_id: str) -> None:
+    artifact = _extension_artifacts_dir(pkg_id)
+    if artifact.exists():
+        shutil.rmtree(artifact, ignore_errors=True)
+
+
+def _prune_orphan_extension(
+    pkg_id: str,
+    frontend_dir: Path,
+    registry: Dict[str, Any],
+    log_lines: Optional[List[str]] = None,
+) -> None:
+    """Drop registry entry and durable artifact when backend module is gone."""
+    registry.pop(pkg_id, None)
+    _prune_extension_artifact(pkg_id)
+    dist_pkg = frontend_dir / "dist" / "extensions" / pkg_id
+    if dist_pkg.exists():
+        shutil.rmtree(dist_pkg, ignore_errors=True)
+    if log_lines is not None:
+        log_lines.append(
+            f"⚠️ Extension «{pkg_id}» has no backend module — pruned orphan App Store artifact."
+        )
+
+
 def _cache_extension_artifact(pkg_id: str, src_extension: Path) -> None:
     dest = _extension_artifacts_dir(pkg_id)
     if dest.exists():
@@ -673,9 +712,14 @@ def _restore_extensions_into_dist(frontend_dir: Path, log_lines: Optional[List[s
     dist_ext.mkdir(parents=True, exist_ok=True)
     prev_ext = frontend_dir / ".dist-prev" / "extensions"
     restored = 0
+    registry_dirty = False
 
     for pkg_id in list(registry.keys()):
         if not isinstance(pkg_id, str) or not pkg_id.strip():
+            continue
+        if not _backend_module_installed(pkg_id):
+            _prune_orphan_extension(pkg_id, frontend_dir, registry, log_lines)
+            registry_dirty = True
             continue
         dest = dist_ext / pkg_id
         artifact = _extension_artifacts_dir(pkg_id)
@@ -698,6 +742,8 @@ def _restore_extensions_into_dist(frontend_dir: Path, log_lines: Optional[List[s
         shutil.copytree(source, dest)
         restored += 1
 
+    if registry_dirty:
+        _save_extensions_registry(registry)
     _write_extensions_index(frontend_dir)
     if restored and log_lines is not None:
         log_lines.append(f"✓ Restored {restored} AppStore extension(s) into dist/extensions/.")
@@ -757,6 +803,9 @@ def _write_extensions_index(frontend_dir: Path) -> None:
         if not isinstance(meta, dict):
             stale_ids.append(pkg_id)
             continue
+        if not _backend_module_installed(pkg_id):
+            stale_ids.append(pkg_id)
+            continue
         module_js = dist_ext / pkg_id / "module.js"
         if not module_js.is_file():
             stale_ids.append(pkg_id)
@@ -773,6 +822,7 @@ def _write_extensions_index(frontend_dir: Path) -> None:
     if stale_ids:
         for pkg_id in stale_ids:
             registry.pop(pkg_id, None)
+            _prune_extension_artifact(pkg_id)
         _save_extensions_registry(registry)
     ext_dir = dist_ext
     ext_dir.mkdir(parents=True, exist_ok=True)
