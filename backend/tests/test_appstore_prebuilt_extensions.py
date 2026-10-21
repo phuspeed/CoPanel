@@ -15,6 +15,7 @@ from modules.appstore_manager.logic import (
     _is_prebuilt_extension_bundle_dir,
     _normalize_frontend_install,
     _prebuilt_panel_dist_ready,
+    _restore_extensions_into_dist,
     _write_extensions_index,
     register_preserved_prebuilt_extensions,
 )
@@ -86,6 +87,7 @@ def test_install_prebuilt_registers_extension(panel_dist, tmp_path, monkeypatch)
     frontend_dir = home / "frontend"
     frontend_dir.mkdir()
     shutil_copytree(panel_dist, frontend_dir / "dist")
+    (home / "backend" / "modules" / "file_manager").mkdir(parents=True)
 
     bundle = tmp_path / "pkg" / "frontend" / "dist"
     bundle.mkdir(parents=True)
@@ -174,6 +176,12 @@ def test_write_extensions_index_omits_missing_module_js(panel_dist, tmp_path, mo
     ext = frontend_dir / "dist" / "extensions" / "file_manager"
     ext.mkdir(parents=True)
     (ext / "module.js").write_text("export default null", encoding="utf-8")
+    (home / "backend" / "modules" / "file_manager").mkdir(parents=True)
+
+    orphan_art = home / "config" / "extension_artifacts" / "module_redis"
+    orphan_art.mkdir(parents=True)
+    (orphan_art / "manifest.json").write_text('{"id":"module_redis"}', encoding="utf-8")
+    (orphan_art / "module.js").write_text("export default null", encoding="utf-8")
 
     _write_extensions_index(frontend_dir)
     index = json.loads((frontend_dir / "dist" / "extensions" / "index.json").read_text())
@@ -182,6 +190,48 @@ def test_write_extensions_index_omits_missing_module_js(panel_dist, tmp_path, mo
     registry = json.loads(registry_path.read_text())
     assert "file_manager" in registry
     assert "module_redis" not in registry
+    assert not orphan_art.exists()
+
+
+def test_restore_extensions_prunes_orphan_without_backend(panel_dist, tmp_path, monkeypatch):
+    home = tmp_path
+    monkeypatch.setattr("modules.appstore_manager.logic.get_copanel_home", lambda: home)
+    frontend_dir = home / "frontend"
+    shutil_copytree(panel_dist, frontend_dir / "dist")
+
+    (home / "backend" / "modules" / "file_manager").mkdir(parents=True)
+    registry_path = home / "config" / "frontend_extensions.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "file_manager": {"id": "file_manager", "name": "Files", "path": "/files"},
+                "module_redis": {"id": "module_redis", "name": "Redis", "path": "/redis"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _seed_artifact(pkg_id: str) -> None:
+        art = home / "config" / "extension_artifacts" / pkg_id
+        art.mkdir(parents=True)
+        (art / "manifest.json").write_text(json.dumps({"id": pkg_id}), encoding="utf-8")
+        (art / "module.js").write_text("export default null", encoding="utf-8")
+
+    _seed_artifact("file_manager")
+    _seed_artifact("module_redis")
+
+    logs: list[str] = []
+    restored = _restore_extensions_into_dist(frontend_dir, logs)
+    assert restored == 1
+    assert (frontend_dir / "dist" / "extensions" / "file_manager" / "module.js").is_file()
+    assert not (frontend_dir / "dist" / "extensions" / "module_redis").exists()
+    assert not (home / "config" / "extension_artifacts" / "module_redis").exists()
+    registry = json.loads(registry_path.read_text())
+    assert "file_manager" in registry
+    assert "module_redis" not in registry
+    assert any("module_redis" in line and "backend module" in line for line in logs)
+    assert any("Restored 1 AppStore extension" in line for line in logs)
 
 
 def test_zip_layout_extracted_prebuilt(tmp_path):

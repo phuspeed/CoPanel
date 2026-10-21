@@ -51,7 +51,11 @@ assert_false "force flag hides AVX" copanel_cpu_has_avx
 unset COPANEL_FORCE_NO_AVX || true
 
 tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+promote_home=""
+cleanup() {
+    rm -rf "$tmpdir" "$promote_home"
+}
+trap cleanup EXIT
 cd "$tmpdir"
 mkdir -p scripts
 cp "$ROOT/frontend/scripts/wasm-toolchain.mjs" scripts/wasm-toolchain.mjs
@@ -101,6 +105,29 @@ assert_eq "prebuilt index is the archive copy" "<!doctype html><title>prebuilt</
     "$(cat "$prebuilt/work/dist/index.html")"
 assert_true "prebuilt extract kept dist/extensions tree" test -f "$prebuilt/work/dist/extensions/keep_me/module.js"
 rm -rf "$prebuilt"
+
+promote_home="$(mktemp -d)"
+export COPANEL_HOME="$promote_home"
+CoPanel_HOME="$promote_home"
+ln -s "$ROOT/backend" "$CoPanel_HOME/backend"
+mkdir -p "$CoPanel_HOME/config/extension_artifacts/appstore_manager" \
+    "$CoPanel_HOME/frontend/dist/assets" \
+    "$CoPanel_HOME/frontend/.build-staging/assets"
+printf '%s\n' '<!doctype html><title>live</title>' > "$CoPanel_HOME/frontend/dist/index.html"
+printf '%s\n' '<!doctype html><title>staging</title>' > "$CoPanel_HOME/frontend/.build-staging/index.html"
+printf '%s\n' '{"id":"appstore_manager","name":"App Store"}' \
+    > "$CoPanel_HOME/config/extension_artifacts/appstore_manager/manifest.json"
+printf '%s\n' 'export default null' \
+    > "$CoPanel_HOME/config/extension_artifacts/appstore_manager/module.js"
+printf '%s\n' '{"appstore_manager":{"id":"appstore_manager","name":"App Store","path":"/appstore"}}' \
+    > "$CoPanel_HOME/config/frontend_extensions.json"
+copanel_promote_frontend_staging >/tmp/copanel-promote-ext.log 2>&1 || true
+assert_true "promote keeps staging index.html" test -f "$CoPanel_HOME/frontend/dist/index.html"
+assert_eq "promote swapped in staging build" "<!doctype html><title>staging</title>" \
+    "$(cat "$CoPanel_HOME/frontend/dist/index.html")"
+assert_true "promote restored AppStore extension bundle" \
+    test -f "$CoPanel_HOME/frontend/dist/extensions/appstore_manager/module.js"
+assert_true "promote logs restored extension count" grep -q 'Restored 1 AppStore extension' /tmp/copanel-promote-ext.log
 
 if [[ "$FAILS" -eq 0 ]]; then
     printf 'no-avx installer checks passed\n'

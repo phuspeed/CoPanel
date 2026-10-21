@@ -855,7 +855,7 @@ copanel_configure_firewall() {
 # APT: avoid hanging forever on ppa.launchpadcontent.net (slow/failed TLS, firewalls).
 # - Short Acquire timeouts via apt.conf.d (applies to all apt in this install step)
 # - GNU timeout(1) caps total apt-get update wall time
-# - Disable Ondrej PHP PPA first, then any remaining Launchpad PPA files
+# - On failure, disable only apt list files that appear in the error log (not every PPA).
 # Ubuntu 22.04+ ship php-fpm in main/universe; Launchpad PPAs are optional for CoPanel.
 # -----------------------------------------------------------------------------
 
@@ -877,52 +877,70 @@ copanel_remove_apt_timeouts() {
 
 apt_get_update_timed() {
     # Exit 124 = GNU timeout — treat as failure and run recovery
+    local log_file="${1:-}"
+    local code=0
     if command_exists timeout; then
+        if [[ -n "$log_file" ]]; then
+            set +e
+            timeout 240 apt-get update 2>&1 | tee "$log_file"
+            code="${PIPESTATUS[0]}"
+            set -e
+            return "$code"
+        fi
         timeout 240 apt-get update
         return $?
+    fi
+    if [[ -n "$log_file" ]]; then
+        set +e
+        apt-get update 2>&1 | tee "$log_file"
+        code="${PIPESTATUS[0]}"
+        set -e
+        return "$code"
     fi
     apt-get update
     return $?
 }
 
-disable_ondrej_php_launchpad_sources() {
-    local disabled_any=false
-    shopt -s nullglob
-    for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-        [[ -f "$ppa_f" ]] || continue
-        case "$ppa_f" in *.copanel-bak) continue ;; esac
-        if grep -q 'ondrej/php' "$ppa_f" 2>/dev/null && grep -qE 'ppa\.launchpad(content)?\.net|ppa\.launchpad\.net' "$ppa_f" 2>/dev/null; then
-            log_warning "Temporarily disabling $(basename "$ppa_f") (Ondrej PHP / Launchpad)"
-            log_warning "  Restore: sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
-            mv "$ppa_f" "${ppa_f}.copanel-bak"
-            disabled_any=true
-        fi
-    done
-    shopt -u nullglob
-    if [[ "$disabled_any" == true ]]; then
-        return 0
-    fi
-    return 1
+copanel_disable_apt_source_file() {
+    local ppa_f="$1"
+    [[ -f "$ppa_f" ]] || return 1
+    case "$ppa_f" in *.copanel-bak) return 1 ;; esac
+    log_warning "Temporarily disabling $(basename "$ppa_f") (failed apt mirror in update log)"
+    log_warning "  Restore: sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
+    mv "$ppa_f" "${ppa_f}.copanel-bak"
+    return 0
 }
 
-disable_all_launchpad_ppa_files() {
-    log_warning "Disabling all PPA files under sources.list.d that use Launchpad (ppa.launchpad*)…"
-    local disabled_any=false
+copanel_apt_failed_source_list_files() {
+    # Print basenames of sources.list.d entries referenced in a failed apt-get update log.
+    local log_file="$1"
+    [[ -f "$log_file" ]] || return 0
+    local -A seen=()
+    local ppa_f base needle
     shopt -s nullglob
     for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [[ -f "$ppa_f" ]] || continue
         case "$ppa_f" in *.copanel-bak) continue ;; esac
-        if grep -qE 'ppa\.launchpad(content)?\.net|ppa\.launchpad\.net' "$ppa_f" 2>/dev/null; then
-            log_warning "  disabling $(basename "$ppa_f")"
-            mv "$ppa_f" "${ppa_f}.copanel-bak"
-            disabled_any=true
+        base="$(basename "$ppa_f")"
+        if grep -qF "$base" "$log_file" 2>/dev/null; then
+            if [[ -z "${seen[$base]:-}" ]]; then
+                seen["$base"]=1
+                printf '%s\n' "$ppa_f"
+            fi
+            continue
         fi
+        while IFS= read -r needle; do
+            [[ -z "$needle" ]] && continue
+            if grep -qF "$needle" "$ppa_f" 2>/dev/null && grep -qF "$needle" "$log_file" 2>/dev/null; then
+                if [[ -z "${seen[$base]:-}" ]]; then
+                    seen["$base"]=1
+                    printf '%s\n' "$ppa_f"
+                fi
+                break
+            fi
+        done < <(grep -oE 'https?://[^ ]+' "$log_file" 2>/dev/null | sort -u)
     done
     shopt -u nullglob
-    if [[ "$disabled_any" == true ]]; then
-        return 0
-    fi
-    return 1
 }
 
 apt_update_or_recover() {
@@ -934,30 +952,47 @@ apt_update_or_recover() {
 
     log_info "Running apt-get update (timeouts: 20s per mirror, max ~4m total if timeout(1) is available)…"
 
-    if apt_get_update_timed; then
+    local log disabled_any=false attempt=0
+    log="$(mktemp)"
+    if apt_get_update_timed "$log"; then
+        rm -f "$log"
         return 0
     fi
 
-    log_warning "apt-get update failed or timed out (common: ppa.launchpadcontent.net unreachable)."
-    log_warning "CoPanel does not require Ondrej PHP on Ubuntu 22.04+ (use ubuntu-provided php*-fpm)."
+    log_warning "apt-get update failed or timed out."
+    log_warning "CoPanel does not require third-party PHP PPAs on Ubuntu 22.04+ (use ubuntu-provided php*-fpm)."
 
-    if disable_ondrej_php_launchpad_sources; then
-        if apt_get_update_timed; then
-            log_success "apt-get update succeeded after disabling Ondrej PHP PPA"
+    while [[ "$attempt" -lt 8 ]]; do
+        attempt=$((attempt + 1))
+        local to_disable=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            to_disable+=("$line")
+        done < <(copanel_apt_failed_source_list_files "$log")
+        if [[ ${#to_disable[@]} -eq 0 ]]; then
+            log_warning "Could not match the failure to a file in /etc/apt/sources.list.d/ — not disabling PPAs automatically."
+            log_warning "Inspect the update output and fix or remove broken entries manually, then re-run."
+            break
+        fi
+        local ppa_f
+        for ppa_f in "${to_disable[@]}"; do
+            if copanel_disable_apt_source_file "$ppa_f"; then
+                disabled_any=true
+            fi
+        done
+        if apt_get_update_timed "$log"; then
+            log_success "apt-get update succeeded after disabling failing apt source(s)"
+            rm -f "$log"
             return 0
         fi
+    done
+
+    rm -f "$log"
+    if [[ "$disabled_any" == true ]]; then
+        log_error "apt-get update still failing after disabling source(s) named in the error log."
     else
-        log_warning "No Ondrej PHP Launchpad list found to disable; trying broader Launchpad cleanup…"
+        log_error "apt-get update still failing. Inspect: ls -la /etc/apt/sources.list.d/"
     fi
-
-    if disable_all_launchpad_ppa_files; then
-        if apt_get_update_timed; then
-            log_success "apt-get update succeeded after disabling Launchpad-based PPAs"
-            return 0
-        fi
-    fi
-
-    log_error "apt-get update still failing. Inspect: ls -la /etc/apt/sources.list.d/"
     log_error "Fix network/DNS/firewall or remove broken third-party entries manually, then re-run."
     return 1
 }
@@ -2395,6 +2430,28 @@ copanel_prepare_frontend_tsc() {
     return 0
 }
 
+copanel_restore_appstore_extensions() {
+    local py="${CoPanel_HOME}/backend/venv/bin/python"
+    [[ -d "${CoPanel_HOME}/frontend/dist" ]] || return 0
+    if [[ ! -x "$py" ]]; then
+        py="$(command -v python3 2>/dev/null || true)"
+    fi
+    [[ -n "$py" ]] || return 0
+    COPANEL_HOME="$CoPanel_HOME" "$py" <<'PY'
+import os, sys
+from pathlib import Path
+
+home = Path(os.environ["COPANEL_HOME"])
+sys.path.insert(0, str(home / "backend"))
+from modules.appstore_manager.logic import _restore_extensions_into_dist
+
+logs: list[str] = []
+_restore_extensions_into_dist(home / "frontend", logs)
+for line in logs:
+    print(line, flush=True)
+PY
+}
+
 copanel_promote_frontend_staging() {
     local frontend="$CoPanel_HOME/frontend"
     local staging prev dist
@@ -2409,6 +2466,7 @@ copanel_promote_frontend_staging() {
         mv "$dist" "$prev"
     fi
     mv "$staging" "$dist"
+    copanel_restore_appstore_extensions || log_warning "Could not restore App Store extensions after frontend promote."
     rm -rf "$prev"
     return 0
 }
