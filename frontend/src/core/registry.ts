@@ -6,12 +6,20 @@
 
 import React from 'react';
 
+export const EXTENSIONS_UPDATED_EVENT = 'copanel:extensions-updated';
+
 export interface ModuleConfig {
+  /** Stable module id (folder name for core, manifest id for extensions). */
+  id: string;
   name: string;
   icon: string;
   path: string;
   component: React.ComponentType<any>;
   description?: string;
+  /** Sidebar / launcher sort order (lower first). */
+  order?: number;
+  /** Locale → display label (e.g. { en, vi }). */
+  labels?: Record<string, string>;
   windowMode?: boolean;
   backgroundPolicy?: 'default' | 'keep-running';
   keepMountedOnMinimize?: boolean;
@@ -20,7 +28,7 @@ export interface ModuleConfig {
   pinned?: boolean;
   minWindowSize?: { width: number; height: number };
   adminOnly?: boolean;
-  /** AppStore extension module id */
+  /** AppStore extension module id (same as id when loaded from manifest). */
   extensionId?: string;
 }
 
@@ -31,6 +39,8 @@ export interface ExtensionManifest {
   path: string;
   icon?: string;
   description?: string;
+  order?: number;
+  labels?: Record<string, string>;
   windowMode?: boolean;
   backgroundPolicy?: 'default' | 'keep-running';
   keepMountedOnMinimize?: boolean;
@@ -48,8 +58,16 @@ interface ExtensionIndexEntry {
   module_url?: string;
 }
 
+function moduleSortKey(a: ModuleConfig, b: ModuleConfig): number {
+  const ao = typeof a.order === 'number' ? a.order : 1000;
+  const bo = typeof b.order === 'number' ? b.order : 1000;
+  if (ao !== bo) return ao - bo;
+  return a.name.localeCompare(b.name);
+}
+
 class ModuleRegistry {
-  private modules: Map<string, ModuleConfig> = new Map();
+  private coreModules: Map<string, ModuleConfig> = new Map();
+  private extensionModules: Map<string, ModuleConfig> = new Map();
   private extensionsLoaded = false;
   private loadPromise: Promise<void> | null = null;
 
@@ -69,22 +87,28 @@ class ModuleRegistry {
           console.warn(`Invalid module config in ${filePath}: missing required fields`);
           continue;
         }
-        this.registerModule(config);
-        console.log(`✓ Registered core module: ${config.name}`);
+        const idMatch = filePath.match(/\/modules\/([^/]+)\/config\.ts$/);
+        const id = idMatch?.[1] ?? config.name.toLowerCase().replace(/\s+/g, '_');
+        this.registerCoreModule({ ...config, id });
+        console.log(`✓ Registered core module: ${config.name} (${id})`);
       } catch (error) {
         console.error(`Failed to load module from ${filePath}:`, error);
       }
     }
   }
 
-  private registerModule(config: Partial<ModuleConfig> & Pick<ModuleConfig, 'name' | 'path' | 'component'>) {
-    const moduleKey = config.name.toLowerCase();
-    this.modules.set(moduleKey, {
+  private registerCoreModule(
+    config: Partial<ModuleConfig> & Pick<ModuleConfig, 'id' | 'name' | 'path' | 'component'>,
+  ) {
+    this.coreModules.set(config.id, {
+      id: config.id,
       name: config.name,
       icon: config.icon || 'Grid',
       path: config.path,
       component: config.component,
       description: config.description || '',
+      order: config.order,
+      labels: config.labels,
       windowMode: config.windowMode === true,
       backgroundPolicy: config.backgroundPolicy === 'keep-running' ? 'keep-running' : 'default',
       keepMountedOnMinimize: config.keepMountedOnMinimize === true,
@@ -98,12 +122,19 @@ class ModuleRegistry {
   }
 
   private registerExtension(manifest: ExtensionManifest, component: React.ComponentType<any>) {
-    this.registerModule({
+    if (this.coreModules.has(manifest.id)) {
+      console.log(`Skipping extension ${manifest.id}: built-in module already registered`);
+      return;
+    }
+    const mod: ModuleConfig = {
+      id: manifest.id,
       name: manifest.name,
       icon: manifest.icon || 'Grid',
       path: manifest.path,
       component,
       description: manifest.description || '',
+      order: manifest.order,
+      labels: manifest.labels,
       windowMode: manifest.windowMode === true,
       backgroundPolicy:
         manifest.backgroundPolicy === 'keep-running' || manifest.keepMountedOnMinimize === true
@@ -113,8 +144,17 @@ class ModuleRegistry {
       defaultWindowSize: manifest.defaultWindowSize,
       pinned: manifest.pinned === true,
       extensionId: manifest.id,
-    });
+    };
+    this.extensionModules.set(manifest.id, mod);
     console.log(`✓ Registered extension: ${manifest.name} (${manifest.id})`);
+  }
+
+  private mergedModules(): ModuleConfig[] {
+    const merged = new Map<string, ModuleConfig>(this.coreModules);
+    for (const [id, mod] of this.extensionModules) {
+      if (!merged.has(id)) merged.set(id, mod);
+    }
+    return Array.from(merged.values()).sort(moduleSortKey);
   }
 
   /** Load AppStore extensions (API with JWT, static index.json fallback). */
@@ -124,6 +164,15 @@ class ModuleRegistry {
       this.loadPromise = this.fetchAndRegisterExtensions();
     }
     await this.loadPromise;
+  }
+
+  /** Refetch extension index/manifests (e.g. after AppStore install). */
+  async reloadExtensions(): Promise<void> {
+    this.extensionModules.clear();
+    this.extensionsLoaded = false;
+    this.loadPromise = null;
+    await this.loadExtensions();
+    window.dispatchEvent(new CustomEvent(EXTENSIONS_UPDATED_EVENT));
   }
 
   private authHeaders(): HeadersInit {
@@ -143,7 +192,10 @@ class ModuleRegistry {
           const body = await res.json();
           const data = body?.data ?? body;
           if (Array.isArray(data?.extensions)) {
-            return data.extensions;
+            return data.extensions.map((e: ExtensionIndexEntry & { id?: string }) => ({
+              ...e,
+              id: e.id || (e as { name?: string }).name || '',
+            }));
           }
         }
       } catch {
@@ -167,19 +219,24 @@ class ModuleRegistry {
     try {
       const entries = await this.fetchExtensionIndex();
       for (const entry of entries) {
+        if (!entry?.id) continue;
         try {
           const manifestUrl = entry.manifest_url || `/extensions/${entry.id}/manifest.json`;
           const moduleUrl = entry.module_url || `/extensions/${entry.id}/module.js`;
           const manifestRes = await fetch(manifestUrl, { cache: 'no-store' });
           if (!manifestRes.ok) continue;
           const manifest: ExtensionManifest = await manifestRes.json();
+          if (!manifest.path || !manifest.name) {
+            console.warn(`Extension ${entry.id} manifest missing name or path`);
+            continue;
+          }
           const mod = await import(/* @vite-ignore */ moduleUrl);
           const component = mod.default || mod;
           if (typeof component !== 'function' && typeof component !== 'object') {
             console.warn(`Extension ${entry.id} has no default export`);
             continue;
           }
-          this.registerExtension(manifest, component);
+          this.registerExtension({ ...manifest, id: manifest.id || entry.id }, component);
         } catch (err) {
           console.error(`Failed to load extension ${entry.id}:`, err);
         }
@@ -192,26 +249,34 @@ class ModuleRegistry {
   }
 
   getAll(): ModuleConfig[] {
-    return Array.from(this.modules.values());
+    return this.mergedModules();
   }
 
   getByName(name: string): ModuleConfig | undefined {
-    return this.modules.get(name.toLowerCase());
+    const key = name.toLowerCase();
+    for (const module of this.mergedModules()) {
+      if (module.name.toLowerCase() === key) return module;
+    }
+    return undefined;
   }
 
   getByPath(path: string): ModuleConfig | undefined {
-    for (const module of this.modules.values()) {
+    for (const module of this.mergedModules()) {
       if (module.path === path) return module;
     }
     return undefined;
   }
 
+  getById(id: string): ModuleConfig | undefined {
+    return this.coreModules.get(id) ?? this.extensionModules.get(id);
+  }
+
   exists(name: string): boolean {
-    return this.modules.has(name.toLowerCase());
+    return Boolean(this.getByName(name));
   }
 
   count(): number {
-    return this.modules.size;
+    return this.mergedModules().length;
   }
 }
 

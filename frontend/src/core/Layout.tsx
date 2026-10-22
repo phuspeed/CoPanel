@@ -7,7 +7,9 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { moduleRegistry } from './registry';
+import { moduleRegistry, EXTENSIONS_UPDATED_EVENT } from './registry';
+import { resolveLucideIcon } from './lucideIcon';
+import { moduleDisplayName, modulePermissionKey } from './moduleDisplay';
 import * as Icons from 'lucide-react';
 import { cn } from '../lib/utils';
 import AppLauncher from './shell/AppLauncher';
@@ -32,38 +34,6 @@ import { useDesktopKeyboard } from './shell/useDesktopKeyboard';
 import { jobsApi, notificationsApi, PLATFORM_SSE_DEGRADED_EVENT, reconnectPlatformEvents, useInbox, useJobs, api } from './platform';
 import { apiFetch } from './authHeaders';
 
-interface IconProps {
-  className?: string;
-}
-
-// Icon mapping
-const iconMap: Record<string, React.ComponentType<IconProps>> = {
-  Activity: Icons.Activity,
-  BarChart3: Icons.BarChart3,
-  BarChart: Icons.BarChart,
-  Folder: Icons.Folder,
-  FileText: Icons.FileText,
-  Upload: Icons.Upload,
-  Globe: Icons.Globe,
-  Zap: Icons.Zap,
-  Database: Icons.Database,
-  Cpu: Icons.Cpu,
-  Shield: Icons.Shield,
-  Lock: Icons.Lock,
-  ShieldAlert: Icons.ShieldAlert,
-  Box: Icons.Box,
-  Package: Icons.Package,
-  Server: Icons.Server,
-  Users: Icons.Users,
-  Grid: Icons.Grid,
-  Settings: Icons.Settings,
-  Home: Icons.Home,
-  Trash2: Icons.Trash2,
-  HardDrive: Icons.HardDrive,
-  Bot: Icons.Bot,
-  Sparkles: Icons.Sparkles,
-};
-
 export default function Layout({
   user,
   onLogout,
@@ -76,7 +46,9 @@ export default function Layout({
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const location = useLocation();
   const navigate = useNavigate();
+  const [moduleListRevision, setModuleListRevision] = useState(0);
   const modules = moduleRegistry.getAll();
+  void moduleListRevision;
   const [installedPackages, setInstalledPackages] = useState<any[]>([]);
 
   // Theme & Language Global States
@@ -546,16 +518,19 @@ export default function Layout({
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const onExtensionsUpdated = () => setModuleListRevision((n) => n + 1);
+    window.addEventListener(EXTENSIONS_UPDATED_EVENT, onExtensionsUpdated);
+    return () => window.removeEventListener(EXTENSIONS_UPDATED_EVENT, onExtensionsUpdated);
+  }, []);
 
   const getIcon = (iconName: string) => {
-    const IconComponent = iconMap[iconName] || Icons.Grid;
+    const IconComponent = resolveLucideIcon(iconName);
     return <IconComponent className="w-5 h-5" />;
   };
 
-  const getModuleName = (mod: any) => {
-    const key = mod.name.toLowerCase().replace(/\s+/g, '_');
-    return (tr as any).modulesNames?.[key] || mod.name;
-  };
+  const getModuleName = (mod: any) =>
+    moduleDisplayName(mod, language, (tr as any).modulesNames);
 
   const isActive = (path: string) => location.pathname === path;
   const normalizePermitted = (): string[] => {
@@ -574,9 +549,9 @@ export default function Layout({
   const hasAllAccess = permittedModules.includes('all');
   const isSuperAdmin = user?.role === 'superadmin';
 
-  const moduleAllowedForUser = (mod: { path: string; name: string }) => {
+  const moduleAllowedForUser = (mod: { path: string; name: string; id?: string; extensionId?: string }) => {
     if (hasAllAccess) return true;
-    return permittedModules.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
+    return permittedModules.includes(modulePermissionKey(mod as import('./registry').ModuleConfig));
   };
 
   const allowedModules = modules.filter((mod) => {

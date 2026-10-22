@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 
 const lowMemory = process.env.VITE_BUILD_LOW_MEMORY === '1'
@@ -131,8 +131,34 @@ function extensionImportMapPlugin(): Plugin {
   }
 }
 
+/** Dev server: serve runtime AppStore bundles from frontend/dist/extensions. */
+function extensionsDevServerPlugin(): Plugin {
+  const extRoot = resolve(rootDir, 'dist/extensions')
+  return {
+    name: 'copanel-extensions-dev-static',
+    configureServer(server) {
+      server.middlewares.use('/extensions', (req, res, next) => {
+        if (!existsSync(extRoot)) return next()
+        const rel = (req.url || '/').split('?')[0].replace(/^\//, '')
+        const filePath = resolve(extRoot, rel)
+        if (!filePath.startsWith(extRoot)) return next()
+        try {
+          const st = statSync(filePath)
+          if (!st.isFile()) return next()
+        } catch {
+          return next()
+        }
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+        const ext = filePath.endsWith('.json') ? 'application/json' : 'application/javascript'
+        res.setHeader('Content-Type', ext)
+        res.end(readFileSync(filePath))
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), extensionImportMapPlugin()],
+  plugins: [react(), extensionsDevServerPlugin(), extensionImportMapPlugin()],
   server: {
     port: 5173,
     proxy: {

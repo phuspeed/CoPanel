@@ -14,6 +14,7 @@ def _noavx_build():
     return mod
 
 INSTALL_SH = Path(__file__).resolve().parents[2] / "scripts" / "install.sh"
+NGINX_CONF = Path(__file__).resolve().parents[2] / "config" / "nginx.conf"
 SYNC_TSC = Path(__file__).resolve().parents[2] / "frontend" / "scripts" / "sync-tsc-excludes.mjs"
 VITE_CONFIG = Path(__file__).resolve().parents[2] / "frontend" / "vite.config.ts"
 
@@ -137,6 +138,15 @@ def test_promote_staging_restores_extensions_before_prev_removed():
     assert after_promote.index("copanel_restore_appstore_extensions") < after_promote.index(
         'rm -rf "$prev"'
     )
+
+
+def test_nginx_extensions_no_cache_headers():
+    text = NGINX_CONF.read_text(encoding="utf-8")
+    start = text.index("location /extensions/")
+    end = text.index("location / {", start)
+    block = text[start:end]
+    assert "no-cache" in block
+    assert "max-age=300" not in block
 
 
 def test_apt_recovery_targets_failed_sources_only():

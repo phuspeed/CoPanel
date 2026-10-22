@@ -29,6 +29,17 @@ function parseImportMapFromHtml(html) {
   }
 }
 
+function checkMainBundleExtensionLoader(html) {
+  const mainJs = html.match(/src="(\/assets\/index-[^"]+\.js)"/);
+  if (!mainJs) return;
+  const bundlePath = path.join(dist, mainJs[1].replace(/^\//, ''));
+  if (!existsSync(bundlePath)) return;
+  const bundle = readFileSync(bundlePath, 'utf8');
+  if (!bundle.includes('extensions/index.json')) {
+    errors.push('main bundle missing runtime extension loader (extensions/index.json fetch)');
+  }
+}
+
 function loadImportMap() {
   const indexHtml = path.join(dist, 'index.html');
   if (!existsSync(indexHtml)) {
@@ -36,6 +47,8 @@ function loadImportMap() {
     return null;
   }
   const html = readFileSync(indexHtml, 'utf8');
+  checkMainBundleExtensionLoader(html);
+
   let map = parseImportMapFromHtml(html);
   if (!map) {
     const mapPath = path.join(dist, 'importmap.json');
