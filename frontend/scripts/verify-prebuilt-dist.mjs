@@ -27,6 +27,16 @@ if (!existsSync(indexHtml)) {
   if (!html.includes('type="importmap"') && !existsSync(path.join(dist, 'importmap.json'))) {
     errors.push('index.html has no inline import map and importmap.json is missing');
   }
+  const mainJs = html.match(/src="(\/assets\/index-[^"]+\.js)"/);
+  if (mainJs) {
+    const bundlePath = path.join(dist, mainJs[1].replace(/^\//, ''));
+    if (existsSync(bundlePath)) {
+      const bundle = readFileSync(bundlePath, 'utf8');
+      if (!bundle.includes('extensions/index.json')) {
+        errors.push('main bundle missing runtime extension loader (extensions/index.json fetch)');
+      }
+    }
+  }
 }
 
 const assets = path.join(dist, 'assets');
