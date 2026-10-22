@@ -158,6 +158,26 @@ def test_vite_config_noavx_conservative_build():
     assert "COPANEL_NOAVX" in text
     assert "conservativeBuild" in text
     assert "minify: conservativeBuild ? false" in text
+    assert "preserveEntrySignatures" in text
+    assert "vendor/react-vendor" in text
+
+
+def test_prebuilt_archive_accepts_flat_tarball_layout():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_use_prebuilt_frontend()")
+    fn_end = text.index("copanel_frontend_npm_install_wasm()", fn_start)
+    block = text[fn_start:fn_end]
+    assert "index.html at archive root" in block
+    assert 'mv "$item" dist/' in block
+
+
+def test_setup_nginx_html_no_cache_always():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    start = text.index("setup_nginx()")
+    end = text.index("copanel_strip_nginx_ipv6_if_needed", start)
+    block = text[start:end]
+    assert "no-cache" in block
+    assert "always" in block
 
 
 def test_noavx_node_heap_scales_with_ram():

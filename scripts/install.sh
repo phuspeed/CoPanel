@@ -2202,8 +2202,17 @@ copanel_use_prebuilt_frontend() {
         fi
         rm -rf "$ext_backup"
     fi
+    # Archives may ship either dist/… or flat index.html + assets/ at tarball root.
+    if [[ ! -f dist/index.html && -f index.html ]]; then
+        mkdir -p dist
+        for item in index.html importmap.json assets extensions; do
+            if [[ -e "$item" ]]; then
+                mv "$item" dist/
+            fi
+        done
+    fi
     if [[ ! -f dist/index.html ]]; then
-        log_error "Prebuilt frontend archive did not contain dist/index.html"
+        log_error "Prebuilt frontend archive did not contain dist/index.html (or index.html at archive root)"
         return 1
     fi
     copanel_verify_prebuilt_panel_dist "$(pwd)/dist" || true
@@ -2739,7 +2748,7 @@ server {
     location / {
         root /opt/copanel/frontend/dist;
         try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     }
     
     # phpMyAdmin direct configuration
