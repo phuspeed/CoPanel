@@ -8,7 +8,7 @@ export default function WindowViewportBody({ children }: { children: React.React
   return (
     <div
       ref={vp?.viewportRef}
-      className="module-window-viewport relative flex min-h-0 flex-1 flex-col overflow-auto"
+      className="module-window-viewport relative flex h-full w-full min-h-0 min-w-0 flex-1 flex-col overflow-auto"
     >
       {children}
     </div>
