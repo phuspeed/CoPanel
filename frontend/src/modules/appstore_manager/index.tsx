@@ -271,7 +271,15 @@ export default function AppStoreDashboard() {
             });
             if (r.ok) {
               const b = await r.json();
-              if (handleBuildPollResult(b, pkg.name, pkg.frontend_install === 'extension')) clearInterval(interval);
+              if (
+                handleBuildPollResult(
+                  b,
+                  pkg.name,
+                  pkg.frontend_install === 'extension' || pkg.frontend_install === 'prebuilt',
+                )
+              ) {
+                clearInterval(interval);
+              }
             }
           } catch (err) {
             console.error(err);

@@ -3,7 +3,8 @@
  */
 import { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { moduleRegistry, ModuleConfig } from './registry';
+import { modulePermissionKey } from './moduleDisplay';
+import { moduleRegistry, ModuleConfig, EXTENSIONS_UPDATED_EVENT } from './registry';
 import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
@@ -55,6 +56,7 @@ export function createRoutes() {
   });
   const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
   const [extensionsReady, setExtensionsReady] = useState(false);
+  const [extensionsRevision, setExtensionsRevision] = useState(0);
   // Do not paint the desktop until /api/auth/me confirms the stored JWT.
   // Prevents DevTools localStorage spoofing from briefly showing panel UI.
   const [sessionVerified, setSessionVerified] = useState(() => !localStorage.getItem('copanel_token'));
@@ -64,6 +66,12 @@ export function createRoutes() {
       .loadExtensions()
       .catch((err) => console.warn('Extension load failed:', err))
       .finally(() => setExtensionsReady(true));
+  }, []);
+
+  useEffect(() => {
+    const onExtensionsUpdated = () => setExtensionsRevision((n) => n + 1);
+    window.addEventListener(EXTENSIONS_UPDATED_EVENT, onExtensionsUpdated);
+    return () => window.removeEventListener(EXTENSIONS_UPDATED_EVENT, onExtensionsUpdated);
   }, []);
 
   useEffect(() => {
@@ -96,6 +104,9 @@ export function createRoutes() {
     setSessionVerified(true);
     setToken(newToken);
     setUser(loggedUser);
+    void moduleRegistry
+      .reloadExtensions()
+      .catch((err) => console.warn('Extension reload after login failed:', err));
   };
 
   const handleLogout = () => {
@@ -151,6 +162,7 @@ export function createRoutes() {
   }
 
   const modules = moduleRegistry.getAll();
+  void extensionsRevision;
 
   // Enforce dynamic module access permissions
   const filteredModules = modules.filter((mod: ModuleConfig) => {
@@ -167,7 +179,7 @@ export function createRoutes() {
 
       if (Array.isArray(permitted) && permitted.includes('all')) return true;
       if (Array.isArray(permitted)) {
-        return permitted.includes(mod.name.toLowerCase().replace(/\s+/g, '_'));
+        return permitted.includes(modulePermissionKey(mod));
       }
     } catch {
       return false;
