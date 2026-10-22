@@ -5,6 +5,8 @@
  */
 
 import React from 'react';
+import ExtensionModuleHost from './ExtensionModuleHost';
+import { mountExtensionStylesheet } from './extensionStylesheet';
 
 export const EXTENSIONS_UPDATED_EVENT = 'copanel:extensions-updated';
 
@@ -121,17 +123,33 @@ class ModuleRegistry {
     });
   }
 
+  private wrapExtensionComponent(
+    extensionId: string,
+    component: React.ComponentType<any>,
+  ): React.ComponentType<any> {
+    const Inner = component;
+    function ExtensionHostedModule(props: Record<string, unknown>) {
+      return React.createElement(ExtensionModuleHost, {
+        extensionId,
+        children: React.createElement(Inner, props),
+      });
+    }
+    ExtensionHostedModule.displayName = `Extension(${extensionId})`;
+    return ExtensionHostedModule;
+  }
+
   private registerExtension(manifest: ExtensionManifest, component: React.ComponentType<any>) {
     if (this.coreModules.has(manifest.id)) {
       console.log(`Skipping extension ${manifest.id}: built-in module already registered`);
       return;
     }
+    const hosted = this.wrapExtensionComponent(manifest.id, component);
     const mod: ModuleConfig = {
       id: manifest.id,
       name: manifest.name,
       icon: manifest.icon || 'Grid',
       path: manifest.path,
-      component,
+      component: hosted,
       description: manifest.description || '',
       order: manifest.order,
       labels: manifest.labels,
@@ -236,6 +254,7 @@ class ModuleRegistry {
             console.warn(`Extension ${entry.id} has no default export`);
             continue;
           }
+          mountExtensionStylesheet(entry.id, moduleUrl);
           this.registerExtension({ ...manifest, id: manifest.id || entry.id }, component);
         } catch (err) {
           console.error(`Failed to load extension ${entry.id}:`, err);
