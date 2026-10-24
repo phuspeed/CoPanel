@@ -118,9 +118,10 @@ def test_lock_down_secrets_chmods_sqlite_dbs():
     assert '"${CoPanel_HOME}/config"/*.db' in block
     assert "chmod 600" in block
     backend_start = text.index("log_info \"Initializing CoPanel database...\"")
-    backend_end = text.index("deactivate 2>/dev/null || true", backend_start)
+    backend_end = text.index("Step 4: Frontend Setup", backend_start)
     tail = text[backend_start:backend_end]
     assert "copanel_lock_down_secrets" in tail
+    assert tail.index("chmod -R u+rwX,go+rX") < tail.index("copanel_lock_down_secrets")
 
 
 def test_install_never_cats_admin_password_in_summary():

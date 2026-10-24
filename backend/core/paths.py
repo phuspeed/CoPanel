@@ -54,10 +54,18 @@ def connect_private_sqlite(path: Path) -> sqlite3.Connection:
     upgrades tighten an existing world-readable database.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     if not path.exists():
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE)
-        os.close(fd)
+        try:
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE)
+            os.close(fd)
+        except OSError:
+            # Directory may be unwritable here (import-time module probes).
+            # sqlite3.connect still creates the file when the path is usable.
+            pass
     conn = sqlite3.connect(str(path))
     harden_private_file(path)
     return conn
