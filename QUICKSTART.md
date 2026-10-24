@@ -36,7 +36,7 @@ At the end of `install.sh`, open:
 http://<server-ip>:8686/
 ```
 
-Sign in as `admin` with the password in the installer summary (also stored in `/opt/copanel/config/admin_password.txt`).
+Sign in as `admin` with the password in the installer summary (written once to `/opt/copanel/config/admin_password.txt` and removed after the first successful admin login).
 
 Cloudflare Tunnel uses that same address as the origin: `http://<lan-ip>:8686` or `http://localhost:8686`.
 
@@ -44,7 +44,7 @@ Cloudflare Tunnel uses that same address as the origin: `http://<lan-ip>:8686` o
 
 ✅ **System Monitor** - Real-time CPU, Memory, Disk, Network stats
 ✅ **Dynamic Sidebar** - Auto-updates as new modules are added
-✅ **API Documentation** - Interactive docs at `/api/docs`
+✅ **API Documentation** - Off by default; set `COPANEL_ENABLE_DOCS=1` to enable `/docs`
 ✅ **Dark Theme** - Easy on the eyes
 ✅ **Responsive Design** - Works on mobile too
 

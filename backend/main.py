@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from core.loader import ModuleLoader
 from core import api as core_api
-from core.auth import api_auth_middleware
+from core.auth import api_auth_middleware, fastapi_docs_kwargs
 from core.jobs import jobs as job_manager
 from core.security_entrance import maybe_auto_repair
 
@@ -103,7 +103,8 @@ app = FastAPI(
     title="CoPanel API",
     description="Lightweight Linux VPS Management Panel",
     version=APP_VERSION,
-    lifespan=lifespan
+    lifespan=lifespan,
+    **fastapi_docs_kwargs(),
 )
 
 app.add_middleware(

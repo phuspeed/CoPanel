@@ -110,6 +110,19 @@ def test_systemd_persists_no_avx_when_needed():
     assert "COPANEL_FORCE_NO_AVX=1" in block
 
 
+def test_lock_down_secrets_chmods_sqlite_dbs():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    fn_start = text.index("copanel_lock_down_secrets()")
+    fn_end = text.index("copanel_persist_no_avx_mode()", fn_start)
+    block = text[fn_start:fn_end]
+    assert '"${CoPanel_HOME}/config"/*.db' in block
+    assert "chmod 600" in block
+    backend_start = text.index("log_info \"Initializing CoPanel database...\"")
+    backend_end = text.index("deactivate 2>/dev/null || true", backend_start)
+    tail = text[backend_start:backend_end]
+    assert "copanel_lock_down_secrets" in tail
+
+
 def test_install_never_cats_admin_password_in_summary():
     text = INSTALL_SH.read_text(encoding="utf-8")
     summary_start = text.index("print_summary()")

@@ -30,7 +30,9 @@ DB_PATH = Path("./test_nginx/cron_manager.db") if os.name == "nt" else Path("/op
 
 def _db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    from core.paths import connect_private_sqlite
+
+    conn = connect_private_sqlite(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

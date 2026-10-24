@@ -12,6 +12,7 @@ while we migrate.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -93,7 +94,18 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
     )
 
 
+async def json_decode_exception_handler(_: Request, exc: json.JSONDecodeError) -> JSONResponse:
+    return fail(
+        "VALIDATION_ERROR",
+        "Request body must be JSON.",
+        http_status=422,
+        details={"type": exc.__class__.__name__},
+    )
+
+
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, json.JSONDecodeError):
+        return await json_decode_exception_handler(_, exc)
     logger.exception("Unhandled exception in request: %s", exc)
     return fail(
         "INTERNAL_ERROR",
@@ -151,4 +163,5 @@ def install_exception_handlers(app) -> None:
     """Register the global exception handlers on a FastAPI app."""
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(json.JSONDecodeError, json_decode_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)

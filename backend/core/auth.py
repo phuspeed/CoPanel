@@ -41,6 +41,17 @@ _PUBLIC_PATHS = {
 _AUTH_DISABLED = os.environ.get("COPANEL_DISABLE_AUTH") == "1"
 
 
+def fastapi_docs_enabled() -> bool:
+    """Interactive OpenAPI is off unless ``COPANEL_ENABLE_DOCS=1``."""
+    return os.environ.get("COPANEL_ENABLE_DOCS") == "1"
+
+
+def fastapi_docs_kwargs() -> Dict[str, Optional[str]]:
+    if fastapi_docs_enabled():
+        return {}
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+
 def auth_disabled() -> bool:
     """True when ``COPANEL_DISABLE_AUTH=1`` (test / local harness only)."""
     return _AUTH_DISABLED
@@ -96,12 +107,29 @@ def _user_from_token(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
     return _user_from_bearer_token(parts[1])
 
 
+# Query-string JWT is only for transports that cannot send Authorization
+# (EventSource, WebSocket upgrade, HTML media). Normal JSON APIs must use
+# the Bearer header so tokens do not leak via logs, Referer, or history.
+_QUERY_TOKEN_PATHS = frozenset({"/api/platform/events"})
+_QUERY_TOKEN_PREFIXES = (
+    "/api/backup_manager/stream_task",
+    "/api/terminal/ws",
+)
+
+
+def query_token_allowed(path: str) -> bool:
+    """True when ``?access_token=`` / ``?token=`` may authenticate ``path``."""
+    if path in _QUERY_TOKEN_PATHS:
+        return True
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _QUERY_TOKEN_PREFIXES)
+
+
 def _resolve_user(
     authorization: Optional[str] = None,
     access_token: Optional[str] = None,
     token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Resolve caller from Bearer header or ``access_token`` / ``token`` query."""
+    """Resolve caller from Bearer header and, when provided, a query token."""
     if _AUTH_DISABLED:
         return {"id": 0, "username": "dev", "role": "superadmin", "permitted_modules": "[\"all\"]"}
     user = (
@@ -116,24 +144,16 @@ def _resolve_user(
 
 def require_user(
     authorization: str = Header(None),
-    access_token: Optional[str] = Query(None),
-    token: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
-    """Standard dependency: returns the current user or raises 401.
-
-    EventSource / media elements cannot set Authorization; they may pass
-    ``access_token`` or ``token`` as a query parameter instead.
-    """
-    return _resolve_user(authorization, access_token, token)
+    """Standard dependency: Bearer header only. Raises 401 if missing/invalid."""
+    return _resolve_user(authorization)
 
 
 def require_admin(
     authorization: str = Header(None),
-    access_token: Optional[str] = Query(None),
-    token: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     """Dependency that ensures the caller is a superadmin."""
-    user = _resolve_user(authorization, access_token, token)
+    user = _resolve_user(authorization)
     if user.get("role") != "superadmin":
         raise ApiError("FORBIDDEN", "Administrator privileges required.", http_status=403)
     return user
@@ -148,10 +168,8 @@ def require_module(module_id: str) -> Callable[..., Dict[str, Any]]:
 
     def _dep(
         authorization: str = Header(None),
-        access_token: Optional[str] = Query(None),
-        token: Optional[str] = Query(None),
     ) -> Dict[str, Any]:
-        user = _resolve_user(authorization, access_token, token)
+        user = _resolve_user(authorization)
         if user.get("role") == "superadmin":
             return user
         permitted = _normalize_permitted(user.get("permitted_modules"))
@@ -215,8 +233,9 @@ async def api_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     authorization = request.headers.get("authorization")
-    # Also accept legacy ``?token=`` used by HTML5 audio/img (audio_station).
-    access_token = request.query_params.get("access_token") or request.query_params.get("token")
+    access_token = None
+    if query_token_allowed(path):
+        access_token = request.query_params.get("access_token") or request.query_params.get("token")
     user = _user_from_token(authorization) or _user_from_bearer_token(access_token)
     if not user:
         return JSONResponse(

@@ -1822,6 +1822,7 @@ setup_user_and_dirs() {
 
 copanel_lock_down_secrets() {
     local f
+    # Recursive chmod u+rwX,go+rX would leave DBs/secrets world-readable.
     for f in \
         "${CoPanel_HOME}/config/jwt_secret" \
         "${CoPanel_HOME}/config/copanel.env" \
@@ -1832,8 +1833,19 @@ copanel_lock_down_secrets() {
     do
         if [[ -f "$f" ]]; then
             chmod 600 "$f" || true
+            if id "${CoPanel_USER}" &>/dev/null; then
+                chown "${CoPanel_USER}:${CoPanel_USER}" "$f" || true
+            fi
         fi
     done
+    shopt -s nullglob
+    for f in "${CoPanel_HOME}/config"/*.db; do
+        chmod 600 "$f" || true
+        if id "${CoPanel_USER}" &>/dev/null; then
+            chown "${CoPanel_USER}:${CoPanel_USER}" "$f" || true
+        fi
+    done
+    shopt -u nullglob
 }
 
 # Create the JWT secret once and point systemd at it. Reinstalls keep the
@@ -1987,6 +1999,7 @@ setup_backend() {
     # Final ownership check
     chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
     chmod -R u+rwX,go+rX "$CoPanel_HOME"
+    copanel_lock_down_secrets
     
     deactivate 2>/dev/null || true
 }
@@ -2775,6 +2788,10 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        # $remote_addr is the TCP peer (browser, or CDN edge). Login lockout
+        # trusts X-Real-IP / X-Forwarded-For only from 127.0.0.1. Behind
+        # Cloudflare or another CDN, enable nginx real_ip with that provider's
+        # address ranges so $remote_addr is the client, not a shared edge IP.
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
