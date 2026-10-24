@@ -18,9 +18,15 @@ from core.auth import require_admin, require_user, user_from_verified_payload
 from core.security import verify_password, create_access_token, verify_token
 from core import user_model
 
-# In-memory login lockout. 10 failures per IP or per username inside 15 minutes.
+# Username lockout is primary: 10 failures / 15 minutes for that username.
+# IP is a short burst throttle on *failed* attempts only so a shared NAT/CDN
+# hop cannot 429 every other account. Valid credentials for an unlocked
+# username always succeed. Behind Cloudflare/another CDN, nginx must set
+# real_ip so X-Real-IP / X-Forwarded-For is the client, not the edge.
 _LOGIN_WINDOW_SEC = 15 * 60
 _LOGIN_MAX_FAILURES = 10
+_IP_BURST_WINDOW_SEC = 60
+_IP_BURST_MAX_FAILURES = 30
 _login_failures: Dict[str, List[float]] = {}
 _login_lock = threading.Lock()
 
@@ -35,10 +41,18 @@ def _prune_attempts(now: float, stamps: List[float]) -> List[float]:
     return [stamp for stamp in stamps if now - stamp < _LOGIN_WINDOW_SEC]
 
 
-def _attempt_keys(ip: str, username: str) -> List[str]:
+def _user_attempt_key(username: str) -> str:
     user_key = (username or "").strip().lower()[:128] or "-"
+    return f"user:{user_key}"
+
+
+def _ip_attempt_key(ip: str) -> str:
     ip_key = (ip or "unknown").strip()[:128] or "unknown"
-    return [f"ip:{ip_key}", f"user:{user_key}"]
+    return f"ip:{ip_key}"
+
+
+def _attempt_keys(ip: str, username: str) -> List[str]:
+    return [_ip_attempt_key(ip), _user_attempt_key(username)]
 
 
 def _client_ip(request: Request) -> str:
@@ -55,19 +69,28 @@ def _client_ip(request: Request) -> str:
 
 
 def _login_is_limited(ip: str, username: str) -> bool:
+    """True when this username is locked. IP is not a global lockout."""
     now = time.monotonic()
+    user_key = _user_attempt_key(username)
     with _login_lock:
         if len(_login_failures) > 10000:
             _login_failures.clear()
-        for key in _attempt_keys(ip, username):
-            stamps = _prune_attempts(now, _login_failures.get(key, []))
-            if stamps:
-                _login_failures[key] = stamps
-            elif key in _login_failures:
-                del _login_failures[key]
-            if len(stamps) >= _LOGIN_MAX_FAILURES:
-                return True
-    return False
+        stamps = _prune_attempts(now, _login_failures.get(user_key, []))
+        if stamps:
+            _login_failures[user_key] = stamps
+        elif user_key in _login_failures:
+            del _login_failures[user_key]
+        return len(stamps) >= _LOGIN_MAX_FAILURES
+
+
+def _ip_burst_limited(ip: str) -> bool:
+    now = time.monotonic()
+    ip_key = _ip_attempt_key(ip)
+    with _login_lock:
+        stamps = [s for s in _login_failures.get(ip_key, []) if now - s < _IP_BURST_WINDOW_SEC]
+        if stamps:
+            _login_failures[ip_key] = _prune_attempts(now, _login_failures.get(ip_key, []))
+        return len(stamps) >= _IP_BURST_MAX_FAILURES
 
 
 def _record_login_failure(ip: str, username: str) -> None:
@@ -80,9 +103,9 @@ def _record_login_failure(ip: str, username: str) -> None:
 
 
 def _clear_login_failures(ip: str, username: str) -> None:
+    """Clear the username bucket only; keep IP burst history."""
     with _login_lock:
-        for key in _attempt_keys(ip, username):
-            _login_failures.pop(key, None)
+        _login_failures.pop(_user_attempt_key(username), None)
 
 
 def _enforce_login_rate_limit(ip: str, username: str) -> None:
@@ -91,6 +114,17 @@ def _enforce_login_rate_limit(ip: str, username: str) -> None:
             "RATE_LIMITED",
             "Too many login attempts. Try again later.",
             http_status=429,
+        )
+
+
+def _require_json_login(request: Request) -> None:
+    """Reject form-urlencoded (and other non-JSON) login bodies with 422, not 500."""
+    raw = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if raw != "application/json":
+        raise ApiError(
+            "VALIDATION_ERROR",
+            "Login requires Content-Type: application/json.",
+            http_status=422,
         )
 
 router = APIRouter()
@@ -144,7 +178,7 @@ def get_current_user(authorization: str = Header(None)) -> Dict[str, Any]:
     return user
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(_require_json_login)])
 def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
     """Authenticates users and produces a JWT access token."""
     client_ip = _client_ip(request)
@@ -159,6 +193,12 @@ def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
             actor=req.username,
             status="error",
         )
+        if _ip_burst_limited(client_ip):
+            raise ApiError(
+                "RATE_LIMITED",
+                "Too many login attempts. Try again later.",
+                http_status=429,
+            )
         raise ApiError("INVALID_CREDENTIALS", "Incorrect username or password.", http_status=401)
 
     if user.get("totp_enabled"):
@@ -185,6 +225,8 @@ def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
             raise ApiError("INVALID_CREDENTIALS", "Invalid two-factor code.", http_status=401)
 
     _clear_login_failures(client_ip, req.username)
+    if user.get("role") == "superadmin":
+        user_model.clear_admin_password_file()
     token = create_access_token(
         data={
             "sub": user["username"],

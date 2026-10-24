@@ -5,7 +5,12 @@ Handles roles, permissions, and folder isolation for users.
 import sqlite3
 import json
 from typing import Optional, List, Dict, Any
-from .paths import config_dir, write_private_text
+from .paths import (
+    config_dir,
+    connect_private_sqlite,
+    harden_config_private_files,
+    write_private_text,
+)
 from .security import hash_password, verify_password
 
 
@@ -21,11 +26,23 @@ def pwd_path():
 
 def get_db_connection():
     """Establishes and returns a connection to the SQLite database."""
-    path = db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = connect_private_sqlite(db_path())
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def clear_admin_password_file() -> None:
+    """Remove the installer plaintext password after first successful login."""
+    path = pwd_path()
+    try:
+        if path.is_file():
+            write_private_text(path, "")
+            path.unlink()
+    except OSError:
+        try:
+            write_private_text(path, "")
+        except OSError:
+            pass
 
 
 def init_db():
@@ -43,6 +60,7 @@ def init_db():
     );
     """)
     conn.commit()
+    harden_config_private_files()
     _migrate_user_totp_columns(conn)
     _migrate_user_token_version(conn)
 
@@ -188,7 +206,7 @@ def change_password(user_id: int, new_password_plain: str) -> bool:
     rows_affected = cursor.rowcount
     conn.close()
     if rows_affected > 0 and user and user.get("role") == "superadmin":
-        write_private_text(pwd_path(), new_password_plain)
+        clear_admin_password_file()
     return rows_affected > 0
 
 
@@ -293,8 +311,8 @@ def change_admin_password(new_password: str) -> bool:
     conn.commit()
     rows_affected = cursor.rowcount
     conn.close()
-
-    write_private_text(pwd_path(), new_password)
+    if rows_affected > 0:
+        clear_admin_password_file()
     return rows_affected > 0
 
 

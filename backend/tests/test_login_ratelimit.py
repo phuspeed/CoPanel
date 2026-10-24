@@ -52,6 +52,17 @@ class LoginRateLimitTests(unittest.TestCase):
         )
         self.assertEqual(other.status_code, 401, other.text)
 
+    def test_ip_failures_do_not_lock_unrelated_username(self):
+        for _ in range(_LOGIN_MAX_FAILURES):
+            _record_login_failure("203.0.113.50", "mallory")
+        other = self.client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "wrong"},
+            headers={"X-Forwarded-For": "203.0.113.50"},
+        )
+        self.assertEqual(other.status_code, 401, other.text)
+
 
 if __name__ == "__main__":
     unittest.main()
+

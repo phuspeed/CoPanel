@@ -65,7 +65,9 @@ def appstore_config_db_file() -> Path:
 def _cfg_db() -> sqlite3.Connection:
     db_path = appstore_config_db_file()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    from core.paths import connect_private_sqlite
+
+    conn = connect_private_sqlite(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 

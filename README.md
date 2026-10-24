@@ -194,7 +194,7 @@ Open the panel on the LAN:
 http://<server-ip>:8686/
 ```
 
-Sign in with the admin password printed by the installer (`admin` / the value in `/opt/copanel/config/admin_password.txt`). The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
+Sign in with the admin password printed by the installer (`admin` / first-install value in `/opt/copanel/config/admin_password.txt`, removed after the first successful admin login). The API process stays on `127.0.0.1:8000` and is not opened in the firewall.
 
 Cloudflare Tunnel uses the same plain HTTP port. Either origin works:
 
@@ -209,7 +209,9 @@ ingress:
 
 - **Web UI**: `http://<server-ip>:8686/` (printed at the end of `install.sh`)
 - **Backend API**: http://127.0.0.1:8000 (localhost only)
-- **API Docs**: http://127.0.0.1:8000/docs (localhost only)
+- **API Docs**: disabled in production. Set `COPANEL_ENABLE_DOCS=1` on the backend to expose `/docs`, `/redoc`, and `/openapi.json` (still loopback-only).
+
+Login rate limits are username-first. The backend trusts `X-Real-IP` / `X-Forwarded-For` only when the peer is localhost (nginx → `127.0.0.1:8000`). If the panel sits behind Cloudflare or another CDN, configure nginx `real_ip` with that provider's address ranges so `$remote_addr` is the client. Otherwise every visitor shares the edge IP and a burst of failed logins can briefly throttle that hop.
 
 ## 🔌 Creating a New Module
 

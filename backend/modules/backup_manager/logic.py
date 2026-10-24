@@ -105,7 +105,9 @@ class ProfileManager:
     @staticmethod
     def _get_db():
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH))
+        from core.paths import connect_private_sqlite
+
+        conn = connect_private_sqlite(DB_PATH)
         conn.row_factory = sqlite3.Row
         return conn
 
