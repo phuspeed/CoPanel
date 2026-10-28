@@ -2714,6 +2714,77 @@ EOF
 # Step 5: Nginx Configuration
 ###############################################################################
 
+# Highest installed PHP-FPM socket, or a placeholder until Package Manager
+# installs php-fpm. One peer: a list of missing sockets with max_fails=1 makes
+# nginx return 502 (no live upstreams) for /phpmyadmin.
+copanel_php_fpm_socket() {
+    local sock score best_score best nullglob_was=0
+    local -a candidates=()
+    best_score=-1
+    best=""
+    if shopt -q nullglob; then
+        nullglob_was=1
+    else
+        shopt -s nullglob
+    fi
+    candidates=(/run/php/php*-fpm.sock /var/run/php/php*-fpm.sock /run/php-fpm/www.sock /var/run/php-fpm/www.sock)
+    if [[ "$nullglob_was" -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+    for sock in "${candidates[@]}"; do
+        [[ -S "$sock" ]] || continue
+        score=0
+        if [[ "$sock" =~ php([0-9]+)\.([0-9]+)-fpm\.sock$ ]]; then
+            score=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${BASH_REMATCH[2]} ))
+        fi
+        if (( score > best_score )); then
+            best_score=$score
+            best=$sock
+        fi
+    done
+    if [[ -n "$best" ]]; then
+        printf '%s' "$best"
+        return 0
+    fi
+    printf '%s' "/run/php/php-fpm.sock"
+}
+
+copanel_phpmyadmin_docroot() {
+    local d
+    for d in /usr/share/phpmyadmin /usr/share/phpMyAdmin /var/www/html/phpmyadmin /var/www/html/phpMyAdmin; do
+        if [[ -f "${d}/index.php" ]]; then
+            printf '%s' "$d"
+            return 0
+        fi
+    done
+    printf '%s' "/usr/share/phpmyadmin"
+}
+
+copanel_apply_phpmyadmin_nginx_paths() {
+    local conf="$1"
+    local pma_sock pma_root
+    pma_sock="$(copanel_php_fpm_socket)"
+    pma_root="$(copanel_phpmyadmin_docroot)"
+    case "$pma_sock" in
+        /run/php/php*-fpm.sock|/var/run/php/php*-fpm.sock|/run/php-fpm/www.sock|/var/run/php-fpm/www.sock)
+            ;;
+        *)
+            pma_sock="/run/php/php-fpm.sock"
+            ;;
+    esac
+    case "$pma_root" in
+        /usr/share/phpmyadmin|/usr/share/phpMyAdmin|/var/www/html/phpmyadmin|/var/www/html/phpMyAdmin)
+            ;;
+        *)
+            pma_root="/usr/share/phpmyadmin"
+            ;;
+    esac
+    sed -i \
+        -e "s#__COPANEL_PHP_FPM_SOCK__#${pma_sock}#g" \
+        -e "s#__COPANEL_PMA_ROOT__#${pma_root}#g" \
+        "$conf"
+}
+
 setup_nginx() {
     log_info "Configuring Nginx reverse proxy (HTTP on port ${NGINX_PORT})..."
 
@@ -2740,14 +2811,34 @@ upstream copanel_backend {
     server 127.0.0.1:8000;
 }
 
-upstream php_fpm {
-    server unix:/run/php-fpm/www.sock max_fails=1 fail_timeout=1s;
-    server unix:/run/php/php8.3-fpm.sock max_fails=1 fail_timeout=1s;
-    server unix:/run/php/php8.2-fpm.sock max_fails=1 fail_timeout=1s;
-    server unix:/run/php/php8.1-fpm.sock max_fails=1 fail_timeout=1s;
-    server unix:/run/php/php8.0-fpm.sock max_fails=1 fail_timeout=1s;
-    server unix:/run/php/php7.4-fpm.sock max_fails=1 fail_timeout=1s;
+# BEGIN COPANEL PHPMYADMIN MAP
+# Direct http://HOST:8686 clients send no X-Forwarded-Proto, so phpMyAdmin
+# stays on the origin scheme. Cloudflare Tunnel (and other reverse proxies)
+# set X-Forwarded-Proto or CF-Visitor to https. The public port is then 443
+# unless the proxy sends a numeric X-Forwarded-Port.
+map "$http_x_forwarded_proto#$http_cf_visitor" $copanel_pma_scheme {
+    default $scheme;
+    "~*^https" https;
+    "~*^http#" http;
+    "~*scheme.:.https" https;
 }
+map $copanel_pma_scheme $copanel_pma_https {
+    https   on;
+    default "";
+}
+map $http_x_forwarded_port $copanel_pma_xf_port {
+    default "";
+    "~^[0-9]{1,5}$" $http_x_forwarded_port;
+}
+map $copanel_pma_scheme $copanel_pma_scheme_port {
+    https   443;
+    default $server_port;
+}
+map $copanel_pma_xf_port $copanel_pma_server_port {
+    ""      $copanel_pma_scheme_port;
+    default $copanel_pma_xf_port;
+}
+# END COPANEL PHPMYADMIN MAP
 
 server {
     listen 8686;
@@ -2764,21 +2855,64 @@ server {
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     }
     
-    # phpMyAdmin direct configuration
-    location /phpmyadmin {
-        root /usr/share/;
-        index index.php index.html index.htm;
-        location ~ ^/phpmyadmin/(.+\.php)$ {
-            try_files $uri =404;
-            root /usr/share/;
-            fastcgi_pass php_fpm;
-            include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    # BEGIN COPANEL PHPMYADMIN
+    location = /phpmyadmin {
+        absolute_redirect off;
+        return 301 /phpmyadmin/;
+    }
+
+    location ^~ /phpmyadmin/ {
+        alias __COPANEL_PMA_ROOT__/;
+        index index.php;
+        absolute_redirect off;
+
+        location ~ /\. {
+            deny all;
         }
-        location ~* ^/phpmyadmin/(.+\.(jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
-            root /usr/share/;
+
+        location ~ ^/phpmyadmin/(libraries|templates|setup|vendor|locale)/ {
+            deny all;
+        }
+
+        location = /phpmyadmin/config.inc.php {
+            deny all;
+        }
+
+        location ~ ^/phpmyadmin/(?<pma_script>.+\.php)$ {
+            fastcgi_pass unix:__COPANEL_PHP_FPM_SOCK__;
+            fastcgi_index index.php;
+            fastcgi_hide_header X-Powered-By;
+            fastcgi_buffers 16 16k;
+            fastcgi_buffer_size 32k;
+            fastcgi_busy_buffers_size 64k;
+            fastcgi_read_timeout 300s;
+            fastcgi_param QUERY_STRING $query_string;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param CONTENT_TYPE $content_type;
+            fastcgi_param CONTENT_LENGTH $content_length;
+            fastcgi_param SCRIPT_NAME $fastcgi_script_name;
+            fastcgi_param REQUEST_URI $request_uri;
+            fastcgi_param DOCUMENT_URI $document_uri;
+            fastcgi_param DOCUMENT_ROOT __COPANEL_PMA_ROOT__;
+            fastcgi_param SERVER_PROTOCOL $server_protocol;
+            fastcgi_param REQUEST_SCHEME $copanel_pma_scheme;
+            fastcgi_param HTTPS $copanel_pma_https if_not_empty;
+            fastcgi_param GATEWAY_INTERFACE CGI/1.1;
+            fastcgi_param SERVER_SOFTWARE nginx/$nginx_version;
+            fastcgi_param REMOTE_ADDR $remote_addr;
+            fastcgi_param REMOTE_PORT $remote_port;
+            fastcgi_param SERVER_ADDR $server_addr;
+            fastcgi_param SERVER_PORT $copanel_pma_server_port;
+            fastcgi_param SERVER_NAME $host;
+            fastcgi_param REDIRECT_STATUS 200;
+            fastcgi_param SCRIPT_FILENAME __COPANEL_PMA_ROOT__/$pma_script;
+            fastcgi_param HTTP_HOST $http_host;
+            fastcgi_param HTTP_SCHEME $copanel_pma_scheme;
+            fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+            fastcgi_param HTTP_X_FORWARDED_FOR $proxy_add_x_forwarded_for;
         }
     }
+    # END COPANEL PHPMYADMIN
     
     # API endpoints
     location /api/ {
@@ -2811,6 +2945,7 @@ server {
 }
 EOF
 
+    copanel_apply_phpmyadmin_nginx_paths "$NGINX_CONF"
     copanel_strip_nginx_ipv6_if_needed "$NGINX_CONF"
     copanel_entrance_cli apply-nginx "$NGINX_CONF"
     

@@ -6,7 +6,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
-**Fixed / Improved (`site_wizard` 1.2.0, `web_manager` 1.3.0, `database_manager` 1.1.0, `ssl_manager` 1.1.4, `appstore_manager` 1.0.39)**
+**Fixed / Improved (`site_wizard` 1.2.0, `web_manager` 1.3.1, `database_manager` 1.1.0, `ssl_manager` 1.1.4, `appstore_manager` 1.0.39)**
 
 - Web 1-click runs package installs, downloads, and certbot off the API event loop, so the panel stays usable while a site is provisioning. The installer nginx `/api/` location now allows 300s proxy read/send timeouts.
 - PHP extensions use real package names (`php{ver}-mysql` on apt, `php-mysqlnd` on Alma/RHEL). The wizard uses the distro PHP (`auto`) and fails with the missing version instead of pointing nginx at a different PHP-FPM socket.
@@ -17,6 +17,7 @@ All notable changes to CoPanel are documented in this file.
 
 **Fixed**
 
+- phpMyAdmin on port 8686 no longer returns 502 when the panel is opened through a Cloudflare Tunnel. Package Manager installs PHP-FPM with phpMyAdmin (the apt package alone often leaves only Apache's mod_php, so nginx had no FastCGI socket). The panel nginx site uses that one live socket instead of a `max_fails=1` list of missing sockets, and gives phpMyAdmin the forwarded HTTPS scheme. Direct `http://HOST:8686/phpmyadmin/` stays plain HTTP. (`package_manager` **1.0.7**, `web_manager` **1.3.1**)
 - `install.sh` on a CPU without AVX installs `frontend/prebuilt/dist.tar.gz` and does not run Vite. Native esbuild and esbuild-wasm both segfault on that CPU (`Segmentation fault`, including `runtime/asm_wasm.s`). The panel that worked before the HTTPS upgrade already had a compiled `dist`; the upgrade was deleting it and compiling on the NUC.
 
 **Security**
@@ -43,6 +44,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- phpMyAdmin qua Cloudflare Tunnel không còn 502. Cài PHP-FPM cùng phpMyAdmin, nginx trỏ một socket đang chạy, và nhận scheme HTTPS từ tunnel. Mở trực tiếp `http://HOST:8686/phpmyadmin/` vẫn là HTTP.
 - Máy không có AVX (Intel NUC) không còn chạy Vite lúc cài. Installer giải nén frontend đã build sẵn, vì esbuild native và WASM đều bị segfault trên CPU này.
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.
 - Cổng 8686 trở lại HTTP thường. Gỡ HTTPS tự ký, origin loopback `127.0.0.1:8687` và đường dẫn `/<token>/` vì Cloudflare Tunnel bị 502 khi bắt tay TLS với panel. Nâng cấp ghi lại nginx `listen 8686`. Mở `http://<ip-lan>:8686/`. Origin tunnel: `http://<ip-lan>:8686` hoặc `http://localhost:8686`.

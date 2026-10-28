@@ -414,19 +414,13 @@ def install_package(pkg_id: str) -> Dict[str, Any]:
             save_packages(packages)
             return target_pkg
 
-        # Special install flow for phpMyAdmin
+        # phpMyAdmin needs PHP-FPM. The apt package alone often pulls Apache's
+        # mod_php and leaves nginx with no FastCGI socket (502 through the panel
+        # and through a Cloudflare Tunnel).
         if pkg_id == "phpmyadmin":
-            pm = _pkg_manager()
-            if not pm:
-                raise RuntimeError("No supported package manager found.")
-            if pm == "apt-get":
-                _run_with_optional_sudo([pm, "update", "-y"], check=False)
-                _run_with_optional_sudo([pm, "install", "-y", "phpmyadmin"], check=True)
-            else:
-                try:
-                    _run_with_optional_sudo([pm, "install", "-y", "phpMyAdmin"], check=True)
-                except Exception:
-                    _run_with_optional_sudo([pm, "install", "-y", "phpmyadmin"], check=True)
+            from .phpmyadmin_nginx import install_phpmyadmin
+
+            install_phpmyadmin()
             target_pkg["status"] = "running"
             save_packages(packages)
             return target_pkg

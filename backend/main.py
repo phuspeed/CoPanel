@@ -87,6 +87,14 @@ async def lifespan(app: FastAPI):
             maybe_auto_repair_nginx_gate()
         except Exception as exc:
             logger.warning("panel_settings startup hook: %s", exc)
+        try:
+            # Already-installed phpMyAdmin: one live PHP-FPM socket and FastCGI
+            # params that keep direct :8686 on HTTP and a tunnel on HTTPS.
+            from modules.package_manager.phpmyadmin_nginx import maybe_repair_phpmyadmin
+
+            maybe_repair_phpmyadmin()
+        except Exception as exc:
+            logger.warning("phpMyAdmin nginx repair: %s", exc)
 
     threading.Thread(
         target=_nginx_gate_repair_bg,
