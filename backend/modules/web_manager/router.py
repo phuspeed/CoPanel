@@ -1037,17 +1037,15 @@ async def install_db_admin_tool(tool_id: str) -> Dict[str, Any]:
                     run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
                 except Exception:
                     run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
-                run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
             else:
                 try:
                     run_with_optional_sudo([pkg, "install", "-y", "mariadb-server"])
                 except Exception:
                     run_with_optional_sudo([pkg, "install", "-y", "mysql-server"])
-                # phpMyAdmin package name differs by distro; try best-effort
-                try:
-                    run_with_optional_sudo([pkg, "install", "-y", "phpMyAdmin"])
-                except Exception:
-                    run_with_optional_sudo([pkg, "install", "-y", "phpmyadmin"])
+            # Same post-install as Package Manager: PHP-FPM plus the panel nginx snippet.
+            from modules.package_manager.phpmyadmin_nginx import install_phpmyadmin
+
+            install_phpmyadmin()
             return {"status": "success", "message": "MySQL/MariaDB and phpMyAdmin installation completed."}
 
         if tool_id == "postgresql":
