@@ -130,7 +130,6 @@ backend/dist/
 backend/modules/file_manager/bookmarks_store/
 
 # AppStore-installed modules (sources in CoPanel-AppStore/packages_src; not in core clone)
-backend/modules/cloudflare_ddns/
 backend/modules/download_manager/
 backend/modules/storage_manager/
 backend/modules/webdav/
