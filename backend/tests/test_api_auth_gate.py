@@ -118,7 +118,7 @@ class TerminalWsAuthTests(_AuthFlagMixin, unittest.TestCase):
         finally:
             self.restore_auth()
 
-    def test_websocket_accepts_access_token_query(self):
+    def test_websocket_accepts_ticket_query(self):
         from unittest.mock import patch
         from modules.terminal.router import router as terminal_router
 
@@ -133,9 +133,9 @@ class TerminalWsAuthTests(_AuthFlagMixin, unittest.TestCase):
                 "role": "superadmin",
                 "permitted_modules": '["all"]',
             }
-            with patch("modules.terminal.router.user_from_access_token", return_value=fake_user):
+            with patch("modules.terminal.router.user_from_stream_ticket", return_value=fake_user):
                 with patch("modules.terminal.router.IS_WINDOWS", True):
-                    with client.websocket_connect("/api/terminal/ws?access_token=test-jwt") as ws:
+                    with client.websocket_connect("/api/terminal/ws?ticket=test-ticket") as ws:
                         msg = ws.receive_text()
                         self.assertIn("mock", msg.lower())
         finally:

@@ -248,6 +248,18 @@ def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
     }
 
 
+@router.post("/stream-ticket")
+def stream_ticket(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    """Issue a ~60s single-use ticket for EventSource / WebSocket query auth."""
+    from core.stream_tickets import TICKET_TTL_SECONDS, issue_ticket
+
+    return {
+        "status": "success",
+        "ticket": issue_ticket(user),
+        "expires_in": TICKET_TTL_SECONDS,
+    }
+
+
 @router.post("/logout")
 def logout(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     """Invalidate every token for this user (logout-all)."""
