@@ -168,9 +168,9 @@ class SnippetTests(unittest.TestCase):
             self.assertEqual(site.read_text(encoding="utf-8"), OLD_SITE)
 
     def test_repair_does_not_install_packages_when_phpmyadmin_is_absent(self):
-        os.environ.pop("COPANEL_TEST_CONFIG_DIR", None)
-        os.environ.pop("COPANEL_DISABLE_PMA_REPAIR", None)
-        with patch.object(pma, "find_docroot", return_value=None), patch.object(
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("COPANEL_TEST_CONFIG_DIR", "COPANEL_DISABLE_PMA_REPAIR")}
+        with patch.dict(os.environ, env, clear=True), patch.object(pma, "find_docroot", return_value=None), patch.object(
             pma, "install_php_fpm_packages", side_effect=AssertionError("apt should not run")
         ):
             self.assertIsNone(pma.maybe_repair_phpmyadmin())

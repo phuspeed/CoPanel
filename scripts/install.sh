@@ -2811,6 +2811,26 @@ upstream copanel_backend {
     server 127.0.0.1:8000;
 }
 
+# BEGIN COPANEL LOG REDACTION
+# Never write credentials from the query string to access.log. SSE/WebSocket
+# auth uses a short-lived ?ticket=; older clients sent ?access_token=<JWT>.
+map $request_uri $copanel_log_uri_a {
+    default $request_uri;
+    "~^(?<cpl_a1>.*[?&]access_token=)[^&]*(?<cpl_a2>.*)$" "${cpl_a1}REDACTED${cpl_a2}";
+}
+map $copanel_log_uri_a $copanel_log_uri_b {
+    default $copanel_log_uri_a;
+    "~^(?<cpl_b1>.*[?&]ticket=)[^&]*(?<cpl_b2>.*)$" "${cpl_b1}REDACTED${cpl_b2}";
+}
+map $copanel_log_uri_b $copanel_log_uri {
+    default $copanel_log_uri_b;
+    "~^(?<cpl_c1>.*[?&]token=)[^&]*(?<cpl_c2>.*)$" "${cpl_c1}REDACTED${cpl_c2}";
+}
+log_format copanel_redacted '$remote_addr - $remote_user [$time_local] '
+                            '"$request_method $copanel_log_uri $server_protocol" '
+                            '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
+# END COPANEL LOG REDACTION
+
 # BEGIN COPANEL PHPMYADMIN MAP
 # Direct http://HOST:8686 clients send no X-Forwarded-Proto, so phpMyAdmin
 # stays on the origin scheme. Cloudflare Tunnel (and other reverse proxies)
@@ -2845,6 +2865,8 @@ server {
     listen [::]:8686;
 
     server_name _;
+
+    access_log /var/log/nginx/access.log copanel_redacted;
 
     client_max_body_size 100M;
     

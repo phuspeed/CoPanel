@@ -145,10 +145,11 @@ class QueryTokenRejectedTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual(res.json()["user"]["username"], self._username)
 
-    def test_query_token_still_accepted_on_sse_path(self):
+    def test_query_jwt_rejected_on_sse_path(self):
         res = self.client.get(f"/api/platform/events?access_token={self.token}")
-        # Path is not mounted here; middleware must not 401 a valid query token.
-        self.assertNotEqual(res.status_code, 401, res.text)
+        self.assertEqual(res.status_code, 401, res.text)
+        res = self.client.get(f"/api/platform/events?token={self.token}")
+        self.assertEqual(res.status_code, 401, res.text)
 
 
 class LoginContentTypeTests(unittest.TestCase):

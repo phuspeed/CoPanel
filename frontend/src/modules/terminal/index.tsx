@@ -8,6 +8,7 @@ import ModuleViewport from '../../core/shell/ModuleViewport';
 import { useIsWindowedModule } from '../../core/shell/WindowViewportContext';
 import { isLayoutViewportWide } from '../../core/viewportDesktopSite';
 import * as Icons from 'lucide-react';
+import { fetchStreamTicket } from '../../core/authHeaders';
 
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
@@ -260,8 +261,9 @@ export default function TerminalDashboard() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       const port = window.location.port ? `:${window.location.port}` : '';
-      const authToken = localStorage.getItem('copanel_token') || '';
-      const wsUrl = `${proto}//${host}${port}/api/terminal/ws?access_token=${encodeURIComponent(authToken)}`;
+      const ticket = await fetchStreamTicket();
+      if (disposed) return;
+      const wsUrl = `${proto}//${host}${port}/api/terminal/ws?ticket=${encodeURIComponent(ticket || '')}`;
 
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;

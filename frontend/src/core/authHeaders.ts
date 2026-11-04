@@ -27,3 +27,20 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Prom
   const headers = getAuthHeaders(init.headers);
   return fetch(input, { ...init, headers });
 }
+
+/**
+ * Fetch a short-lived (~60s), single-use ticket for EventSource / WebSocket
+ * query auth. Never put the long-lived JWT in a URL: URLs end up in access
+ * logs, proxies and browser history. Call again before every (re)connect.
+ */
+export async function fetchStreamTicket(): Promise<string | null> {
+  if (!getAuthToken()) return null;
+  try {
+    const res = await apiFetch('/api/auth/stream-ticket', { method: 'POST' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.ticket === 'string' ? data.ticket : null;
+  } catch {
+    return null;
+  }
+}

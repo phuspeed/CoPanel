@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from .api import ApiError
 from .security import verify_token
+from .stream_tickets import consume_ticket
 from . import user_model
 
 
@@ -107,9 +108,10 @@ def _user_from_token(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
     return _user_from_bearer_token(parts[1])
 
 
-# Query-string JWT is only for transports that cannot send Authorization
-# (EventSource, WebSocket upgrade, HTML media). Normal JSON APIs must use
-# the Bearer header so tokens do not leak via logs, Referer, or history.
+# Query-string auth is only for transports that cannot send Authorization
+# (EventSource, WebSocket upgrade). Only short-lived single-use ``?ticket=``
+# values (see ``core.stream_tickets``) are accepted there; full JWTs in the
+# query string are rejected so they never land in access logs.
 _QUERY_TOKEN_PATHS = frozenset({"/api/platform/events"})
 _QUERY_TOKEN_PREFIXES = (
     "/api/backup_manager/stream_task",
@@ -118,7 +120,7 @@ _QUERY_TOKEN_PREFIXES = (
 
 
 def query_token_allowed(path: str) -> bool:
-    """True when ``?access_token=`` / ``?token=`` may authenticate ``path``."""
+    """True when a ``?ticket=`` query value may authenticate ``path``."""
     if path in _QUERY_TOKEN_PATHS:
         return True
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _QUERY_TOKEN_PREFIXES)
@@ -191,17 +193,32 @@ def optional_user(authorization: str = Header(None)) -> Optional[Dict[str, Any]]
 
 
 def optional_user_sse(
+    request: Request,
     authorization: str = Header(None),
-    access_token: Optional[str] = Query(None),
-    token: Optional[str] = Query(None),
 ) -> Optional[Dict[str, Any]]:
-    """EventSource cannot send Authorization headers; accept ``access_token`` / ``token`` query."""
-    return _user_from_token(authorization) or _user_from_bearer_token(access_token or token)
+    """EventSource cannot send Authorization headers; accept a stream ``ticket``.
+
+    The global middleware consumes the ticket and stores the user on
+    ``request.state``; fall back to consuming it here when the middleware is
+    not installed (e.g. minimal test apps).
+    """
+    user = _user_from_token(authorization)
+    if user:
+        return user
+    user = getattr(request.state, "stream_user", None)
+    if user:
+        return user
+    return consume_ticket(request.query_params.get("ticket"))
 
 
 def user_from_access_token(access_token: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Resolve a user from a raw bearer token string (WebSocket / query)."""
+    """Resolve a user from a raw bearer token string (Authorization header)."""
     return _user_from_bearer_token(access_token)
+
+
+def user_from_stream_ticket(ticket: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Resolve + consume a short-lived stream ticket (WebSocket / SSE query)."""
+    return consume_ticket(ticket)
 
 
 def user_has_module(user: Dict[str, Any], module_id: str) -> bool:
@@ -233,10 +250,11 @@ async def api_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     authorization = request.headers.get("authorization")
-    access_token = None
-    if query_token_allowed(path):
-        access_token = request.query_params.get("access_token") or request.query_params.get("token")
-    user = _user_from_token(authorization) or _user_from_bearer_token(access_token)
+    user = _user_from_token(authorization)
+    if not user and query_token_allowed(path):
+        user = consume_ticket(request.query_params.get("ticket"))
+        if user:
+            request.state.stream_user = user
     if not user:
         return JSONResponse(
             status_code=401,

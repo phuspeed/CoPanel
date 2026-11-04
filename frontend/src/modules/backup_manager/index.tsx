@@ -7,6 +7,7 @@ import WindowModal from '../../core/shell/WindowModal';
 import BackupManagerSidebar, { type BackupTab } from './components/BackupManagerSidebar';
 import { cn } from '../../lib/utils';
 import * as Icons from 'lucide-react';
+import { fetchStreamTicket } from '../../core/authHeaders';
 
 // --- Types ---
 interface RemoteInfo {
@@ -810,15 +811,15 @@ export default function BackupManagerDashboard() {
     setForm((prev) => ({ ...prev, cron_expression: cron }));
   };
 
-  const runStream = (profile: Profile) => {
+  const runStream = async (profile: Profile) => {
     setStreamingProfile(profile);
     setStreamProgress(-1);
     setStreamStats(null);
     setStreamLogs([]);
     setStreamDone(false);
 
-    const authToken = localStorage.getItem('copanel_token') || '';
-    const streamQs = authToken ? `?access_token=${encodeURIComponent(authToken)}` : '';
+    const ticket = await fetchStreamTicket();
+    const streamQs = ticket ? `?ticket=${encodeURIComponent(ticket)}` : '';
     const es = new EventSource(`/api/backup_manager/stream_task/${profile.id}${streamQs}`);
 
     es.onmessage = (event) => {

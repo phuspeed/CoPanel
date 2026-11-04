@@ -15,13 +15,14 @@ from core.auth import (
     auth_disabled,
     require_module,
     user_from_access_token,
+    user_from_stream_ticket,
     user_has_module,
 )
 
 from . import logic
 
 # Do not attach router-level auth to WebSocket routes — browsers pass JWT via
-# ``?access_token=`` on /ws; router Depends can break the upgrade handshake.
+# ``?ticket=`` on /ws; router Depends can break the upgrade handshake.
 router = APIRouter()
 
 
@@ -68,12 +69,12 @@ def get_status(_user: Dict[str, Any] = Depends(require_module("terminal"))) -> D
 @router.websocket("/ws")
 async def terminal_websocket(
     websocket: WebSocket,
-    access_token: Optional[str] = Query(None),
+    ticket: Optional[str] = Query(None),
 ):
     """Interactive shell over WebSocket.
 
     Browsers cannot set Authorization on WebSocket open, so the SPA passes
-    ``access_token`` as a query param (same pattern as SSE). Auth is checked
+    a short-lived single-use ``ticket`` query param (same pattern as SSE). Auth is checked
     *before* ``accept()`` so unauthenticated clients never get a shell.
     """
     # Router-level Depends do not apply to WebSocket routes in the same way;
@@ -88,7 +89,7 @@ async def terminal_websocket(
             if len(parts) == 2 and parts[0].lower() == "bearer":
                 user = user_from_access_token(parts[1])
         if user is None:
-            user = user_from_access_token(access_token)
+            user = user_from_stream_ticket(ticket)
         if not user or not user_has_module(user, "terminal"):
             await websocket.close(code=4401)
             return

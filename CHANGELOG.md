@@ -6,6 +6,11 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**Security: no JWTs in URLs**
+
+- EventSource / WebSocket endpoints (`/api/platform/events`, `/api/backup_manager/stream_task/*`, `/api/terminal/ws`) no longer accept the 24h JWT as `?access_token=`/`?token=`. The SPA calls `POST /api/auth/stream-ticket` (Bearer) and connects with `?ticket=`, an opaque single-use value valid for 60 seconds and bound to the user's `token_version`.
+- The installer nginx site logs with `log_format copanel_redacted`, which replaces `access_token`, `token` and `ticket` query values with `REDACTED`.
+
 **Fixed / Improved (`site_wizard` 1.2.0, `web_manager` 1.3.1, `database_manager` 1.1.0, `ssl_manager` 1.1.4, `appstore_manager` 1.0.39)**
 
 - Web 1-click runs package installs, downloads, and certbot off the API event loop, so the panel stays usable while a site is provisioning. The installer nginx `/api/` location now allows 300s proxy read/send timeouts.

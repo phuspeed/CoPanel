@@ -4,6 +4,8 @@
  * so multiple UI surfaces (Task Center, Notification Center, Dashboard
  * widgets) can listen without each opening their own SSE connection.
  */
+import { fetchStreamTicket, getAuthToken } from '../authHeaders';
+
 type Handler = (payload: any) => void;
 
 export const PLATFORM_SSE_DEGRADED_EVENT = 'copanel-platform-sse-degraded';
@@ -18,6 +20,7 @@ class EventHub {
   private retryDelay = MIN_RETRY_MS;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private failureCount = 0;
+  private connecting = false;
 
   on(topic: string, handler: Handler): () => void {
     let set = this.handlers.get(topic);
@@ -49,22 +52,40 @@ class EventHub {
     }
   }
 
-  private buildUrl(): string | null {
-    const token = localStorage.getItem('copanel_token');
-    if (!token) return null;
+  private async buildUrl(): Promise<string | null> {
+    if (!getAuthToken()) return null;
+    const ticket = await fetchStreamTicket();
+    if (!ticket) return null;
     const params = new URLSearchParams({
       topics: 'jobs,notifications',
-      access_token: token,
+      ticket,
     });
     return `/api/platform/events?${params.toString()}`;
   }
 
   private ensureConnected() {
-    if (this.source) return;
+    if (this.source || this.connecting) return;
     if (typeof document !== 'undefined' && document.hidden) return;
-    const url = this.buildUrl();
-    if (!url) return;
+    if (!getAuthToken()) return;
+    this.connecting = true;
+    void this.buildUrl()
+      .then((url) => {
+        this.connecting = false;
+        if (this.source || this.handlers.size === 0) return;
+        if (!url) {
+          this.failureCount += 1;
+          this.scheduleRetry();
+          return;
+        }
+        this.openSource(url);
+      })
+      .catch(() => {
+        this.connecting = false;
+        this.scheduleRetry();
+      });
+  }
 
+  private openSource(url: string) {
     try {
       this.source = new EventSource(url, { withCredentials: false });
     } catch {
