@@ -17,6 +17,7 @@ interface Props {
   onUp: () => void;
   onRefresh: () => void;
   onNavigate: (path: string) => void;
+  onNavigateTyped?: (input: string) => Promise<boolean>;
   onViewMode: (mode: ViewMode) => void;
   onFilterQuery: (q: string) => void;
   onCreateFile: () => void;
@@ -37,6 +38,7 @@ export default function FileToolbar({
   onUp,
   onRefresh,
   onNavigate,
+  onNavigateTyped,
   onViewMode,
   onFilterQuery,
   onCreateFile,
@@ -66,6 +68,7 @@ export default function FileToolbar({
           onUp={onUp}
           onRefresh={onRefresh}
           onNavigate={onNavigate}
+          onNavigateTyped={onNavigateTyped}
         />
         <div className="flex items-center gap-1 shrink-0">
           <button type="button" className={cn(iconBtn, viewMode === 'grid' && 'border-blue-500 text-blue-500')} onClick={() => onViewMode('grid')} title={tr.gridView}>

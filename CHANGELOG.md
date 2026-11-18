@@ -6,6 +6,11 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**File Manager: type a path (`file_manager` 1.0.12)**
+
+- The path bar is editable. Click the pencil icon, empty space in the bar, or double-click it to get a text box pre-filled with the current folder. Enter opens the path, Esc or clicking away cancels. Absolute paths (`/var/www`) and paths relative to the current folder (`logs`, `../www`) work; duplicate/trailing slashes and `.`/`..` are normalized. `~` is not expanded.
+- A missing folder, a file, or a folder you may not open shows an error toast and keeps the current folder. `GET /api/file_manager/list` takes `must_exist=1` for this (404 for a missing path, 403 for an unreadable one); without it the old empty-listing behaviour is unchanged. Access rules are the same: non-superadmin users are still confined to their permitted folders.
+
 **Security: no JWTs in URLs**
 
 - EventSource / WebSocket endpoints (`/api/platform/events`, `/api/backup_manager/stream_task/*`, `/api/terminal/ws`) no longer accept the 24h JWT as `?access_token=`/`?token=`. The SPA calls `POST /api/auth/stream-ticket` (Bearer) and connects with `?ticket=`, an opaque single-use value valid for 60 seconds and bound to the user's `token_version`.
@@ -49,6 +54,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- File Manager: gõ được đường dẫn trên thanh địa chỉ (bấm biểu tượng bút chì, chỗ trống trên thanh, hoặc nhấp đúp). Enter để mở, Esc/bấm ra ngoài để huỷ. Hỗ trợ đường dẫn tuyệt đối và tương đối với thư mục hiện tại. Đường dẫn không tồn tại hoặc không có quyền sẽ báo lỗi và giữ nguyên thư mục hiện tại.
 - phpMyAdmin qua Cloudflare Tunnel không còn 502. Cài PHP-FPM cùng phpMyAdmin, nginx trỏ một socket đang chạy, và nhận scheme HTTPS từ tunnel. Mở trực tiếp `http://HOST:8686/phpmyadmin/` vẫn là HTTP.
 - Máy không có AVX (Intel NUC) không còn chạy Vite lúc cài. Installer giải nén frontend đã build sẵn, vì esbuild native và WASM đều bị segfault trên CPU này.
 - Web 1-click không còn làm đơ panel: cài gói chạy ngoài event loop, lỗi apt/PHP/MySQL hiện rõ trên UI. PHP đúng gói distro, không giả lập database khi thiếu mysql, không đụng mật khẩu DB site khác. Cài lại cùng domain an toàn. SSL mặc định tắt và bỏ qua khi DNS chưa trỏ về máy. Alma/RHEL dùng `conf.d` và socket php-fpm đúng. Job dở sau khi restart được đánh dấu lỗi.

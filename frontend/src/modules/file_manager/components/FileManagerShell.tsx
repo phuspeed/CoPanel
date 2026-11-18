@@ -38,6 +38,7 @@ export default function FileManagerShell(fm: FileManagerState) {
     canGoForward,
     selectedSize,
     navigateTo,
+    navigateToTyped,
     goBack,
     goForward,
     handleGoUp,
@@ -163,6 +164,7 @@ export default function FileManagerShell(fm: FileManagerState) {
             onUp={handleGoUp}
             onRefresh={refresh}
             onNavigate={navigateTo}
+            onNavigateTyped={navigateToTyped}
             onViewMode={setViewMode}
             onFilterQuery={setFilterQuery}
             onCreateFile={() => setCreateType('file')}

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { pathBreadcrumbs } from '../utils';
@@ -14,10 +15,65 @@ interface Props {
   onUp: () => void;
   onRefresh: () => void;
   onNavigate: (path: string) => void;
+  /** Navigate to typed text; resolves true on success. */
+  onNavigateTyped?: (input: string) => Promise<boolean>;
 }
 
-export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, canGoForward, onBack, onForward, onUp, onRefresh, onNavigate }: Props) {
+export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, canGoForward, onBack, onForward, onUp, onRefresh, onNavigate, onNavigateTyped }: Props) {
   const crumbs = pathBreadcrumbs(currentPath);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
+
+  const startEditing = () => {
+    if (!onNavigateTyped) return;
+    setDraft(currentPath || '/');
+    setEditing(true);
+  };
+  const cancelEditing = () => {
+    if (submittingRef.current) return;
+    setEditing(false);
+  };
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  // Leave edit mode when the folder changes from elsewhere (sidebar, back, …).
+  useEffect(() => {
+    if (!submittingRef.current) setEditing(false);
+  }, [currentPath]);
+
+  const submit = async () => {
+    if (!onNavigateTyped || submittingRef.current) return;
+    const value = draft.trim();
+    if (!value) {
+      setEditing(false);
+      return;
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
+    let ok = false;
+    try {
+      ok = await onNavigateTyped(value);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+    if (ok) {
+      setEditing(false);
+    } else if (inputRef.current) {
+      // Stay in the current folder; keep the text so it can be corrected.
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  };
+
   const btn = cn(
     'flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-35',
     isDark ? 'border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
@@ -37,11 +93,57 @@ export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, can
       <button type="button" className={btn} onClick={onRefresh} title={tr.refresh}>
         <Icons.RefreshCw className="h-4 w-4" />
       </button>
+      {editing ? (
+        <form
+          className="ml-1 flex min-w-0 flex-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                cancelEditing();
+              }
+            }}
+            onBlur={cancelEditing}
+            readOnly={submitting}
+            aria-busy={submitting}
+            spellCheck={false}
+            autoComplete="off"
+            aria-label={tr.editPath}
+            title={tr.pathInputHint}
+            placeholder={tr.pathInputHint}
+            className={cn(
+              'h-8 w-full min-w-0 rounded-lg border px-2 text-xs font-mono outline-none ring-2',
+              isDark
+                ? 'border-sky-600 bg-slate-950/70 text-slate-100 ring-sky-500/30 placeholder:text-slate-600'
+                : 'border-blue-500 bg-white text-slate-800 ring-blue-500/20 placeholder:text-slate-400',
+            )}
+          />
+        </form>
+      ) : (
       <div
         className={cn(
           'ml-1 flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-lg border px-2 py-1 text-xs font-mono',
+          onNavigateTyped && 'cursor-text',
           isDark ? 'border-slate-700 bg-slate-950/50 text-slate-300' : 'border-slate-200 bg-white text-slate-700',
         )}
+        title={onNavigateTyped ? tr.editPath : undefined}
+        onClick={(e) => {
+          // Clicking empty space (not a crumb button) switches to text input.
+          if (e.target === e.currentTarget) startEditing();
+        }}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          startEditing();
+        }}
       >
         {crumbs.map((c, i) => (
           <span key={c.path} className="flex items-center shrink-0">
@@ -64,7 +166,22 @@ export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, can
             </button>
           </span>
         ))}
+        {onNavigateTyped && (
+          <button
+            type="button"
+            onClick={startEditing}
+            title={tr.editPath}
+            aria-label={tr.editPath}
+            className={cn(
+              'ml-auto shrink-0 rounded p-1 transition',
+              isDark ? 'text-slate-500 hover:bg-slate-800 hover:text-slate-200' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700',
+            )}
+          >
+            <Icons.Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+      )}
     </div>
   );
 }
