@@ -74,6 +74,11 @@ const dict = {
     goUp: 'Parent folder',
     dropToUpload: 'Drop files here to upload',
     uploadMultiple: (n: number) => `Uploading ${n} file${n === 1 ? '' : 's'}…`,
+    editPath: 'Type a path',
+    pathInputHint: 'Absolute path or relative to this folder. Enter to open, Esc to cancel.',
+    pathNotFound: 'Folder not found',
+    pathAccessDenied: 'Access denied',
+    pathOpenFailed: 'Could not open folder',
   },
   vi: {
     title: 'Tệp tin',
@@ -147,6 +152,11 @@ const dict = {
     goUp: 'Thư mục cha',
     dropToUpload: 'Thả file vào đây để tải lên',
     uploadMultiple: (n: number) => `Đang tải ${n} file…`,
+    editPath: 'Nhập đường dẫn',
+    pathInputHint: 'Đường dẫn tuyệt đối hoặc tương đối với thư mục hiện tại. Enter để mở, Esc để huỷ.',
+    pathNotFound: 'Không tìm thấy thư mục',
+    pathAccessDenied: 'Không có quyền truy cập',
+    pathOpenFailed: 'Không mở được thư mục',
   },
 } as const;
 

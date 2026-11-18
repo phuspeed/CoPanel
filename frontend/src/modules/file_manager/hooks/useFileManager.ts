@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookmarkEntry, ClipboardState, CreateType, FileItem, SortKey, ViewMode } from '../types';
 import { getFileManagerTranslations } from '../i18n';
-import { formatSize, getAuthHeader, joinPath, parentDir, sortFiles } from '../utils';
+import { formatSize, getAuthHeader, joinPath, parentDir, resolveTypedPath, sortFiles } from '../utils';
+import { toast } from '../../../core/platform';
 import { useAppShellContext } from '../../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../../core/shell/WindowViewportContext';
 
@@ -47,6 +48,25 @@ export function useFileManager() {
 
   const bookmarkPathSet = useMemo(() => new Set(bookmarks.map((b) => b.path)), [bookmarks]);
 
+  const applyListing = useCallback((data: { path?: string; files?: FileItem[] }, recordHistory: boolean) => {
+    const resolved = data.path || '';
+    setCurrentPath(resolved);
+    setFiles(data.files || []);
+    setSelectedPaths([]);
+    if (recordHistory) {
+      const trimmed = historyRef.current.slice(0, historyIndexRef.current + 1);
+      if (trimmed[trimmed.length - 1] !== resolved) {
+        historyRef.current = [...trimmed, resolved];
+        historyIndexRef.current = historyRef.current.length - 1;
+        setHistoryTick((t) => t + 1);
+      }
+    } else if (historyRef.current.length === 0) {
+      historyRef.current = [resolved];
+      historyIndexRef.current = 0;
+      setHistoryTick((t) => t + 1);
+    }
+  }, []);
+
   const fetchPath = useCallback(async (path: string = '', recordHistory = false) => {
     setLoading(true);
     setError(null);
@@ -58,28 +78,60 @@ export function useFileManager() {
         throw new Error(data.detail || 'Failed to list directory');
       }
       const data = await response.json();
-      const resolved = data.path || '';
-      setCurrentPath(resolved);
-      setFiles(data.files || []);
-      setSelectedPaths([]);
-      if (recordHistory) {
-        const trimmed = historyRef.current.slice(0, historyIndexRef.current + 1);
-        if (trimmed[trimmed.length - 1] !== resolved) {
-          historyRef.current = [...trimmed, resolved];
-          historyIndexRef.current = historyRef.current.length - 1;
-          setHistoryTick((t) => t + 1);
-        }
-      } else if (historyRef.current.length === 0) {
-        historyRef.current = [resolved];
-        historyIndexRef.current = 0;
-        setHistoryTick((t) => t + 1);
-      }
+      applyListing(data, recordHistory);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyListing]);
+
+  /**
+   * Navigate to a path typed into the path bar. On a missing path, permission
+   * error or non-directory, shows a toast and keeps the current folder.
+   * Resolves to true when navigation happened.
+   */
+  const navigateToTyped = useCallback(
+    async (input: string): Promise<boolean> => {
+      const target = resolveTypedPath(input, currentPath);
+      if (!target) return false;
+      setLoading(true);
+      try {
+        const url = `/api/file_manager/list?path=${encodeURIComponent(target)}&must_exist=1`;
+        const response = await fetch(url, { headers: getAuthHeader() });
+        let data: { path?: string; files?: FileItem[]; detail?: unknown; is_dir?: boolean } = {};
+        try {
+          data = await response.json();
+        } catch {
+          /* non-JSON error body */
+        }
+        if (!response.ok || data.is_dir === false) {
+          const title =
+            response.status === 404 || data.is_dir === false
+              ? tr.pathNotFound
+              : response.status === 403
+                ? tr.pathAccessDenied
+                : tr.pathOpenFailed;
+          const detail = typeof data.detail === 'string' ? data.detail : '';
+          toast(title, { level: 'error', body: detail ? `${target} — ${detail}` : target, module: 'file_manager' });
+          return false;
+        }
+        setError(null);
+        applyListing(data, true);
+        return true;
+      } catch (err) {
+        toast(tr.pathOpenFailed, {
+          level: 'error',
+          body: `${target} — ${err instanceof Error ? err.message : 'Unknown error'}`,
+          module: 'file_manager',
+        });
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [applyListing, currentPath, tr],
+  );
 
   useEffect(() => {
     void fetchPath('', false);
@@ -595,6 +647,7 @@ export function useFileManager() {
     canGoForward,
     selectedSize,
     navigateTo,
+    navigateToTyped,
     goBack,
     goForward,
     handleGoUp,

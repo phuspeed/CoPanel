@@ -205,11 +205,22 @@ async def put_bookmarks(req: BookmarksPayload, user: Dict[str, Any] = Depends(ge
 
 
 @router.get("/list")
-async def list_directory(path: Optional[str] = Query(None), user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """List directory contents."""
+async def list_directory(
+    path: Optional[str] = Query(None),
+    must_exist: bool = Query(False),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """List directory contents.
+
+    ``must_exist=1`` (used by the typed path bar) returns 404 for a missing
+    path instead of an empty listing. Access rules are unchanged: the path is
+    always validated by ``check_safe_path`` first.
+    """
     try:
         target_path = check_safe_path(path, user)
         if not os.path.exists(target_path):
+            if must_exist:
+                raise HTTPException(status_code=404, detail="Path not found.")
             return {
                 "status": "success",
                 "path": target_path,
@@ -220,8 +231,15 @@ async def list_directory(path: Optional[str] = Query(None), user: Dict[str, Any]
         if not os.path.isdir(target_path):
             raise HTTPException(status_code=400, detail="Target path is not a directory.")
 
+        if must_exist and not os.access(target_path, os.R_OK | os.X_OK):
+            raise HTTPException(status_code=403, detail="Permission denied.")
+
         items = []
-        for entry in os.scandir(target_path):
+        try:
+            entries = list(os.scandir(target_path))
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Permission denied.")
+        for entry in entries:
             try:
                 stats = entry.stat()
                 items.append({

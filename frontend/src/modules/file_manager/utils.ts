@@ -73,3 +73,44 @@ export function fileIconKind(name: string, isDir: boolean): 'folder' | 'archive'
   if (/\.(js|ts|tsx|py|php|json|html|css|sh|yml|yaml|md)$/.test(lower)) return 'code';
   return 'file';
 }
+
+/**
+ * Resolve what the user typed into the path bar.
+ * - Absolute POSIX paths (`/var/www`) and Windows drive paths (`C:\\x`) are used as-is.
+ * - Anything else is relative to `currentPath`.
+ * `.`/`..` segments and duplicate/trailing slashes are normalized. `~` is NOT expanded.
+ * Returns null for empty input. The backend still enforces access rules.
+ */
+export function resolveTypedPath(input: string, currentPath: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  const drive = /^([A-Za-z]:)(?:[\\/]|$)/.exec(raw);
+  if (drive) {
+    const parts = normalizeSegments(raw.slice(drive[1].length).split(/[\\/]+/));
+    return `${drive[1].toUpperCase()}\\${parts.join('\\')}`;
+  }
+  const isAbs = raw.startsWith('/') || raw.startsWith('\\');
+  if (!isAbs) {
+    const baseDrive = /^([A-Za-z]:)(?:[\\/]|$)/.exec(currentPath || '');
+    if (baseDrive) {
+      return resolveTypedPath(`${currentPath.replace(/[\\/]+$/, '')}\\${raw}`, '');
+    }
+  }
+  const base = isAbs ? '' : currentPath || '/';
+  const combined = isAbs ? raw : `${base}/${raw}`;
+  const parts = normalizeSegments(combined.split(/[\\/]+/));
+  return `/${parts.join('/')}`;
+}
+
+function normalizeSegments(segments: string[]): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      out.pop();
+      continue;
+    }
+    out.push(seg);
+  }
+  return out;
+}
