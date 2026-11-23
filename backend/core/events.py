@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +99,28 @@ def sse_format(message: Dict[str, Any]) -> str:
     return f"event: {message.get('topic', 'message')}\ndata: {data}\n\n"
 
 
-async def sse_stream(topics: Optional[List[str]] = None, heartbeat_seconds: float = 15.0) -> AsyncIterator[str]:
-    """Async generator producing SSE-formatted strings for ``StreamingResponse``."""
+async def sse_stream(
+    topics: Optional[List[str]] = None,
+    heartbeat_seconds: float = 15.0,
+    still_valid: Optional[Callable[[], bool]] = None,
+    revalidate_seconds: float = 30.0,
+) -> AsyncIterator[str]:
+    """Async generator producing SSE-formatted strings for ``StreamingResponse``.
+
+    ``still_valid`` (optional) is re-checked every ``revalidate_seconds``; the
+    stream ends once it returns False (logout, password change, deleted user).
+    """
     chosen = topics or ["jobs", "notifications"]
     sub = bus.subscribe(chosen)
     last_emit = time.monotonic()
+    last_check = time.monotonic()
     try:
         while True:
+            if still_valid is not None and time.monotonic() - last_check >= revalidate_seconds:
+                last_check = time.monotonic()
+                if not still_valid():
+                    yield "event: session_expired\ndata: {}\n\n"
+                    break
             try:
                 msg = await asyncio.wait_for(sub.__anext__(), timeout=heartbeat_seconds)
                 yield sse_format(msg)

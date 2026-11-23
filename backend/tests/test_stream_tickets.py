@@ -111,7 +111,7 @@ class StreamTicketTests(unittest.TestCase):
     def test_ticket_accepted_on_events(self):
         ticket = self._ticket()
 
-        async def _empty_stream(_topics):
+        async def _empty_stream(_topics, **_kw):
             yield ": ok\n\n"
 
         with patch("modules.platform.router.sse_stream", _empty_stream):
@@ -129,7 +129,7 @@ class StreamTicketTests(unittest.TestCase):
         client = TestClient(app)
         ticket = self._ticket()
 
-        async def _empty_stream(_topics):
+        async def _empty_stream(_topics, **_kw):
             yield ": ok\n\n"
 
         with patch("modules.platform.router.sse_stream", _empty_stream):
@@ -146,8 +146,29 @@ class NginxLogRedactionTests(unittest.TestCase):
             text = (root / rel).read_text(encoding="utf-8")
             self.assertIn("log_format copanel_redacted", text, rel)
             self.assertIn("access_log /var/log/nginx/access.log copanel_redacted;", text, rel)
-            for param in ("access_token=", "ticket=", "[?&]token="):
-                self.assertIn(param, text, rel)
+            # The whole query string is redacted (every parameter, every
+            # occurrence), and the Referer's query too.
+            self.assertIn('"~^(?<cpl_path>[^?]*)\\?" "${cpl_path}?[query-redacted]";', text, rel)
+            self.assertIn("$copanel_log_referer", text, rel)
+            self.assertNotIn('"$http_referer" "$http_user_agent"', text, rel)
+
+    def test_redaction_regex_masks_every_occurrence(self):
+        import re
+
+        rx = re.compile(r"^(?P<cpl_path>[^?]*)\?")
+        uri = "/api/x?access_token=A&foo=1&access_token=B&ticket=C"
+        out = rx.sub(lambda m: m.group("cpl_path") + "?[query-redacted]", uri, count=1)
+        out = out.split("?[query-redacted]")[0] + "?[query-redacted]"
+        self.assertEqual(out, "/api/x?[query-redacted]")
+        for secret in ("A", "B", "C"):
+            self.assertNotIn("=" + secret, out)
+
+    def test_uvicorn_has_no_access_log(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        text = (root / "scripts/install.sh").read_text(encoding="utf-8")
+        self.assertIn("uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log", text)
 
 
 if __name__ == "__main__":

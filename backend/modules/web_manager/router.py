@@ -261,15 +261,22 @@ def create_site(
             server_name_str += f" www.{domain}"
 
         try:
-            doc_root_existed = os.path.isdir(doc_root)
-            os.makedirs(doc_root, exist_ok=True)
-            if not doc_root_existed:
+            if user.get("role") != "superadmin":
+                # Restricted user: create without following symlinks; new
+                # folders get the home owner via fd-based chown.
                 try:
-                    from core.user_home import chown_new
-
-                    chown_new([doc_root], user)
+                    from core import safe_fs
+                    from core.user_home import owner_for
                 except ImportError:
-                    pass
+                    raise HTTPException(status_code=503, detail="Update CoPanel to 1.1.15 or newer.")
+                try:
+                    safe_fs.makedirs(doc_root, owner_for(doc_root, user))
+                except safe_fs.SymlinkRefused:
+                    raise HTTPException(status_code=403, detail="Document root path contains a symbolic link.")
+            else:
+                os.makedirs(doc_root, exist_ok=True)
+        except HTTPException:
+            raise
         except Exception:
             pass
 

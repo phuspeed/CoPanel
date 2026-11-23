@@ -46,14 +46,16 @@ def test_launch_command_is_systemd_run_argv(tmp_path):
 
 def test_launch_uses_systemd_run_without_shell(state_dir, monkeypatch):
     calls = []
+    active = {"v": False}
 
     def fake_run(cmd, **kw):
         calls.append((cmd, kw))
+        active["v"] = True
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(pu, "systemd_run_available", lambda: True)
     monkeypatch.setattr(pu._subprocess, "run", fake_run)
-    monkeypatch.setattr(pu, "_unit_active", lambda: True)
+    monkeypatch.setattr(pu, "_unit_active", lambda: active["v"])
     st = pu.launch_update(actor="admin")
     (cmd, kw), = [c for c in calls if c[0][0] == "systemd-run"]
     assert kw.get("shell", False) is False
@@ -250,26 +252,78 @@ def test_apt_never_disables_distro_sources(apt_dir):
     assert (d / "ubuntu.sources").is_file()
 
 
-def test_apt_restores_sources_disabled_by_older_installs(apt_dir):
+def test_apt_restores_sources_disabled_by_older_installs(apt_dir, tmp_path):
     d, _ = apt_dir
     for name in ("ubuntu.sources", "docker.list"):
         (d / name).rename(d / f"{name}.copanel-bak")
     (d / "keep.list").write_text("x")
     (d / "keep.list.copanel-bak").write_text("older copy")
-    r = _bash("copanel_apt_restore_disabled_sources", {"COPANEL_APT_SOURCES_DIR": str(d)})
+    env = {"COPANEL_APT_SOURCES_DIR": str(d), "COPANEL_APT_STATE_DIR": str(tmp_path / "state")}
+    r = _bash("copanel_apt_restore_disabled_sources", env)
     assert r.returncode == 0, r.stderr
     assert (d / "ubuntu.sources").is_file() and (d / "docker.list").is_file()
     assert not (d / "ubuntu.sources.copanel-bak").exists()
     # An existing file is never overwritten by a backup.
     assert (d / "keep.list").read_text() == "x"
+    assert (tmp_path / "state" / "apt-legacy-restored").is_file()
+
+
+def test_apt_legacy_restore_runs_only_once(apt_dir, tmp_path):
+    """After the one-time migration, a source the admin disabled stays disabled."""
+    d, _ = apt_dir
+    env = {"COPANEL_APT_SOURCES_DIR": str(d), "COPANEL_APT_STATE_DIR": str(tmp_path / "state")}
+    assert _bash("copanel_apt_restore_disabled_sources", env).returncode == 0
+    (d / "docker.list").rename(d / "docker.list.copanel-bak")  # admin's choice
+    r = _bash("copanel_apt_restore_disabled_sources", env)
+    assert r.returncode == 0, r.stderr
+    assert (d / "docker.list.copanel-bak").is_file() and not (d / "docker.list").exists()
+
+
+def test_apt_retries_only_sources_copanel_disabled(apt_dir, tmp_path):
+    d, _ = apt_dir
+    env = {"COPANEL_APT_SOURCES_DIR": str(d), "COPANEL_APT_STATE_DIR": str(tmp_path / "state")}
+    assert _bash("copanel_apt_restore_disabled_sources", env).returncode == 0  # migration done
+    (d / "docker.list").rename(d / "docker.list.copanel-bak")  # admin's choice
+    r = _bash(f'copanel_disable_apt_source_file "{d}/nodesource.list"', env)
+    assert r.returncode == 0, r.stderr
+    assert (d / "nodesource.list.copanel-bak").is_file()
+    assert (tmp_path / "state" / "apt-disabled-by-copanel").read_text().split() == ["nodesource.list"]
+    r = _bash("copanel_apt_restore_disabled_sources", env)
+    assert r.returncode == 0, r.stderr
+    assert (d / "nodesource.list").is_file()  # CoPanel's own: retried
+    assert (d / "docker.list.copanel-bak").is_file()  # admin's: untouched
+
+
+def test_apt_releaseinfo_change_is_scoped_to_the_failing_source(apt_dir, tmp_path):
+    d, log = apt_dir
+    calls = tmp_path / "calls"
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "apt-get").write_text(f'#!/bin/bash\necho "$@" >> "{calls}"\nexit 0\n')
+    (fake / "apt-get").chmod(0o755)
+    env = {
+        "COPANEL_APT_SOURCES_DIR": str(d),
+        "COPANEL_APT_STATE_DIR": str(tmp_path / "state"),
+        "PATH": f"{fake}:{os.environ['PATH']}",
+    }
+    r = _bash(f'copanel_apt_releaseinfo_changes "{log}"', env)
+    assert r.stdout.split() == [f"{d}/ondrej-ubuntu-php-noble.sources|Label"]
+    r = _bash(f'copanel_apt_accept_releaseinfo_changes "{log}" && echo accepted', env)
+    assert "accepted" in r.stdout, r.stderr
+    line = calls.read_text().strip()
+    assert f"Dir::Etc::sourcelist={d}/ondrej-ubuntu-php-noble.sources" in line
+    assert "Dir::Etc::sourceparts=-" in line
+    assert "--allow-releaseinfo-change-label" in line
+    assert "--allow-releaseinfo-change " not in line + " "
 
 
 def test_apt_accepts_release_info_change_before_disabling():
     text = INSTALL_SH.read_text(encoding="utf-8")
     start = text.index("apt_update_or_recover() {")
     body = text[start : text.index("\n}\n", start)]
-    assert "--allow-releaseinfo-change" in body
-    assert body.index("--allow-releaseinfo-change") < body.index("copanel_apt_failed_source_list_files")
+    assert "copanel_apt_accept_releaseinfo_changes" in body
+    assert "--allow-releaseinfo-change\"" not in body and "--allow-releaseinfo-change;" not in body
+    assert body.index("copanel_apt_accept_releaseinfo_changes") < body.index("copanel_apt_failed_source_list_files")
 
 
 def _prebuilt_env(tmp_path):
@@ -313,3 +367,107 @@ def test_low_ram_keeps_vite_when_appstore_module_needs_it(tmp_path):
     )
     r = _bash(script, {"COPANEL_MEM_TOTAL_MB": "952"})
     assert r.stdout.strip().splitlines()[-1] == "no", r.stderr
+
+
+# ── 1.1.15: launch lock, fail-closed state dir ─────────────────────────────
+
+
+def test_second_launch_while_locked_is_409_and_touches_nothing(state_dir, monkeypatch):
+    """A busy lock (runner installing) refuses a new launch before any write."""
+    monkeypatch.setattr(pu, "systemd_run_available", lambda: True)
+    monkeypatch.setattr(pu, "_unit_active", lambda: False)
+    monkeypatch.setattr(pu._subprocess, "run", lambda *a, **k: pytest.fail("must not launch"))
+    pu.prepare_state_dir(state_dir)
+    runner.write_state(state_dir, status="running", mode="systemd", started_at=1.0)
+    (state_dir / "update.log").write_bytes(b"installing...\n")
+    before_state = (state_dir / "state.json").read_bytes()
+    with runner.update_lock(state_dir, blocking=False) as held:
+        assert held
+        with pytest.raises(pu.UpdateAlreadyRunning):
+            pu.launch_update()
+    assert (state_dir / "state.json").read_bytes() == before_state
+    assert (state_dir / "update.log").read_bytes() == b"installing...\n"
+    assert not (state_dir / "runner.py").exists()
+
+
+def test_unit_exists_error_restores_previous_state(state_dir, monkeypatch):
+    monkeypatch.setattr(pu, "systemd_run_available", lambda: True)
+    monkeypatch.setattr(pu, "_unit_active", lambda: False)
+    monkeypatch.setattr(
+        pu._subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "Failed to start transient service unit: Unit copanel-update.service already exists."),
+    )
+    pu.prepare_state_dir(state_dir)
+    runner.write_state(state_dir, status="success", exit_code=0)
+    (state_dir / "update.log").write_bytes(b"old log\n")
+    with pytest.raises(pu.UpdateAlreadyRunning):
+        pu.launch_update()
+    assert json.loads((state_dir / "state.json").read_text()) == {"status": "success", "exit_code": 0}
+    assert (state_dir / "update.log").read_bytes() == b"old log\n"
+
+
+def test_router_maps_double_click_to_409(state_dir, monkeypatch):
+    from modules.platform.router import router as platform_router
+
+    admin = {"id": 1, "username": "admin", "role": "superadmin"}
+    monkeypatch.setattr(auth_mod, "_AUTH_DISABLED", False)
+    monkeypatch.setattr(auth_mod, "_user_from_token", lambda _a: admin)
+    monkeypatch.setattr(pu, "install_script_path", lambda: INSTALL_SH)
+    pu.prepare_state_dir(state_dir)
+    app = FastAPI()
+    install_exception_handlers(app)
+    app.include_router(platform_router, prefix="/api/platform")
+    client = TestClient(app)
+    with runner.update_lock(state_dir, blocking=False):
+        r = client.post("/api/platform/panel-update/run", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 409
+
+
+def test_state_dir_symlink_fails_closed(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with pytest.raises(pu.UnsafeStateDir):
+        pu.prepare_state_dir(link)
+
+
+def test_state_dir_chmod_failure_fails_closed(tmp_path, monkeypatch):
+    d = tmp_path / "s"
+
+    def boom(*a, **k):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(pu.os, "chmod", boom)
+    with pytest.raises(pu.UnsafeStateDir):
+        pu.prepare_state_dir(d)
+
+
+def test_state_dir_is_0700(tmp_path):
+    d = pu.prepare_state_dir(tmp_path / "s")
+    assert (d.stat().st_mode & 0o777) == 0o700
+
+
+def test_runner_holds_lock_and_starts_fresh_log(tmp_path, monkeypatch):
+    sd = tmp_path / "s"
+    sd.mkdir()
+    (sd / "update.log").write_bytes(b"previous run\n")
+    home = tmp_path / "home"
+    (home / "scripts").mkdir(parents=True)
+    (home / "scripts" / "install.sh").write_text("echo hello-from-install\n")
+    seen = {}
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kw):
+        with runner.update_lock(sd, blocking=False) as held:
+            seen["lock_free_during_install"] = held
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "stage_install_script", lambda h, s, log: h / "scripts" / "install.sh")
+    assert runner.main(["--state-dir", str(sd), "--home", str(home)]) == 0
+    assert seen["lock_free_during_install"] is False
+    log = (sd / "update.log").read_text()
+    assert "previous run" not in log and "hello-from-install" in log

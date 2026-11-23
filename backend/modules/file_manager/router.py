@@ -13,13 +13,17 @@ from pydantic import BaseModel
 from modules.auth.router import get_current_user
 from core.auth import require_module
 try:
-    from core.user_home import chown_new, ensure_permitted_folders
+    from core.user_home import chown_new, owner_for
 except ImportError:  # AppStore zip installed on a core older than 1.1.12
     def chown_new(paths, user, recursive=False):  # type: ignore[no-redef]
         return None
 
-    def ensure_permitted_folders(user):  # type: ignore[no-redef]
-        return []
+    def owner_for(path, user):  # type: ignore[no-redef]
+        return None
+try:
+    from core import safe_fs
+except ImportError:  # core older than 1.1.15: restricted users are refused (fail closed)
+    safe_fs = None  # type: ignore[assignment]
 
 # Every endpoint also requires the file_manager module grant (superadmin always passes).
 router = APIRouter(dependencies=[Depends(require_module("file_manager"))])
@@ -44,7 +48,12 @@ def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
                     p_folders = json.loads(p_folders)
                 except:
                     p_folders = [p_folders]
-            requested_path = p_folders[0] if (p_folders and len(p_folders) > 0) else "/home"
+            if not p_folders:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied: no folders are assigned to this account.",
+                )
+            requested_path = p_folders[0]
 
     # 1. SuperAdmin has unrestricted system-wide access
     if user["role"] == "superadmin":
@@ -58,8 +67,12 @@ def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
         except:
             p_folders = [p_folders]
 
+    if not isinstance(p_folders, list):
+        p_folders = []
+    p_folders = [p for p in p_folders if isinstance(p, str) and p.strip() and os.path.isabs(p.strip())]
     if not p_folders:
-        p_folders = ["/home"]
+        # No assigned folders means no file access at all (never a /home fallback).
+        raise HTTPException(status_code=403, detail="Access denied: no folders are assigned to this account.")
 
     try:
         abs_requested = Path(requested_path).resolve()
@@ -112,6 +125,35 @@ def safe_join(target_dir: str, name: str, user: Dict[str, Any]) -> str:
     if os.path.dirname(os.path.abspath(candidate)) != os.path.abspath(target_dir):
         raise HTTPException(status_code=400, detail="Invalid filename.")
     return check_safe_path(candidate, user)
+
+
+def _restricted(user: Dict[str, Any]) -> bool:
+    """Sandboxed user: every filesystem call goes through ``core.safe_fs``."""
+    if user.get("role") == "superadmin":
+        return False
+    if safe_fs is None or not safe_fs.supported():
+        raise HTTPException(
+            status_code=503,
+            detail="This File Manager needs CoPanel 1.1.15 or newer for restricted users. Update CoPanel first.",
+        )
+    return True
+
+
+def _fs_error(exc: Exception) -> HTTPException:
+    """Map filesystem errors to HTTP errors."""
+    if isinstance(exc, HTTPException):
+        return exc
+    if safe_fs is not None and isinstance(exc, safe_fs.SymlinkRefused):
+        return HTTPException(status_code=403, detail="Access denied: the path contains a symbolic link or a hard-linked file.")
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=404, detail="Path not found.")
+    if isinstance(exc, FileExistsError):
+        return HTTPException(status_code=400, detail="Path already exists.")
+    if isinstance(exc, PermissionError):
+        return HTTPException(status_code=403, detail="Permission denied.")
+    if isinstance(exc, (IsADirectoryError, NotADirectoryError)):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=500, detail=str(exc))
 
 
 # Schemas
@@ -251,12 +293,12 @@ async def list_directory(
 
     ``must_exist=1`` (used by the typed path bar) returns 404 for a missing
     path instead of an empty listing. Access rules are unchanged: the path is
-    always validated by ``check_safe_path`` first.
+    always validated by ``check_safe_path`` first. Listing never creates
+    folders (missing permitted folders are created at login / user save).
     """
     try:
-        # Restricted users: create a missing home / permitted folder on first use.
-        ensure_permitted_folders(user)
         target_path = check_safe_path(path, user)
+        restricted = _restricted(user)
         if not os.path.exists(target_path):
             if must_exist:
                 raise HTTPException(status_code=404, detail="Path not found.")
@@ -275,21 +317,39 @@ async def list_directory(
 
         items = []
         try:
-            entries = list(os.scandir(target_path))
+            if restricted:
+                with safe_fs.dir_fd(target_path) as dfd:
+                    entries = list(os.scandir(dfd))
+                    for entry in entries:
+                        try:
+                            lst = os.stat(entry.name, dir_fd=dfd, follow_symlinks=False)
+                            is_dir = stat_is_dir(lst.st_mode)
+                            items.append({
+                                "name": entry.name,
+                                "path": os.path.join(target_path, entry.name),
+                                "is_dir": is_dir,
+                                "is_symlink": stat_is_link(lst.st_mode),
+                                "size": lst.st_size,
+                                "modified": lst.st_mtime,
+                            })
+                        except OSError:
+                            continue
+            else:
+                entries = list(os.scandir(target_path))
+                for entry in entries:
+                    try:
+                        stats = entry.stat()
+                        items.append({
+                            "name": entry.name,
+                            "path": os.path.abspath(entry.path),
+                            "is_dir": entry.is_dir(),
+                            "size": stats.st_size,
+                            "modified": stats.st_mtime
+                        })
+                    except Exception:
+                        continue
         except PermissionError:
             raise HTTPException(status_code=403, detail="Permission denied.")
-        for entry in entries:
-            try:
-                stats = entry.stat()
-                items.append({
-                    "name": entry.name,
-                    "path": os.path.abspath(entry.path),
-                    "is_dir": entry.is_dir(),
-                    "size": stats.st_size,
-                    "modified": stats.st_mtime
-                })
-            except Exception:
-                continue
 
         # Sort: directories first, then files alphabetically
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
@@ -299,10 +359,18 @@ async def list_directory(
             "path": target_path,
             "files": items
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
+
+
+def stat_is_dir(mode: int) -> bool:
+    import stat as _stat
+    return _stat.S_ISDIR(mode)
+
+
+def stat_is_link(mode: int) -> bool:
+    import stat as _stat
+    return _stat.S_ISLNK(mode)
 
 
 @router.get("/read")
@@ -316,18 +384,19 @@ async def read_file(path: str, user: Dict[str, Any] = Depends(get_current_user))
         if not os.path.isfile(target_path):
             raise HTTPException(status_code=400, detail="Path is a directory, not a file.")
 
-        with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+        if _restricted(user):
+            content = safe_fs.read_bytes(target_path).decode("utf-8", errors="ignore")
+        else:
+            with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
 
         return {
             "status": "success",
             "path": target_path,
             "content": content
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/write")
@@ -335,17 +404,18 @@ async def write_file_content(req: WriteFileRequest, user: Dict[str, Any] = Depen
     """Write content to a file."""
     try:
         target_path = check_safe_path(req.path, user)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(req.content)
+        if _restricted(user):
+            safe_fs.write_bytes(target_path, req.content.encode("utf-8"), owner_for(target_path, user))
+        else:
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(req.content)
 
         return {
             "status": "success",
             "message": "File updated successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/create-file")
@@ -353,21 +423,23 @@ async def create_file(req: CreateFileRequest, user: Dict[str, Any] = Depends(get
     """Create a new file."""
     try:
         target_path = check_safe_path(req.path, user)
-        if os.path.exists(target_path):
+        if os.path.lexists(target_path):
             raise HTTPException(status_code=400, detail="Path already exists.")
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(req.content or "")
-        chown_new([target_path], user)
+        if _restricted(user):
+            safe_fs.write_bytes(
+                target_path, (req.content or "").encode("utf-8"), owner_for(target_path, user), exclusive=True
+            )
+        else:
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(req.content or "")
 
         return {
             "status": "success",
             "message": "File created successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/create-dir")
@@ -375,28 +447,20 @@ async def create_dir(req: CreateDirRequest, user: Dict[str, Any] = Depends(get_c
     """Create a new directory."""
     try:
         target_path = check_safe_path(req.path, user)
-        if os.path.exists(target_path):
+        if os.path.lexists(target_path):
             raise HTTPException(status_code=400, detail="Path already exists.")
 
-        missing = []
-        probe = target_path
-        while probe and not os.path.exists(probe):
-            missing.append(probe)
-            parent = os.path.dirname(probe)
-            if parent == probe:
-                break
-            probe = parent
-        os.makedirs(target_path, exist_ok=True)
-        chown_new(list(reversed(missing)), user)
+        if _restricted(user):
+            safe_fs.makedirs(target_path, owner_for(target_path, user))
+        else:
+            os.makedirs(target_path, exist_ok=True)
 
         return {
             "status": "success",
             "message": "Directory created successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/rename")
@@ -406,22 +470,32 @@ async def rename_item(req: RenameRequest, user: Dict[str, Any] = Depends(get_cur
         old_path = check_safe_path(req.old_path, user)
         new_path = check_safe_path(req.new_path, user)
 
-        if not os.path.exists(old_path):
+        if not os.path.lexists(old_path):
             raise HTTPException(status_code=404, detail="Source path not found.")
 
-        if os.path.exists(new_path):
+        if os.path.lexists(new_path):
             raise HTTPException(status_code=400, detail="New path already exists.")
 
-        os.rename(old_path, new_path)
+        if _restricted(user):
+            safe_fs.rename(old_path, new_path)
+        else:
+            os.rename(old_path, new_path)
 
         return {
             "status": "success",
             "message": "Item renamed successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
+
+
+def _delete_path(target_path: str, user: Dict[str, Any]) -> None:
+    if _restricted(user):
+        safe_fs.remove(target_path)
+    elif os.path.isdir(target_path) and not os.path.islink(target_path):
+        shutil.rmtree(target_path)
+    else:
+        os.remove(target_path)
 
 
 @router.post("/delete")
@@ -429,22 +503,31 @@ async def delete_item(req: DeleteRequest, user: Dict[str, Any] = Depends(get_cur
     """Delete a file or directory."""
     try:
         target_path = check_safe_path(req.path, user)
-        if not os.path.exists(target_path):
+        if not os.path.lexists(target_path):
             raise HTTPException(status_code=404, detail="Path not found.")
-
-        if os.path.isdir(target_path):
-            shutil.rmtree(target_path)
-        else:
-            os.remove(target_path)
+        _delete_path(target_path, user)
 
         return {
             "status": "success",
             "message": "Item deleted successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
+
+
+def _move_path(source_path: str, dest: str, user: Dict[str, Any]) -> None:
+    if not _restricted(user):
+        shutil.move(source_path, dest)
+        return
+    try:
+        safe_fs.rename(source_path, dest)
+    except OSError as exc:
+        import errno as _errno
+        if exc.errno != _errno.EXDEV:
+            raise
+        # Different filesystem: symlink-safe copy, then delete the source.
+        safe_fs.copy(source_path, dest, owner_for(dest, user))
+        safe_fs.remove(source_path)
 
 
 @router.post("/move")
@@ -454,22 +537,20 @@ async def move_item(req: MoveRequest, user: Dict[str, Any] = Depends(get_current
         source_path = check_safe_path(req.source_path, user)
         target_path = check_safe_path(req.target_path, user)
 
-        if not os.path.exists(source_path):
+        if not os.path.lexists(source_path):
             raise HTTPException(status_code=404, detail="Source path not found.")
 
-        if os.path.exists(target_path):
+        if os.path.lexists(target_path):
             raise HTTPException(status_code=400, detail="Target path already exists.")
 
-        shutil.move(source_path, target_path)
+        _move_path(source_path, target_path, user)
 
         return {
             "status": "success",
             "message": "Item moved successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 class CopyRequest(BaseModel):
@@ -498,35 +579,41 @@ class ChmodRequest(BaseModel):
 
 @router.post("/copy")
 async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Copy files and directories to target directory."""
+    """Copy files and directories to target directory.
+
+    Symbolic links inside a copied tree are copied as links (never followed),
+    so a copy can never pull in content from outside the source tree.
+    """
     try:
         target_dir = check_safe_path(req.target_dir, user)
         if not os.path.exists(target_dir):
             raise HTTPException(status_code=404, detail="Target directory does not exist.")
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Target path is not a directory.")
+        restricted = _restricted(user)
 
         for p in req.source_paths:
             source_path = check_safe_path(p, user)
-            if not os.path.exists(source_path):
+            if not os.path.lexists(source_path):
                 raise HTTPException(status_code=404, detail=f"Source path not found: {p}")
-            
+
             base_name = safe_child_name(os.path.basename(source_path))
             dest = safe_join(target_dir, base_name, user)
-            if os.path.exists(dest):
+            if os.path.lexists(dest):
                 dest = safe_join(target_dir, f"copy_of_{base_name}", user)
-            
-            if os.path.isdir(source_path):
-                shutil.copytree(source_path, dest)
+                if os.path.lexists(dest):
+                    raise HTTPException(status_code=400, detail=f"Target already exists: {dest}")
+
+            if restricted:
+                safe_fs.copy(source_path, dest, owner_for(dest, user))
+            elif os.path.isdir(source_path) and not os.path.islink(source_path):
+                shutil.copytree(source_path, dest, symlinks=True)
             else:
-                shutil.copy2(source_path, dest)
-            chown_new([dest], user, recursive=True)
+                shutil.copy2(source_path, dest, follow_symlinks=False)
 
         return {"status": "success", "message": "Items copied successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/move-multiple")
@@ -541,27 +628,22 @@ async def move_multiple_items(req: MoveMultipleRequest, user: Dict[str, Any] = D
 
         for p in req.source_paths:
             source_path = check_safe_path(p, user)
-            if not os.path.exists(source_path):
+            if not os.path.lexists(source_path):
                 continue
-            
+
             base_name = safe_child_name(os.path.basename(source_path))
             # Validate the final destination (rejects a symlink pointing outside
             # the sandbox) but keep operating on the in-directory name.
             safe_join(target_dir, base_name, user)
             dest = os.path.join(target_dir, base_name)
-            if os.path.exists(dest):
-                if os.path.isdir(dest):
-                    shutil.rmtree(dest)
-                else:
-                    os.remove(dest)
-            
-            shutil.move(source_path, dest)
+            if os.path.lexists(dest):
+                _delete_path(dest, user)
+
+            _move_path(source_path, dest, user)
 
         return {"status": "success", "message": "Items moved successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/delete-multiple")
@@ -570,53 +652,63 @@ async def delete_multiple_items(req: DeleteMultipleRequest, user: Dict[str, Any]
     try:
         for p in req.paths:
             target_path = check_safe_path(p, user)
-            if not os.path.exists(target_path):
+            if not os.path.lexists(target_path):
                 continue
-
-            if os.path.isdir(target_path):
-                shutil.rmtree(target_path)
-            else:
-                os.remove(target_path)
+            _delete_path(target_path, user)
 
         return {"status": "success", "message": "Items deleted successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/zip")
 async def zip_items(req: ZipRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Compress files/folders into a zip archive."""
+    """Compress files/folders into a zip archive (symlinks are skipped)."""
     try:
         import zipfile
         archive_path = check_safe_path(req.archive_path, user)
-        
-        if not archive_path.endswith('.zip'):
-            archive_path += '.zip'
-            
-        with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for p in req.paths:
-                abs_p = check_safe_path(p, user)
-                if not os.path.exists(abs_p):
-                    continue
 
-                if os.path.isdir(abs_p):
+        if not archive_path.endswith('.zip'):
+            archive_path = check_safe_path(archive_path + '.zip', user)
+        restricted = _restricted(user)
+        sources = []
+        for p in req.paths:
+            abs_p = check_safe_path(p, user)
+            if os.path.lexists(abs_p):
+                sources.append(abs_p)
+
+        if restricted:
+            out_fd = safe_fs.open_write(archive_path, owner_for(archive_path, user))
+            out_fh = os.fdopen(out_fd, "wb")
+        else:
+            out_fh = open(archive_path, "wb")
+        with out_fh, zipfile.ZipFile(out_fh, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for abs_p in sources:
+                if os.path.isdir(abs_p) and not os.path.islink(abs_p):
                     base_dir = os.path.dirname(abs_p)
-                    for root, dirs, files in os.walk(abs_p):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(file_path, base_dir).replace('\\', '/')
-                            zip_file.write(file_path, rel_path)
-                else:
+                    if restricted:
+                        for rel, dfd, name in safe_fs.walk_files(abs_p):
+                            fd = safe_fs.open_read_at(dfd, name)
+                            with os.fdopen(fd, "rb") as src, zip_file.open(rel.replace('\\', '/'), "w") as dst:
+                                shutil.copyfileobj(src, dst, 1024 * 1024)
+                    else:
+                        for root, dirs, files in os.walk(abs_p):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                if os.path.islink(file_path):
+                                    continue
+                                rel_path = os.path.relpath(file_path, base_dir).replace('\\', '/')
+                                zip_file.write(file_path, rel_path)
+                elif restricted:
+                    fd = safe_fs.open_read(abs_p)
+                    with os.fdopen(fd, "rb") as src, zip_file.open(os.path.basename(abs_p), "w") as dst:
+                        shutil.copyfileobj(src, dst, 1024 * 1024)
+                elif not os.path.islink(abs_p):
                     zip_file.write(abs_p, os.path.basename(abs_p))
-        chown_new([archive_path], user)
 
         return {"status": "success", "message": "Items compressed successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 def _normalize_zip_member(name: str) -> str:
@@ -639,16 +731,24 @@ def _assert_extract_dest(dest: str, target_root: str, raw_name: str) -> str:
     return dest_real
 
 
-def _safe_extract_zip(zip_file, target_dir: str) -> List[str]:
+def _safe_extract_zip(zip_file, target_dir: str, owner=None, restricted: bool = False) -> List[str]:
     """Extract zip members with normalized paths and directory creation.
 
-    Returns the files and directories this call created (for ownership fixes).
+    Restricted users: every directory and file is created through
+    ``core.safe_fs`` (no symlink is ever followed, new items get ``owner``
+    from the fd). Returns the files and directories this call created.
     """
     target_root = os.path.realpath(target_dir)
-    os.makedirs(target_root, exist_ok=True)
     created: List[str] = []
+    if restricted:
+        created.extend(safe_fs.makedirs(target_root, owner))
+    else:
+        os.makedirs(target_root, exist_ok=True)
 
     def _mkdirs(path: str) -> None:
+        if restricted:
+            created.extend(safe_fs.makedirs(path, owner))
+            return
         missing = []
         probe = path
         while probe and not os.path.exists(probe):
@@ -664,23 +764,30 @@ def _safe_extract_zip(zip_file, target_dir: str) -> List[str]:
         member = _normalize_zip_member(info.filename)
         if not member or member in ('.', '..'):
             continue
+        parts = [p for p in member.split('/') if p not in ('', '.')]
+        if any(p == '..' for p in parts):
+            raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {info.filename}")
 
         is_dir = member.endswith('/') or (
             hasattr(info, 'is_dir') and callable(info.is_dir) and info.is_dir()
         )
         if is_dir:
-            dir_path = os.path.join(target_dir, member.rstrip('/'))
+            dir_path = os.path.join(target_root, *parts) if parts else target_root
             _assert_extract_dest(dir_path, target_root, info.filename)
             _mkdirs(dir_path)
             continue
 
-        dest = os.path.join(target_dir, member)
+        dest = os.path.join(target_root, *parts)
         _assert_extract_dest(dest, target_root, info.filename)
         parent = os.path.dirname(dest)
         if parent:
             _mkdirs(parent)
-        with zip_file.open(info, 'r') as src, open(dest, 'wb') as out:
-            shutil.copyfileobj(src, out)
+        with zip_file.open(info, 'r') as src:
+            if restricted:
+                safe_fs.write_stream(dest, src, owner)
+            else:
+                with open(dest, 'wb') as out:
+                    shutil.copyfileobj(src, out)
         created.append(dest)
     return created
 
@@ -692,55 +799,76 @@ async def extract_item(req: ExtractRequest, user: Dict[str, Any] = Depends(get_c
         import zipfile
         archive_path = check_safe_path(req.archive_path, user)
         target_dir = check_safe_path(req.target_dir, user)
-        
+
         if not os.path.exists(archive_path):
             raise HTTPException(status_code=404, detail="Archive file not found.")
-        if not zipfile.is_zipfile(archive_path):
-            raise HTTPException(status_code=400, detail="Path is not a valid zip file.")
-            
-        target_existed = os.path.isdir(target_dir)
-        os.makedirs(target_dir, exist_ok=True)
-        with zipfile.ZipFile(archive_path, 'r') as zip_file:
-            created = _safe_extract_zip(zip_file, target_dir)
-        chown_new(([] if target_existed else [target_dir]) + created, user)
+        restricted = _restricted(user)
+        if restricted:
+            fd = safe_fs.open_read(archive_path)
+            src = os.fdopen(fd, "rb")
+        else:
+            src = open(archive_path, "rb")
+        with src:
+            if not zipfile.is_zipfile(src):
+                raise HTTPException(status_code=400, detail="Path is not a valid zip file.")
+            src.seek(0)
+            target_existed = os.path.isdir(target_dir)
+            with zipfile.ZipFile(src, 'r') as zip_file:
+                created = _safe_extract_zip(
+                    zip_file, target_dir, owner_for(target_dir, user) if restricted else None, restricted
+                )
+        if not restricted:
+            chown_new(([] if target_existed else [target_dir]) + created, user)
 
         return {"status": "success", "message": "Archive extracted successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/chmod")
 async def chmod_items(req: ChmodRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Change item permissions."""
+    """Change item permissions.
+
+    Restricted users cannot set setuid / setgid / sticky bits, and symlinks
+    are never followed.
+    """
     try:
         mode_str = req.mode
         if not mode_str:
             mode_str = "755"
-        
+
         try:
             mode_int = int(mode_str, 8)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid octal mode string.")
+        if mode_int < 0 or mode_int > 0o7777:
+            raise HTTPException(status_code=400, detail="Invalid octal mode string.")
+        restricted = _restricted(user)
+        if restricted:
+            mode_int &= 0o777
 
         for p in req.paths:
             abs_p = check_safe_path(p, user)
-            if os.path.exists(abs_p):
-                try:
+            if not os.path.lexists(abs_p):
+                continue
+            try:
+                if restricted:
+                    safe_fs.chmod(abs_p, mode_int)
+                else:
                     os.chmod(abs_p, mode_int)
-                except Exception:
-                    pass
+            except Exception as exc:
+                if safe_fs is not None and isinstance(exc, safe_fs.SymlinkRefused):
+                    raise
+                continue
 
         return {"status": "success", "message": "Permissions updated successfully."}
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 from fastapi import File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+
 
 @router.get("/download")
 async def download_file(path: str, user: Dict[str, Any] = Depends(get_current_user)):
@@ -751,22 +879,43 @@ async def download_file(path: str, user: Dict[str, Any] = Depends(get_current_us
             raise HTTPException(status_code=404, detail="File not found.")
         if not os.path.isfile(target_path):
             raise HTTPException(status_code=400, detail="Path is a directory, not a file.")
-        
+
+        if _restricted(user):
+            fd = safe_fs.open_read(target_path)
+            size = os.fstat(fd).st_size
+            fh = os.fdopen(fd, "rb")
+
+            def _iter():
+                with fh:
+                    while True:
+                        chunk = fh.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            from urllib.parse import quote as _q
+            name = os.path.basename(target_path)
+            return StreamingResponse(
+                _iter(),
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Length": str(size),
+                    "Content-Disposition": f"attachment; filename*=utf-8''{_q(name)}",
+                },
+            )
         return FileResponse(
             path=target_path,
             filename=os.path.basename(target_path),
             media_type="application/octet-stream"
         )
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _fs_error(e)
 
 
 @router.post("/upload")
 async def upload_file(
-    path: str = Query(...), 
-    file: UploadFile = File(...), 
+    path: str = Query(...),
+    file: UploadFile = File(...),
     user: Dict[str, Any] = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Upload a file to the target directory."""
@@ -774,7 +923,7 @@ async def upload_file(
         target_dir = check_safe_path(path, user)
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Path is not a directory.")
-        
+
         if not file.filename:
             raise HTTPException(status_code=400, detail="Missing filename.")
         filename = safe_child_name(file.filename)
@@ -782,16 +931,15 @@ async def upload_file(
         if os.path.isdir(file_path):
             raise HTTPException(status_code=400, detail="A directory with that name already exists.")
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        chown_new([file_path], user)
-            
+        if _restricted(user):
+            safe_fs.write_stream(file_path, file.file, owner_for(file_path, user))
+        else:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
         return {
             "status": "success",
             "message": f"File '{filename}' uploaded successfully."
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise _fs_error(e)

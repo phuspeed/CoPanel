@@ -117,7 +117,8 @@ def test_error_body_carries_message(env):
     assert "isolated" in body["error"]["message"]
 
 
-def test_missing_home_is_created_on_list(env, tmp_path):
+def test_list_does_not_create_missing_home(env, tmp_path):
+    """GET must not have side effects; the home is created at login / user save."""
     client, home, _, user = env
     new_home = tmp_path / "home" / "newbie"
     user["permitted_folders"] = '["%s"]' % new_home
@@ -125,6 +126,8 @@ def test_missing_home_is_created_on_list(env, tmp_path):
     r = client.get("/api/file_manager/list")
     assert r.status_code == 200
     assert r.json()["path"] == str(new_home)
+    assert not new_home.exists()
+    user_home.ensure_permitted_folders(user)  # what login does
     assert new_home.is_dir()
     r = client.post("/api/file_manager/upload", params={"path": str(new_home)}, files={"file": ("a.txt", b"1")})
     assert r.status_code == 200, r.text
@@ -138,19 +141,18 @@ def test_superadmin_not_touched(tmp_path):
     assert user_home.owner_for(str(tmp_path), {"role": "superadmin"}) is None
 
 
-def test_new_items_get_home_owner(env, monkeypatch):
+def test_new_items_get_home_owner(env, owner_recorder):
     client, home, _, _ = env
-    calls = []
-    monkeypatch.setattr(user_home.os, "chown", lambda p, u, g, **kw: calls.append((str(p), u, g)))
     st = home.stat()
     if st.st_uid == 0:
         pytest.skip("tmp home owned by root")
     client.post("/api/file_manager/create-dir", json={"path": str(home / "d1" / "d2")})
     client.post("/api/file_manager/create-file", json={"path": str(home / "f.txt")})
     client.post("/api/file_manager/upload", params={"path": str(home)}, files={"file": ("u.txt", b"x")})
-    paths = {c[0] for c in calls}
-    assert {str(home / "d1"), str(home / "d1" / "d2"), str(home / "f.txt"), str(home / "u.txt")} <= paths
-    assert all(c[1] == st.st_uid and c[2] == st.st_gid for c in calls)
+    paths = {c[0] for c in owner_recorder}
+    want = {str(home / "d1"), str(home / "d1" / "d2"), str(home / "f.txt"), str(home / "u.txt")}
+    assert {os.path.realpath(p) for p in want} <= paths
+    assert all(c[1] == st.st_uid and c[2] == st.st_gid for c in owner_recorder)
 
 
 def test_root_owned_home_leaves_owner(monkeypatch, tmp_path):

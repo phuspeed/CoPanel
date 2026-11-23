@@ -116,6 +116,9 @@ _QUERY_TOKEN_PATHS = frozenset({"/api/platform/events"})
 _QUERY_TOKEN_PREFIXES = (
     "/api/backup_manager/stream_task",
     "/api/terminal/ws",
+    # AppStore modules (EventSource / WebSocket)
+    "/api/cloud_sync/stream_pair",
+    "/api/web_browser/ws",
 )
 
 
@@ -253,6 +256,12 @@ async def api_auth_middleware(request: Request, call_next):
     user = _user_from_token(authorization)
     if not user and query_token_allowed(path):
         user = consume_ticket(request.query_params.get("ticket"))
+        if user:
+            request.state.stream_user = user
+    if not user and request.query_params.get("media_token"):
+        from .stream_tickets import user_from_media_token
+
+        user = user_from_media_token(request.query_params.get("media_token"), path)
         if user:
             request.state.stream_user = user
     if not user:
