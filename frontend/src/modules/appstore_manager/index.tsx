@@ -259,6 +259,7 @@ export default function AppStoreDashboard() {
           pip_packages: pkg.pip_packages,
           frontend_install: pkg.frontend_install || 'rebuild',
           requires_copanel_restart: !!pkg.requires_copanel_restart,
+          is_core: typeof pkg.is_core === 'boolean' ? pkg.is_core : undefined,
         }),
       });
       const d = await res.json();
@@ -327,6 +328,7 @@ export default function AppStoreDashboard() {
             pip_packages: pkg.pip_packages,
             frontend_install: pkg.frontend_install || 'rebuild',
             requires_copanel_restart: !!pkg.requires_copanel_restart,
+            is_core: typeof pkg.is_core === 'boolean' ? pkg.is_core : undefined,
           })),
         }),
       });

@@ -639,10 +639,26 @@ def _assert_extract_dest(dest: str, target_root: str, raw_name: str) -> str:
     return dest_real
 
 
-def _safe_extract_zip(zip_file, target_dir: str) -> None:
-    """Extract zip members with normalized paths and directory creation."""
+def _safe_extract_zip(zip_file, target_dir: str) -> List[str]:
+    """Extract zip members with normalized paths and directory creation.
+
+    Returns the files and directories this call created (for ownership fixes).
+    """
     target_root = os.path.realpath(target_dir)
     os.makedirs(target_root, exist_ok=True)
+    created: List[str] = []
+
+    def _mkdirs(path: str) -> None:
+        missing = []
+        probe = path
+        while probe and not os.path.exists(probe):
+            missing.append(probe)
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        os.makedirs(path, exist_ok=True)
+        created.extend(reversed(missing))
 
     for info in zip_file.infolist():
         member = _normalize_zip_member(info.filename)
@@ -655,16 +671,18 @@ def _safe_extract_zip(zip_file, target_dir: str) -> None:
         if is_dir:
             dir_path = os.path.join(target_dir, member.rstrip('/'))
             _assert_extract_dest(dir_path, target_root, info.filename)
-            os.makedirs(dir_path, exist_ok=True)
+            _mkdirs(dir_path)
             continue
 
         dest = os.path.join(target_dir, member)
         _assert_extract_dest(dest, target_root, info.filename)
         parent = os.path.dirname(dest)
         if parent:
-            os.makedirs(parent, exist_ok=True)
+            _mkdirs(parent)
         with zip_file.open(info, 'r') as src, open(dest, 'wb') as out:
             shutil.copyfileobj(src, out)
+        created.append(dest)
+    return created
 
 
 @router.post("/extract")
@@ -680,9 +698,11 @@ async def extract_item(req: ExtractRequest, user: Dict[str, Any] = Depends(get_c
         if not zipfile.is_zipfile(archive_path):
             raise HTTPException(status_code=400, detail="Path is not a valid zip file.")
             
+        target_existed = os.path.isdir(target_dir)
         os.makedirs(target_dir, exist_ok=True)
         with zipfile.ZipFile(archive_path, 'r') as zip_file:
-            _safe_extract_zip(zip_file, target_dir)
+            created = _safe_extract_zip(zip_file, target_dir)
+        chown_new(([] if target_existed else [target_dir]) + created, user)
 
         return {"status": "success", "message": "Archive extracted successfully."}
     except HTTPException:

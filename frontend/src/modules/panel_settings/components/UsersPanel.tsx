@@ -126,10 +126,10 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
 
   const fetchAvailableModules = useCallback(async () => {
     try {
-      const [coreRes, pkgRes] = await Promise.all([
-        apiFetch('/api/modules'),
-        apiFetch('/api/package_manager/list'),
-      ]);
+      // Only panel modules are grantable. System packages from Package Manager
+      // (Nginx, Node.js & npm, Zip & Unzip, ...) have no panel UI or API of their
+      // own, so they are not listed here.
+      const coreRes = await apiFetch('/api/modules');
 
       const next: AvailableModule[] = [];
       const seen = new Set<string>();
@@ -147,23 +147,6 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
           seen.add(id);
           next.push({ id, label: formatModuleLabel(id), source: 'core' });
         });
-      }
-
-      if (pkgRes.ok) {
-        const data = await pkgRes.json();
-        const packages = Array.isArray(data?.packages) ? data.packages : [];
-        packages
-          .filter((p: any) => p?.id && p?.status !== 'not_installed')
-          .forEach((p: any) => {
-            const id = String(p.id);
-            if (seen.has(id)) return;
-            seen.add(id);
-            next.push({
-              id,
-              label: p.name || formatModuleLabel(id),
-              source: 'package',
-            });
-          });
       }
 
       next.sort((a, b) => a.label.localeCompare(b.label));

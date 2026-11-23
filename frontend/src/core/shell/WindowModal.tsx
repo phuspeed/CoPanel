@@ -1,7 +1,14 @@
 /**
  * Modal overlay scoped to the desktop window viewport when windowed,
  * otherwise falls back to full-viewport fixed overlay (classic mode).
+ *
+ * AppStore extension bundles compile their own copy of this file and of
+ * WindowViewportContext, so the context is always null there. In that case
+ * the nearest `.module-window-viewport` ancestor is found through the DOM
+ * (hidden anchor span) and the overlay is portaled into it, so the dialog
+ * sits inside the app window instead of behind it.
  */
+import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as Icons from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -41,14 +48,26 @@ export default function WindowModal({
   const { theme } = useAppShellContext();
   const isDark = theme === 'dark';
   const viewport = useWindowViewport();
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [domViewport, setDomViewport] = useState<HTMLElement | null>(null);
 
-  if (!open) return null;
+  useLayoutEffect(() => {
+    if (viewport?.isWindowed) return;
+    const el = anchorRef.current?.closest('.module-window-viewport');
+    setDomViewport(el instanceof HTMLElement ? el : null);
+  }, [viewport?.isWindowed, open]);
+
+  const anchor = <span ref={anchorRef} hidden aria-hidden="true" />;
+
+  if (!open) return anchor;
+
+  const windowed = Boolean(viewport?.isWindowed || domViewport);
 
   const overlay = (
     <div
       className={cn(
         'z-[80] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm',
-        viewport?.isWindowed ? 'absolute inset-0' : 'fixed inset-0',
+        windowed ? 'absolute inset-0' : 'fixed inset-0',
       )}
       onClick={closeOnBackdropClick ? onClose : undefined}
     >
@@ -79,9 +98,13 @@ export default function WindowModal({
     </div>
   );
 
-  if (viewport?.isWindowed && viewport.viewportRef.current) {
-    return createPortal(overlay, viewport.viewportRef.current);
-  }
-
-  return createPortal(overlay, document.body);
+  const target =
+    (viewport?.isWindowed ? viewport.viewportRef.current : null) || domViewport || document.body;
+  const portaled = createPortal(overlay, target);
+  return (
+    <>
+      {anchor}
+      {portaled}
+    </>
+  );
 }

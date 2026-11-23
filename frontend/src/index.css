@@ -241,6 +241,17 @@ html:not(.dark) .from-blue-600\/20 {
   max-width: none !important;
 }
 
+/*
+ * Compatibility for AppStore extension bundles built before panel 1.1.13: their
+ * copy of WindowModal portals to <body> as `fixed inset-0 z-[80]`, which is
+ * below the desktop window layer (z-[100]). Lift those overlays above windows
+ * (dock / start menu stay on top at z-[120+]). Newer bundles portal into the
+ * window viewport instead.
+ */
+body > .fixed.inset-0.z-\[80\] {
+  z-index: 110;
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   @apply w-2 h-2;

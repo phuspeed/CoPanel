@@ -31,6 +31,8 @@ def install_package(req: dict) -> Dict[str, Any]:
     pip_packages = req.get("pip_packages", [])
     requires_copanel_restart = bool(req.get("requires_copanel_restart", False))
     frontend_install = str(req.get("frontend_install") or "rebuild")
+    is_core = req.get("is_core")
+    is_core = bool(is_core) if isinstance(is_core, bool) else None
     if not pkg_id or not download_url:
         raise HTTPException(status_code=400, detail="Package id and download_url are required.")
 
@@ -43,6 +45,7 @@ def install_package(req: dict) -> Dict[str, Any]:
             pip_packages,
             requires_copanel_restart,
             frontend_install,
+            is_core,
         )
         if res.get("status") == "error":
             raise HTTPException(status_code=400, detail=res["message"])
@@ -76,6 +79,7 @@ def install_packages_batch(req: dict) -> Dict[str, Any]:
             "pip_packages": pkg.get("pip_packages", []),
             "frontend_install": str(pkg.get("frontend_install") or "rebuild"),
             "requires_copanel_restart": bool(pkg.get("requires_copanel_restart", False)),
+            "is_core": pkg.get("is_core") if isinstance(pkg.get("is_core"), bool) else None,
         })
 
     if not normalized:
