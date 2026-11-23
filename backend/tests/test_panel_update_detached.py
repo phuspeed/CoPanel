@@ -149,6 +149,13 @@ def test_runner_runs_staged_installer_and_records_exit(tmp_path, monkeypatch, co
         f"exit {code}\n",
     )
     sd = tmp_path / "state"
+
+    def fake_stage(h, s, log):  # signed-release staging is covered in test_release_pinning
+        staged = s / runner.STAGED_SCRIPT
+        staged.write_bytes((h / "scripts" / "install.sh").read_bytes())
+        return staged, "v9.9.9", "a" * 40
+
+    monkeypatch.setattr(runner, "stage_install_script", fake_stage)
     rc = runner.main(["--state-dir", str(sd), "--home", str(home)])
     assert rc == (0 if code == 0 else 1)
     log = (sd / "update.log").read_text()
@@ -466,7 +473,7 @@ def test_runner_holds_lock_and_starts_fresh_log(tmp_path, monkeypatch):
         return real_run(cmd, **kw)
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
-    monkeypatch.setattr(runner, "stage_install_script", lambda h, s, log: h / "scripts" / "install.sh")
+    monkeypatch.setattr(runner, "stage_install_script", lambda h, s, log: (h / "scripts" / "install.sh", "v9.9.9", "a" * 40))
     assert runner.main(["--state-dir", str(sd), "--home", str(home)]) == 0
     assert seen["lock_free_during_install"] is False
     log = (sd / "update.log").read_text()

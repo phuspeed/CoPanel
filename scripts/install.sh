@@ -47,7 +47,20 @@ NC=$(echo -e '\033[0m')
 # Configuration
 CoPanel_USER="copanel"
 CoPanel_HOME="/opt/copanel"
+# An explicit COPANEL_GIT_BRANCH (or COPANEL_GIT_REMOTE) installs exactly that
+# branch/tag. Otherwise a one-liner install or upgrade uses the newest signed
+# GitHub release (see copanel_resolve_release_ref), not the tip of main.
+COPANEL_GIT_BRANCH_EXPLICIT=0
+[[ -n "${COPANEL_GIT_BRANCH:-}" ]] && COPANEL_GIT_BRANCH_EXPLICIT=1
+[[ -n "${COPANEL_GIT_REMOTE:-}" ]] && COPANEL_GIT_BRANCH_EXPLICIT=1
 COPANEL_GIT_BRANCH="${COPANEL_GIT_BRANCH:-main}"
+# Release tag to install (vX.Y.Z) and the commit it must resolve to. The web
+# Panel Update sets both after verifying the signed release manifest.
+COPANEL_GIT_REF="${COPANEL_GIT_REF:-}"
+COPANEL_EXPECT_COMMIT="${COPANEL_EXPECT_COMMIT:-}"
+COPANEL_RELEASE_REPO="phuspeed/CoPanel"
+# Public key for release manifests (same as scripts/release/allowed_signers).
+COPANEL_RELEASE_PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINezHo2uWPpRxkaA2/rPXTOKIf21sK67towoP1mygzjp"
 COPANEL_GIT_REMOTE="${COPANEL_GIT_REMOTE:-https://github.com/phuspeed/CoPanel.git}"
 VENV_PATH="$CoPanel_HOME/venv"
 BACKEND_PORT=8000
@@ -237,7 +250,9 @@ Usage:
 Environment:
   COPANEL_UI_TRACK=classic|desktop     Skip prompt
   COPANEL_NONINTERACTIVE=1             Non-interactive (default UI: classic)
-  COPANEL_GIT_BRANCH=main              Git branch to clone/update
+  COPANEL_GIT_BRANCH=main              Install this branch/tag instead of the
+                                       latest signed release
+  COPANEL_GIT_REF=v1.2.3               Install this release tag
   COPANEL_LOW_MEM_MB=2048              RAM at or below this (MB) is low-memory
   COPANEL_SWAP_SIZE_MB=2048            Swap file created on low-memory hosts
   COPANEL_NODE_HEAP_MB=1536            Node --max-old-space-size on those hosts
@@ -1652,6 +1667,99 @@ COPANEL_SPARSE_PATHS=(
     "/.gitattributes"
 )
 
+# -----------------------------------------------------------------------------
+# Release pinning. Default one-liner installs/upgrades check out the newest
+# GitHub release tag whose manifest (copanel-release.json) is signed with the
+# CoPanel release key. Sets COPANEL_GIT_REF / COPANEL_EXPECT_COMMIT.
+# -----------------------------------------------------------------------------
+COPANEL_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+copanel_verify_release_manifest() {
+    # $1 manifest file, $2 signature file. Returns 0 when the signature is valid.
+    local manifest="$1" sig="$2" signers
+    signers="$(mktemp)"
+    printf 'copanel-release namespaces="copanel-release" %s\n' "$COPANEL_RELEASE_PUBKEY" >"$signers"
+    if ssh-keygen -Y verify -f "$signers" -I copanel-release -n copanel-release -s "$sig" <"$manifest" >/dev/null 2>&1; then
+        rm -f "$signers"
+        return 0
+    fi
+    rm -f "$signers"
+    return 1
+}
+
+copanel_manifest_field() {
+    # Flat JSON written by scripts/release/make_release.sh: "key": "value"
+    sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1
+}
+
+copanel_resolve_release_ref() {
+    if [[ -n "$COPANEL_GIT_REF" ]]; then
+        if [[ ! "$COPANEL_GIT_REF" =~ $COPANEL_TAG_RE ]]; then
+            log_error "COPANEL_GIT_REF must look like v1.2.3 (got: ${COPANEL_GIT_REF})."
+            exit 1
+        fi
+        if [[ -n "$COPANEL_EXPECT_COMMIT" && ! "$COPANEL_EXPECT_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            log_error "COPANEL_EXPECT_COMMIT must be a 40-character commit id."
+            exit 1
+        fi
+        log_info "Installing release ${COPANEL_GIT_REF}${COPANEL_EXPECT_COMMIT:+ (commit ${COPANEL_EXPECT_COMMIT:0:12})}."
+        return 0
+    fi
+    if [[ "$COPANEL_GIT_BRANCH_EXPLICIT" == "1" ]]; then
+        log_info "Using git branch/tag ${COPANEL_GIT_BRANCH} (COPANEL_GIT_BRANCH/COPANEL_GIT_REMOTE set)."
+        return 0
+    fi
+    local tag="" tmp
+    tag="$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/${COPANEL_RELEASE_REPO}/releases/latest" 2>/dev/null \
+        | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+    if [[ ! "$tag" =~ $COPANEL_TAG_RE ]]; then
+        log_warning "Could not look up the latest CoPanel release (GitHub API unreachable or rate-limited); using branch ${COPANEL_GIT_BRANCH}."
+        return 0
+    fi
+    tmp="$(mktemp -d)"
+    local base="https://github.com/${COPANEL_RELEASE_REPO}/releases/download/${tag}"
+    if curl -fsSL --max-time 30 --max-filesize 65536 -o "$tmp/m.json" "$base/copanel-release.json" 2>/dev/null \
+        && curl -fsSL --max-time 30 --max-filesize 65536 -o "$tmp/m.json.sig" "$base/copanel-release.json.sig" 2>/dev/null; then
+        if command_exists ssh-keygen; then
+            if ! copanel_verify_release_manifest "$tmp/m.json" "$tmp/m.json.sig"; then
+                rm -rf "$tmp"
+                log_error "The signature on CoPanel release ${tag} is NOT valid. Refusing to install it."
+                exit 1
+            fi
+            local mtag mcommit
+            mtag="$(copanel_manifest_field "$tmp/m.json" tag)"
+            mcommit="$(copanel_manifest_field "$tmp/m.json" commit)"
+            if [[ "$mtag" != "$tag" || ! "$mcommit" =~ ^[0-9a-f]{40}$ ]]; then
+                rm -rf "$tmp"
+                log_error "CoPanel release manifest for ${tag} does not match the release. Refusing to install it."
+                exit 1
+            fi
+            COPANEL_EXPECT_COMMIT="$mcommit"
+            log_success "Release ${tag} signature verified (commit ${mcommit:0:12})."
+        else
+            log_warning "ssh-keygen not found; installing release ${tag} without checking its signature."
+        fi
+    else
+        log_warning "Release ${tag} has no signed manifest; installing the tag without a signature check."
+    fi
+    rm -rf "$tmp"
+    COPANEL_GIT_REF="$tag"
+    return 0
+}
+
+# Verify the checked-out commit when a pinned commit is expected.
+copanel_check_expected_commit() {
+    local repo="$1" head
+    [[ -n "$COPANEL_EXPECT_COMMIT" ]] || return 0
+    head="$(git -c "safe.directory=$repo" -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$head" != "$COPANEL_EXPECT_COMMIT" ]]; then
+        log_error "Checked-out commit ${head:-unknown} is not the signed release commit ${COPANEL_EXPECT_COMMIT}. Stopping."
+        exit 1
+    fi
+    log_success "Code is at the signed release commit ${head:0:12}."
+}
+
 # Apply sparse-checkout in an existing git worktree under $1.
 copanel_apply_sparse_checkout() {
     local repo="$1"
@@ -1840,6 +1948,7 @@ setup_user_and_dirs() {
     
     # Check if running via one-liner (curl/wget), clone from GitHub directly
     if [[ ! -d "$REPO_DIR/backend" ]] || [[ ! -f "$REPO_DIR/backend/main.py" ]]; then
+        copanel_resolve_release_ref
         if [[ -d "$CoPanel_HOME/.git" ]]; then
             log_info "CoPanel already exists with Git repository. Updating codebase (branch: ${COPANEL_GIT_BRANCH})..."
             cd "$CoPanel_HOME"
@@ -1852,10 +1961,18 @@ setup_user_and_dirs() {
             fi
             # Limit worktree to install/runtime paths before fetch/pull
             copanel_apply_sparse_checkout "$CoPanel_HOME"
-            git fetch --all || true
-            git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
-                || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
-            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
+            if [[ -n "$COPANEL_GIT_REF" ]]; then
+                if ! git fetch --depth 1 --force origin "+refs/tags/${COPANEL_GIT_REF}:refs/tags/${COPANEL_GIT_REF}"; then
+                    log_error "Could not fetch release ${COPANEL_GIT_REF} from GitHub. Nothing was changed."
+                    exit 1
+                fi
+                git checkout -f --detach "refs/tags/${COPANEL_GIT_REF}" || { log_error "Could not check out ${COPANEL_GIT_REF}."; exit 1; }
+            else
+                git fetch --all || true
+                git checkout -f "${COPANEL_GIT_BRANCH}" 2>/dev/null \
+                    || git checkout -B "${COPANEL_GIT_BRANCH}" "origin/${COPANEL_GIT_BRANCH}" || true
+                git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
+            fi
             local -a git_clean_excludes=(
                 --exclude=config
                 --exclude=frontend/dist
@@ -1870,8 +1987,13 @@ setup_user_and_dirs() {
                 git_clean_excludes+=( --exclude "frontend/src/modules/${preserve_mod}" )
             done < <(copanel_git_extra_module_ids "$CoPanel_HOME")
             git clean -fd "${git_clean_excludes[@]}" || true
-            git pull origin "${COPANEL_GIT_BRANCH}" --force || true
-            git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
+            if [[ -n "$COPANEL_GIT_REF" ]]; then
+                git reset --hard "refs/tags/${COPANEL_GIT_REF}" || { log_error "Could not reset to ${COPANEL_GIT_REF}."; exit 1; }
+                copanel_check_expected_commit "$CoPanel_HOME"
+            else
+                git pull origin "${COPANEL_GIT_BRANCH}" --force || true
+                git reset --hard "origin/${COPANEL_GIT_BRANCH}" || true
+            fi
             copanel_apply_sparse_checkout "$CoPanel_HOME"
             copanel_prune_nonessential_files "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
@@ -1897,15 +2019,18 @@ setup_user_and_dirs() {
             
             rm -rf "$CoPanel_HOME"
             # Sparse clone: only backend/frontend/scripts/config + VERSION (no README/.md/website)
-            if git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 --filter=blob:none --sparse \
+            local clone_ref="${COPANEL_GIT_REF:-$COPANEL_GIT_BRANCH}"
+            if git clone -b "${clone_ref}" --depth 1 --filter=blob:none --sparse \
                 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME" 2>/dev/null; then
                 copanel_apply_sparse_checkout "$CoPanel_HOME"
             else
                 # Fallback for older git without sparse clone support
                 log_warning "Sparse clone unavailable; falling back to full clone + prune."
-                git clone -b "${COPANEL_GIT_BRANCH}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
+                rm -rf "$CoPanel_HOME"
+                git clone -b "${clone_ref}" --depth 1 "${COPANEL_GIT_REMOTE}" "$CoPanel_HOME"
                 copanel_apply_sparse_checkout "$CoPanel_HOME"
             fi
+            copanel_check_expected_commit "$CoPanel_HOME"
             copanel_prune_nonessential_files "$CoPanel_HOME"
             REPO_DIR="$CoPanel_HOME"
             

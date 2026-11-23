@@ -5,12 +5,21 @@ unit (``systemd-run --unit=copanel-update``), so stopping or restarting
 ``copanel.service`` during the install does not kill it.
 
 Steps:
-1. Stage the newest ``scripts/install.sh`` from ``origin/main`` (falls back to
-   the installed copy) into the state dir. Running a copy outside the panel
-   tree means ``install.sh`` takes its git-update path and that ``git reset``
-   cannot rewrite the script while bash is reading it.
-2. Run it with output appended to ``update.log``.
-3. Record the exit code in ``state.json``.
+1. Find the latest GitHub release, download its manifest
+   (``copanel-release.json``) and signature, and verify the signature with
+   ``ssh-keygen -Y verify`` against the release key that ships with the
+   *installed* panel (``scripts/release/allowed_signers``). The manifest
+   names the tag and the exact commit.
+2. Fetch that tag, check it resolves to the signed commit, and stage
+   ``scripts/install.sh`` from that commit into the state dir. Running a copy
+   outside the panel tree means ``install.sh`` takes its git-update path and
+   that ``git reset`` cannot rewrite the script while bash is reading it.
+3. Run it with ``COPANEL_GIT_REF``/``COPANEL_EXPECT_COMMIT`` so it checks out
+   exactly that commit, with output in ``update.log``.
+4. Record the exit code in ``state.json``.
+
+Any verification failure stops the update before anything is changed
+(fail closed); the running panel keeps working.
 
 Everything goes to files, so the panel can report progress again after the
 backend restarts.
@@ -21,10 +30,13 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.request
 from pathlib import Path
 
 STATE_FILE = "state.json"
@@ -87,23 +99,134 @@ def _git(home: Path, *args: str, log, capture: bool = False, timeout: int = 300)
     )
 
 
-def stage_install_script(home: Path, state_dir: Path, log) -> Path:
+RELEASE_REPO = "phuspeed/CoPanel"
+RELEASES_LATEST_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+RELEASE_DOWNLOAD = f"https://github.com/{RELEASE_REPO}/releases/download/{{tag}}/{{name}}"
+MANIFEST_NAME = "copanel-release.json"
+SIGNATURE_NAME = "copanel-release.json.sig"
+SIGNERS_REL_PATH = Path("scripts") / "release" / "allowed_signers"
+SIGNER_IDENTITY = "copanel-release"
+SIGNATURE_NAMESPACE = "copanel-release"
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_MAX_META_BYTES = 256 * 1024
+
+
+class ReleaseVerificationError(RuntimeError):
+    """The release could not be verified; nothing was changed."""
+
+
+class _HttpsOnly(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith("https://"):
+            raise ReleaseVerificationError("release download redirected to a non-https URL")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _http_get(url: str, *, accept: str = "*/*", timeout: int = 30) -> bytes:
+    opener = urllib.request.build_opener(_HttpsOnly())
+    req = urllib.request.Request(url, headers={"User-Agent": "CoPanel-Updater", "Accept": accept})
+    with opener.open(req, timeout=timeout) as resp:
+        data = resp.read(_MAX_META_BYTES + 1)
+    if len(data) > _MAX_META_BYTES:
+        raise ReleaseVerificationError(f"response from {url} is too large")
+    return data
+
+
+def latest_release_tag() -> str:
+    try:
+        data = json.loads(_http_get(RELEASES_LATEST_API, accept="application/vnd.github+json"))
+    except ReleaseVerificationError:
+        raise
+    except Exception as exc:
+        raise ReleaseVerificationError(f"could not read the latest release from GitHub: {exc}") from exc
+    tag = str(data.get("tag_name") or "") if isinstance(data, dict) else ""
+    if not TAG_RE.match(tag):
+        raise ReleaseVerificationError(f"latest release tag {tag!r} is not a version tag")
+    return tag
+
+
+def verify_manifest(manifest: bytes, signature: bytes, signers: Path) -> None:
+    """Raise unless ``signature`` is a valid release-key signature of ``manifest``."""
+    keygen = shutil.which("ssh-keygen")
+    if not keygen:
+        raise ReleaseVerificationError("ssh-keygen is not installed (apt-get install openssh-client)")
+    if not signers.is_file():
+        raise ReleaseVerificationError(f"release key file {signers} is missing")
+    with tempfile.TemporaryDirectory(prefix="copanel-verify-") as tmp:
+        sig_path = Path(tmp) / "manifest.sig"
+        sig_path.write_bytes(signature)
+        res = subprocess.run(
+            [keygen, "-Y", "verify", "-f", str(signers), "-I", SIGNER_IDENTITY,
+             "-n", SIGNATURE_NAMESPACE, "-s", str(sig_path)],
+            input=manifest,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or b"").decode("utf-8", "replace").strip()[-300:]
+        raise ReleaseVerificationError(f"release signature is not valid ({detail or 'ssh-keygen failed'})")
+
+
+def parse_manifest(manifest: bytes, tag: str) -> dict:
+    try:
+        data = json.loads(manifest)
+    except ValueError as exc:
+        raise ReleaseVerificationError("release manifest is not valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ReleaseVerificationError("release manifest is not an object")
+    if data.get("repo") != RELEASE_REPO or data.get("tag") != tag:
+        raise ReleaseVerificationError("release manifest does not belong to this release")
+    if str(data.get("version")) != tag[1:]:
+        raise ReleaseVerificationError("release manifest version does not match the tag")
+    if not COMMIT_RE.match(str(data.get("commit") or "")):
+        raise ReleaseVerificationError("release manifest has no valid commit id")
+    return data
+
+
+def resolve_signed_release(home: Path, log) -> dict:
+    tag = latest_release_tag()
+    log.write(f"[copanel-update] Latest release: {tag}\n".encode())
+    try:
+        manifest = _http_get(RELEASE_DOWNLOAD.format(tag=tag, name=MANIFEST_NAME))
+        signature = _http_get(RELEASE_DOWNLOAD.format(tag=tag, name=SIGNATURE_NAME))
+    except ReleaseVerificationError:
+        raise
+    except Exception as exc:
+        raise ReleaseVerificationError(f"could not download the signed manifest for {tag}: {exc}") from exc
+    verify_manifest(manifest, signature, home / SIGNERS_REL_PATH)
+    data = parse_manifest(manifest, tag)
+    log.write(f"[copanel-update] Release signature verified: {tag} -> {data['commit']}\n".encode())
+    return data
+
+
+def stage_install_script(home: Path, state_dir: Path, log) -> tuple:
+    """Verify the latest release and stage its install.sh.
+
+    Returns ``(script_path, tag, commit)``. Raises ReleaseVerificationError
+    (nothing changed) when the release cannot be verified.
+    """
+    if not (home / ".git").exists() or not shutil.which("git"):
+        raise ReleaseVerificationError(f"{home} is not a git checkout; update with the install one-liner instead")
+    release = resolve_signed_release(home, log)
+    tag, commit = release["tag"], release["commit"]
+    fetched = _git(home, "fetch", "--depth", "1", "--force", "origin", f"+refs/tags/{tag}:refs/tags/{tag}", log=log)
+    if fetched.returncode != 0:
+        raise ReleaseVerificationError(f"git fetch of {tag} failed")
+    resolved = _git(home, "rev-parse", f"refs/tags/{tag}^{{commit}}", log=log, capture=True, timeout=60)
+    got = (resolved.stdout or b"").decode().strip()
+    if resolved.returncode != 0 or got != commit:
+        raise ReleaseVerificationError(f"tag {tag} points to {got or 'nothing'}, not the signed commit {commit}")
+    shown = _git(home, "show", f"{commit}:scripts/install.sh", log=log, capture=True, timeout=60)
+    if shown.returncode != 0 or not shown.stdout:
+        raise ReleaseVerificationError(f"scripts/install.sh not found in {commit}")
     staged = state_dir / STAGED_SCRIPT
-    if (home / ".git").exists() and shutil.which("git"):
-        try:
-            _git(home, "fetch", "--quiet", "origin", "main", log=log)
-            shown = _git(home, "show", "origin/main:scripts/install.sh", log=log, capture=True, timeout=60)
-            if shown.returncode == 0 and shown.stdout:
-                staged.write_bytes(shown.stdout)
-                staged.chmod(0o700)
-                log.write(b"[copanel-update] Using install.sh from origin/main.\n")
-                return staged
-        except (OSError, subprocess.SubprocessError) as exc:
-            log.write(f"[copanel-update] git fetch failed: {exc}\n".encode())
-    shutil.copyfile(home / "scripts" / "install.sh", staged)
+    staged.write_bytes(shown.stdout)
     staged.chmod(0o700)
-    log.write(b"[copanel-update] Using the installed install.sh.\n")
-    return staged
+    log.write(f"[copanel-update] Using install.sh from {tag} ({commit[:12]}).\n".encode())
+    return staged, tag, commit
 
 
 def main(argv=None) -> int:
@@ -127,10 +250,15 @@ def _run_locked(state_dir: Path, home: Path) -> int:
     # A new run starts a fresh log (only once the lock is held).
     with open(state_dir / LOG_FILE, "wb", buffering=0) as log:
         try:
-            script = stage_install_script(home, state_dir, log)
-            env = {k: v for k, v in os.environ.items() if k != "COPANEL_ENV"}
+            script, tag, commit = stage_install_script(home, state_dir, log)
+            env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("COPANEL_ENV", "COPANEL_GIT_BRANCH", "COPANEL_GIT_REMOTE")
+            }
             env["COPANEL_NONINTERACTIVE"] = "1"
             env["COPANEL_HOME"] = str(home)
+            env["COPANEL_GIT_REF"] = tag
+            env["COPANEL_EXPECT_COMMIT"] = commit
             rc = subprocess.run(
                 ["/bin/bash", str(script)],
                 stdin=subprocess.DEVNULL,
@@ -140,6 +268,12 @@ def _run_locked(state_dir: Path, home: Path) -> int:
                 env=env,
                 check=False,
             ).returncode
+        except ReleaseVerificationError as exc:
+            log.write(
+                f"\n[copanel-update] Update stopped: {exc}. Nothing was changed; the panel keeps running "
+                "the current version.\n".encode()
+            )
+            rc = -1
         except Exception as exc:  # report, never leave the state at "running"
             log.write(f"\n[copanel-update] updater error: {exc}\n".encode())
             rc = -1
