@@ -11,8 +11,10 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from modules.auth.router import get_current_user
+from core.auth import require_module
 
-router = APIRouter()
+# Every endpoint also requires the file_manager module grant (superadmin always passes).
+router = APIRouter(dependencies=[Depends(require_module("file_manager"))])
 
 IS_WINDOWS = os.name == 'nt'
 
@@ -75,6 +77,33 @@ def check_safe_path(requested_path: str, user: Dict[str, Any]) -> str:
         status_code=403,
         detail=f"Access denied. Normal users are strictly isolated to their home folders: {p_folders}"
     )
+
+
+def safe_child_name(name: Optional[str]) -> str:
+    """Reduce a client-supplied file name to a single safe path component.
+
+    Directory components (``/`` and ``\\``) are stripped; empty, ``.``, ``..``
+    and names containing NUL are rejected with 400.
+    """
+    if not name or "\x00" in name:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    base = name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not base or base in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    return base
+
+
+def safe_join(target_dir: str, name: str, user: Dict[str, Any]) -> str:
+    """Join ``name`` under ``target_dir`` and re-validate the final path.
+
+    ``check_safe_path`` resolves symlinks for sandboxed users, so a child that
+    is (or traverses) a symlink pointing outside the permitted folders is 403.
+    The final path must also stay directly inside ``target_dir``.
+    """
+    candidate = os.path.join(target_dir, name)
+    if os.path.dirname(os.path.abspath(candidate)) != os.path.abspath(target_dir):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    return check_safe_path(candidate, user)
 
 
 # Schemas
@@ -462,10 +491,10 @@ async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_curren
             if not os.path.exists(source_path):
                 raise HTTPException(status_code=404, detail=f"Source path not found: {p}")
             
-            base_name = os.path.basename(source_path)
-            dest = os.path.join(target_dir, base_name)
+            base_name = safe_child_name(os.path.basename(source_path))
+            dest = safe_join(target_dir, base_name, user)
             if os.path.exists(dest):
-                dest = os.path.join(target_dir, f"copy_of_{base_name}")
+                dest = safe_join(target_dir, f"copy_of_{base_name}", user)
             
             if os.path.isdir(source_path):
                 shutil.copytree(source_path, dest)
@@ -494,7 +523,10 @@ async def move_multiple_items(req: MoveMultipleRequest, user: Dict[str, Any] = D
             if not os.path.exists(source_path):
                 continue
             
-            base_name = os.path.basename(source_path)
+            base_name = safe_child_name(os.path.basename(source_path))
+            # Validate the final destination (rejects a symlink pointing outside
+            # the sandbox) but keep operating on the in-directory name.
+            safe_join(target_dir, base_name, user)
             dest = os.path.join(target_dir, base_name)
             if os.path.exists(dest):
                 if os.path.isdir(dest):
@@ -701,12 +733,13 @@ async def upload_file(
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Path is not a directory.")
         
-        filename = file.filename
-        if not filename:
+        if not file.filename:
             raise HTTPException(status_code=400, detail="Missing filename.")
-        
-        file_path = os.path.join(target_dir, filename)
-        
+        filename = safe_child_name(file.filename)
+        file_path = safe_join(target_dir, filename, user)
+        if os.path.isdir(file_path):
+            raise HTTPException(status_code=400, detail="A directory with that name already exists.")
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
