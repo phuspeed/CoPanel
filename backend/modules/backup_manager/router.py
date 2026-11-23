@@ -159,7 +159,7 @@ def oauth_google_manual_token(data: dict) -> Dict[str, Any]:
 @router.get("/oauth/google/callback")
 def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
     """Public OAuth popup callback. Never reflects request text as HTML."""
-    from core.oauth_popup import oauth_result_page, safe_error_code
+    from ._oauth_page import oauth_result_page, safe_error_code
 
     kind = "copanel_google_oauth"
     if error:

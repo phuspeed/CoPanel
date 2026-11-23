@@ -159,7 +159,11 @@ async def terminal_websocket(
 
     async def watch_session():
         # Close the shell when the session is revoked (logout, password change).
-        from core.stream_tickets import REVALIDATE_INTERVAL_S, session_still_valid
+        try:
+            from core.stream_tickets import REVALIDATE_INTERVAL_S, session_still_valid
+        except ImportError:  # older core (AppStore zip on CoPanel < 1.1.15)
+            await asyncio.Event().wait()
+            return
 
         while True:
             await asyncio.sleep(REVALIDATE_INTERVAL_S)
