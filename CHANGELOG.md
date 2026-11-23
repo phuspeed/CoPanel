@@ -6,6 +6,61 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.15: security hardening (signed updates, AppStore integrity, symlink-safe file operations)**
+
+- **Panel Update installs only signed releases.** The updater used to run whatever was on GitHub `main`.
+  - It now reads the latest GitHub release and downloads its manifest (`copanel-release.json`: tag + exact commit).
+  - It verifies the manifest signature with `ssh-keygen -Y verify` against the release key that ships with the installed panel (`scripts/release/allowed_signers`).
+  - It fetches the tag, checks that the tag points to the signed commit, and runs that commit's `install.sh` with `COPANEL_GIT_REF`/`COPANEL_EXPECT_COMMIT`.
+  - Any failure stops the update before anything changes, and the panel keeps running.
+  - "Update available" now compares against the latest release, not `main`.
+  - The install one-liner also installs the latest signed release. A bad signature is refused. If GitHub's API cannot be reached, it falls back to `main` with a warning.
+  - `COPANEL_GIT_BRANCH=<branch|tag>` still installs exactly that ref.
+  - Release tooling: `scripts/release/make_release.sh` and `docs/RELEASING.md`. Each release carries `CoPanel-<ver>.zip`, the signed manifest and `SHA256SUMS`.
+- **AppStore installs are verified (`appstore_manager` 1.0.41).**
+  - The server resolves the package by id from the catalog it fetched itself. Download URL, checksum and dependencies sent by the browser are ignored.
+  - Official packages must come from the official AppStore repository over https.
+  - Every package needs a SHA-256 in `packages.json`, and a mismatch is refused.
+  - Archives are extracted safely: no `..`, absolute paths, symlinks or device files, with size limits.
+  - apt/yum/pip dependency names are validated and run without a shell.
+  - Installing, updating, removing, uploading and source settings are superadmin-only. Community catalog URLs must be https.
+- **OAuth popup XSS fixed (`backup_manager` 1.2.16; AppStore `cloud_sync`, `download_manager`).**
+  - The public callback page never reflects request text.
+  - The payload is escaped JSON, with a nonce CSP and `no-store`/`no-referrer` headers.
+  - `postMessage` goes only to the panel's own origin, and the panel checks `event.origin`.
+  - Errors are reduced to short codes and exceptions go to the log.
+- **File operations for restricted users no longer follow symlinks (`file_manager` 1.0.16, `web_manager` 1.3.3, `platform`).**
+  - Every create, write, read, copy, move, delete, zip, extract, chmod, upload and download inside a restricted user's folders walks the path with `O_NOFOLLOW` and works on pinned directory descriptors.
+  - Copy keeps symlinks as links, never as copies of what they point to.
+  - New files get the home owner with `fchown` at creation. Ownership is changed only on root-owned, single-link items, so a symlink or hard-link swap cannot hand root files to a local account.
+  - On an older core these endpoints refuse restricted users (503) instead of falling back to unsafe calls.
+- **Folders and the folder picker.**
+  - An empty or invalid folder list now means no access (it used to mean all of `/home`).
+  - The folder picker requires a module that uses it.
+  - Missing home folders are created at login, never by a GET request.
+- **Stream tickets.**
+  - At most 20 open tickets per user, and 60 per minute (429 above that). One user can no longer evict another user's tickets.
+  - Logout revokes the user's tickets.
+  - Open event streams and terminal sessions are re-checked every 30 s and closed after logout or a password change.
+- **No login token in URLs from AppStore modules.**
+  - `web_browser` 1.0.9 WebSocket and `cloud_sync` 1.1.8 log stream use single-use tickets.
+  - `audio_station` 0.3.11 `<audio>`/`<img>` URLs use path-scoped media tokens (`POST /api/auth/media-token`, 2 h, valid only for `/api/audio_station/stream` or `/cover`).
+  - `cloud_sync` no longer returns OAuth tokens to the browser.
+- **Logs.**
+  - uvicorn runs with `--no-access-log`.
+  - nginx masks the whole query string (every parameter, and the Referer's query) in the access log.
+- **Panel Update robustness.**
+  - The launcher and the runner share an exclusive lock. A double click gets 409 without touching the running update's log or state.
+  - The state directory must be root-owned and `0700`, or the update refuses to start.
+- **apt recovery.**
+  - `*.copanel-bak` sources from older installs are restored only once (marker in `/var/lib/copanel`).
+  - Only sources CoPanel itself disabled are retried.
+  - A repository's release-info change is accepted only for that source and only for the fields that changed (`--allow-releaseinfo-change-<field>`).
+  - `git safe.directory` is limited to `/opt/copanel` (a `*` entry is removed).
+- **No `shell=True` left in the backend.** Database dumps use a no-shell `mysqldump | gzip` pipe. Fail2Ban installs through the package helper.
+- Core module versions: `file_manager` 1.0.16, `web_manager` 1.3.3, `terminal` 1.0.9, `backup_manager` 1.2.16, `database_manager` 1.1.1, `firewall` 1.0.9, `appstore_manager` 1.0.41.
+- **AppStore modules need CoPanel 1.1.15 for some features.** `cloud_sync` streams and `audio_station` playback need CoPanel 1.1.15. Older cores reject their old URL tokens anyway.
+
 **CoPanel 1.1.14: Panel Update survives the service restart, apt recovery fixed, version and update in the Desktop UI**
 
 - **Panel Update from the web no longer dies half way.** `POST /api/platform/panel-update/run` used to run `install.sh` as a child of the API process and stream its output over one long HTTP request. Through nginx (`proxy_read_timeout 300s`) or Cloudflare Tunnel (~100 s idle), a long silent step such as `vite build` closed that request; the browser showed "network error", the output pipe was closed and the installer was killed (and, running inside `copanel.service`, it also skipped the service stop and died with the service). Also, run as `/opt/copanel/scripts/install.sh`, the installer took its "local source" path and never ran `git pull`, so the version stayed old.
@@ -90,6 +145,43 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- CoPanel 1.1.15 (bảo mật):
+  - **Cập nhật panel chỉ cài bản phát hành đã ký.**
+    - Trình cập nhật đọc release mới nhất trên GitHub và kiểm tra chữ ký của manifest (`ssh-keygen -Y verify`, khoá công khai đi kèm panel).
+    - Nó kiểm tra tag trỏ đúng commit đã ký rồi mới chạy `install.sh` của commit đó.
+    - Có lỗi là dừng, không thay đổi gì.
+    - Lệnh cài một dòng cũng cài release đã ký. Chữ ký sai thì từ chối cài.
+  - **AppStore**:
+    - Gói được lấy theo id từ danh mục phía server và phải có SHA-256 khớp.
+    - Chỉ tải từ kho chính thức qua https.
+    - Giải nén an toàn và không dùng shell.
+    - Cài, gỡ, tải lên chỉ dành cho superadmin.
+  - **Sửa XSS ở trang OAuth popup** (backup_manager, cloud_sync, download_manager).
+  - **Thao tác file của người dùng bị giới hạn không còn đi theo symlink**:
+    - Mở từng thành phần đường dẫn bằng `O_NOFOLLOW`.
+    - `fchown` ngay lúc tạo.
+    - Sao chép giữ nguyên symlink.
+  - **Thư mục và trình chọn thư mục**:
+    - Danh sách thư mục rỗng nghĩa là không có quyền.
+    - Trình chọn thư mục cần module phù hợp.
+    - Thư mục home được tạo khi đăng nhập, không tạo từ GET.
+  - **Stream ticket**:
+    - Tối đa 20 ticket/người dùng, 60 ticket/phút.
+    - Đăng xuất là thu hồi.
+    - Stream đang mở được kiểm tra lại mỗi 30 giây.
+  - **Module AppStore không còn đưa JWT lên URL**: web_browser và cloud_sync dùng ticket, audio_station dùng media token theo đường dẫn.
+  - **Log**:
+    - uvicorn tắt access log.
+    - nginx che toàn bộ query string.
+  - **Cập nhật panel**:
+    - Có khoá độc quyền: bấm hai lần sẽ nhận 409.
+    - Thư mục trạng thái phải là `0700` thuộc root.
+  - **apt**:
+    - Khôi phục `*.copanel-bak` chỉ một lần.
+    - Chỉ thử lại nguồn do CoPanel tắt.
+    - Chấp nhận thay đổi release-info theo từng nguồn, từng trường.
+    - `safe.directory` chỉ cho `/opt/copanel`.
+  - Backend không còn `shell=True`.
 - CoPanel 1.1.14: Cập nhật panel từ web không còn bị chết giữa chừng. Trước đây install.sh chạy như tiến trình con của API và đẩy log qua một request HTTP dài; khi `vite build` im lặng lâu, nginx/Cloudflare Tunnel cắt request ("network error") và installer bị kill; ngoài ra chạy từ `/opt/copanel/scripts/install.sh` thì không `git pull` nên version vẫn cũ. Giờ bản cập nhật chạy trong unit systemd riêng (`systemd-run --unit=copanel-update`), lấy install.sh mới nhất từ `origin/main`, ghi log vào `/var/lib/copanel-update/update.log`; giao diện hỏi trạng thái qua `GET /api/platform/panel-update/status`, hiện "Đang khởi động lại dịch vụ…" khi API tạm tắt và tự tải lại khi lên bản mới.
 - Khôi phục apt chỉ tắt nguồn thực sự lỗi (chỉ đọc dòng lỗi), không bao giờ tắt `ubuntu.sources`/`debian.sources`, chấp nhận thay đổi Label của PPA (`--allow-releaseinfo-change`), và tự khôi phục các file `*.copanel-bak` do bản cũ tạo ra.
 - Máy RAM ≤ 2 GB dùng frontend build sẵn (`frontend/prebuilt/dist.tar.gz`) thay vì chạy Vite khi bản build sẵn khớp mã nguồn; `COPANEL_FORCE_FRONTEND_BUILD=1` để vẫn build.

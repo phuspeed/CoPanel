@@ -624,11 +624,9 @@ class BackupTaskEngine:
         except OSError as e:
             return False, f"Cannot create backup directory: {e}"
 
-        from core import sysexec as _sysexec
-
         dump_argv = [dump_bin, "-u", "root", "--single-transaction", "--quick", "--routines", "--events", "--triggers", db_name]
         try:
-            res = _sysexec.pipe_to_file(dump_argv, [gzip_bin, "-c"], str(out_file), timeout=3600, producer_as_root=True)
+            res = _pipe_to_file(dump_argv, [gzip_bin, "-c"], str(out_file), timeout=3600)
             if res.returncode != 0:
                 err = (res.stderr or res.stdout or "").strip() or f"mysqldump exited with code {res.returncode}"
                 try:
@@ -906,3 +904,37 @@ class GoogleOAuthService:
 
 # Initialize DB on module load
 ProfileManager.init_db()
+
+
+def _pipe_to_file(producer, consumer, out_path, timeout=3600):
+    """``producer | consumer > out_path`` without a shell (producer as root).
+
+    Uses ``core.sysexec.pipe_to_file`` (CoPanel 1.1.15+); the same logic is
+    inlined for older cores that install this module from the AppStore.
+    """
+    import subprocess as _sp
+
+    from core import sysexec as _sx
+
+    fn = getattr(_sx, "pipe_to_file", None)
+    if fn is not None:
+        return fn(producer, consumer, out_path, timeout=timeout, producer_as_root=True)
+    p_argv = _sx.prepare_argv(producer, as_root=True)
+    c_argv = _sx.prepare_argv(consumer)
+    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "wb") as out:
+        p1 = _sp.Popen(p_argv, stdout=_sp.PIPE, stderr=_sp.PIPE)
+        p2 = _sp.Popen(c_argv, stdin=p1.stdout, stdout=out, stderr=_sp.PIPE)
+        p1.stdout.close()
+        try:
+            _, err2 = p2.communicate(timeout=timeout)
+            err1 = p1.stderr.read()
+            p1.wait(timeout=60)
+        except _sp.TimeoutExpired:
+            p1.kill()
+            p2.kill()
+            raise
+        finally:
+            p1.stderr.close()
+    rc = p1.returncode or p2.returncode
+    return _sp.CompletedProcess(p_argv, rc, "", (err1 + err2).decode("utf-8", "replace"))
