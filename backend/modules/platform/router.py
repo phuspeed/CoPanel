@@ -134,8 +134,10 @@ def folder_picker_list(
 ) -> Dict[str, Any]:
     """List sub-directories of ``path`` (default: the user's start folder)."""
     from fastapi import HTTPException
+    from core.user_home import ensure_permitted_folders
     from modules.file_manager.router import check_safe_path
 
+    ensure_permitted_folders(user)
     target = check_safe_path(path or "", user)
     if not os.path.isdir(target):
         raise HTTPException(status_code=404, detail="Folder not found.")
@@ -173,6 +175,9 @@ def folder_picker_mkdir(
     if os.path.lexists(os.path.join(parent, name)):
         raise HTTPException(status_code=400, detail="Path already exists.")
     os.mkdir(target)
+    from core.user_home import chown_new
+
+    chown_new([target], user)
     return {"status": "success", "path": target}
 
 

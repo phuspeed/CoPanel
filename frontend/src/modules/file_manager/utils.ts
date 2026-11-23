@@ -60,6 +60,16 @@ export function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleString();
 }
 
+/** Error text from a CoPanel API body: `{detail}` or the `{error: {message}}` envelope. */
+export function apiErrorMessage(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object') {
+    const d = data as { detail?: unknown; error?: { message?: unknown } };
+    if (typeof d.detail === 'string' && d.detail) return d.detail;
+    if (d.error && typeof d.error.message === 'string' && d.error.message) return d.error.message;
+  }
+  return fallback;
+}
+
 export function getAuthHeader(): Record<string, string> {
   const token = localStorage.getItem('copanel_token');
   return token ? { Authorization: `Bearer ${token}` } : {};

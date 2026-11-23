@@ -17,6 +17,7 @@ from core.audit import record_audit
 from core.auth import require_admin, require_user, user_from_verified_payload
 from core.security import verify_password, create_access_token, verify_token
 from core import user_model
+from core.user_home import ensure_permitted_folders
 
 # Username lockout is primary: 10 failures / 15 minutes for that username.
 # IP is a short burst throttle on *failed* attempts only so a shared NAT/CDN
@@ -306,6 +307,9 @@ def register_user(req: CreateUserRequest, user: Dict[str, Any] = Depends(require
             permitted_modules=json.dumps(req.permitted_modules),
             permitted_folders=json.dumps(req.permitted_folders)
         )
+        ensure_permitted_folders(
+            {"username": req.username, "role": req.role, "permitted_folders": req.permitted_folders}
+        )
         record_audit(
             "users.create",
             module="auth",
@@ -334,6 +338,11 @@ def edit_user(user_id: int, req: UpdateUserRequest, user: Dict[str, Any] = Depen
     )
     if not updated:
         raise ApiError("NOT_FOUND", "User not found.", http_status=404)
+    target_user = user_model.get_user_by_id(user_id)
+    if target_user:
+        ensure_permitted_folders(
+            {"username": target_user.get("username"), "role": req.role, "permitted_folders": req.permitted_folders}
+        )
 
     record_audit(
         "users.update",

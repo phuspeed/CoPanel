@@ -6,6 +6,13 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**Fixed: restricted users can write in their own folders (CoPanel 1.1.12, `file_manager` 1.0.14, `platform` 1.0.3, `auth` 1.0.3)**
+
+- Creating or editing a non-superadmin user now creates each missing permitted folder (e.g. `/home/phutv`, mode 0750). Before, the panel never created it: File Manager showed an empty folder, and creating a file or uploading into it failed. File Manager and the folder picker also create a missing permitted folder on first open.
+- A created home is owned by the system account of the same name when that account exists and its home is this folder (no system users are created). Files and folders a restricted user creates, uploads, copies or zips in a folder owned by a non-root account get that owner; root-owned folders stay root-owned.
+- File Manager shows the server's error message (e.g. access denied, folder missing) instead of a generic "Create failed" / "Upload failed".
+- Access rules are unchanged: full read/write inside permitted folders, including the folder itself; 403 outside; upload/symlink protections from 1.0.13 kept.
+
 **Security: File Manager upload stays in the target folder (`file_manager` 1.0.13)**
 
 - Upload kept the client-supplied file name as-is, so a name with directory parts or an absolute path could be written outside the chosen folder and outside a user's permitted folders. Upload now keeps only the base name, rejects empty, `.`, `..` and NUL names with 400, and re-checks the final path with `check_safe_path` (symlinks resolved) before writing. A symlink in the folder that points outside the user's permitted folders is refused with 403.
@@ -61,6 +68,7 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- User bị giới hạn giờ tạo/sửa/xoá/tải lên được trong thư mục của mình (CoPanel 1.1.12). Panel tự tạo thư mục được cấp (vd `/home/phutv`) khi tạo/sửa user hoặc lần đầu mở File Manager; nếu có tài khoản Linux cùng tên có home là thư mục đó thì giao quyền sở hữu cho tài khoản đó. File Manager hiện đúng thông báo lỗi từ server thay vì "Create failed". Ngoài thư mục được cấp vẫn bị chặn (403).
 - Bảo mật File Manager (1.0.13): upload chỉ giữ tên file, chặn tên rỗng, `.`, `..`, ký tự NUL, và kiểm tra lại đường dẫn cuối (kể cả symlink) trước khi ghi, nên không ghi được ra ngoài thư mục đích hay thư mục được cấp. Copy/di chuyển nhiều file cũng kiểm tra lại đích. Mọi API File Manager giờ cần quyền module `file_manager`, không chỉ cần đăng nhập.
 - Chọn thư mục (CoPanel 1.1.11): Docker Manager dùng API chọn thư mục riêng, chỉ liệt kê thư mục (không có file) và tạo thư mục mới. User có quyền ở thư mục nào thì chọn được thư mục trong đó, không cần quyền File Manager.
 - File Manager: gõ được đường dẫn trên thanh địa chỉ (bấm biểu tượng bút chì, chỗ trống trên thanh, hoặc nhấp đúp). Enter để mở, Esc/bấm ra ngoài để huỷ. Hỗ trợ đường dẫn tuyệt đối và tương đối với thư mục hiện tại. Đường dẫn không tồn tại hoặc không có quyền sẽ báo lỗi và giữ nguyên thư mục hiện tại.

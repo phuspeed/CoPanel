@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookmarkEntry, ClipboardState, CreateType, FileItem, SortKey, ViewMode } from '../types';
 import { getFileManagerTranslations } from '../i18n';
-import { formatSize, getAuthHeader, joinPath, parentDir, resolveTypedPath, sortFiles } from '../utils';
+import { apiErrorMessage, formatSize, getAuthHeader, joinPath, parentDir, resolveTypedPath, sortFiles } from '../utils';
 import { toast } from '../../../core/platform';
 import { useAppShellContext } from '../../../core/hooks/useAppShellContext';
 import { useIsWindowedModule } from '../../../core/shell/WindowViewportContext';
@@ -75,7 +75,7 @@ export function useFileManager() {
       const response = await fetch(url, { headers: getAuthHeader() });
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.detail || 'Failed to list directory');
+        throw new Error(apiErrorMessage(data, 'Failed to list directory'));
       }
       const data = await response.json();
       applyListing(data, recordHistory);
@@ -112,7 +112,7 @@ export function useFileManager() {
               : response.status === 403
                 ? tr.pathAccessDenied
                 : tr.pathOpenFailed;
-          const detail = typeof data.detail === 'string' ? data.detail : '';
+          const detail = apiErrorMessage(data, '');
           toast(title, { level: 'error', body: detail ? `${target} — ${detail}` : target, module: 'file_manager' });
           return false;
         }
@@ -246,7 +246,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Could not read file');
+        throw new Error(apiErrorMessage(data, 'Could not read file'));
       }
       const data = await res.json();
       setEditingFile(item.path);
@@ -266,7 +266,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Failed to save');
+        throw new Error(apiErrorMessage(data, 'Failed to save'));
       }
       setEditingFile(null);
       void fetchPath(currentPath, false);
@@ -282,7 +282,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Download failed');
+        throw new Error(apiErrorMessage(data, 'Download failed'));
       }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -311,7 +311,15 @@ export function useFileManager() {
         };
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error('Upload failed'));
+          else {
+            let body: unknown = null;
+            try {
+              body = JSON.parse(xhr.responseText);
+            } catch {
+              /* non-JSON */
+            }
+            reject(new Error(apiErrorMessage(body, `Upload failed (${xhr.status})`)));
+          }
         };
         xhr.onerror = () => reject(new Error('Upload network error'));
         xhr.send(formData);
@@ -361,7 +369,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Create failed');
+        throw new Error(apiErrorMessage(data, 'Create failed'));
       }
       setNewItemName('');
       setCreateType(null);
@@ -387,7 +395,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Rename failed');
+        throw new Error(apiErrorMessage(data, 'Rename failed'));
       }
       setRenamingItem(null);
       setRenameValue('');
@@ -410,7 +418,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Delete failed');
+        throw new Error(apiErrorMessage(data, 'Delete failed'));
       }
       setSelectedPaths([]);
       void fetchPath(currentPath, false);
@@ -444,7 +452,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Paste failed');
+        throw new Error(apiErrorMessage(data, 'Paste failed'));
       }
       setClipboard(null);
       void fetchPath(currentPath, false);
@@ -464,7 +472,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Zip failed');
+        throw new Error(apiErrorMessage(data, 'Zip failed'));
       }
       setZipModalOpen(false);
       setZipArchiveName('');
@@ -486,7 +494,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'Extract failed');
+        throw new Error(apiErrorMessage(data, 'Extract failed'));
       }
       setExtractModalOpen(false);
       setSelectedPaths([]);
@@ -506,7 +514,7 @@ export function useFileManager() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail || 'chmod failed');
+        throw new Error(apiErrorMessage(data, 'chmod failed'));
       }
       setChmodModalOpen(false);
       setSelectedPaths([]);

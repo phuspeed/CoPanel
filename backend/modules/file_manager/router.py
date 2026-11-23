@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from modules.auth.router import get_current_user
 from core.auth import require_module
+from core.user_home import chown_new, ensure_permitted_folders
 
 # Every endpoint also requires the file_manager module grant (superadmin always passes).
 router = APIRouter(dependencies=[Depends(require_module("file_manager"))])
@@ -246,6 +247,8 @@ async def list_directory(
     always validated by ``check_safe_path`` first.
     """
     try:
+        # Restricted users: create a missing home / permitted folder on first use.
+        ensure_permitted_folders(user)
         target_path = check_safe_path(path, user)
         if not os.path.exists(target_path):
             if must_exist:
@@ -348,6 +351,7 @@ async def create_file(req: CreateFileRequest, user: Dict[str, Any] = Depends(get
 
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(req.content or "")
+        chown_new([target_path], user)
 
         return {
             "status": "success",
@@ -367,7 +371,16 @@ async def create_dir(req: CreateDirRequest, user: Dict[str, Any] = Depends(get_c
         if os.path.exists(target_path):
             raise HTTPException(status_code=400, detail="Path already exists.")
 
+        missing = []
+        probe = target_path
+        while probe and not os.path.exists(probe):
+            missing.append(probe)
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
         os.makedirs(target_path, exist_ok=True)
+        chown_new(list(reversed(missing)), user)
 
         return {
             "status": "success",
@@ -500,6 +513,7 @@ async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_curren
                 shutil.copytree(source_path, dest)
             else:
                 shutil.copy2(source_path, dest)
+            chown_new([dest], user, recursive=True)
 
         return {"status": "success", "message": "Items copied successfully."}
     except HTTPException:
@@ -589,6 +603,7 @@ async def zip_items(req: ZipRequest, user: Dict[str, Any] = Depends(get_current_
                             zip_file.write(file_path, rel_path)
                 else:
                     zip_file.write(abs_p, os.path.basename(abs_p))
+        chown_new([archive_path], user)
 
         return {"status": "success", "message": "Items compressed successfully."}
     except HTTPException:
@@ -742,6 +757,7 @@ async def upload_file(
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+        chown_new([file_path], user)
             
         return {
             "status": "success",
