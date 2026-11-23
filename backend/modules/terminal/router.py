@@ -157,16 +157,32 @@ async def terminal_websocket(
         except WebSocketDisconnect:
             pass
 
+    async def watch_session():
+        # Close the shell when the session is revoked (logout, password change).
+        from core.stream_tickets import REVALIDATE_INTERVAL_S, session_still_valid
+
+        while True:
+            await asyncio.sleep(REVALIDATE_INTERVAL_S)
+            if not await asyncio.to_thread(session_still_valid, user):
+                try:
+                    await websocket.send_text("\r\n[session ended: signed out]\r\n")
+                    await websocket.close(code=4401)
+                except Exception:
+                    pass
+                return
+
     task_read = asyncio.create_task(read_pty())
     task_write = asyncio.create_task(write_pty())
+    task_watch = asyncio.create_task(watch_session())
 
     try:
-        await asyncio.gather(task_read, task_write)
+        await asyncio.wait({task_read, task_write, task_watch}, return_when=asyncio.FIRST_COMPLETED)
     except Exception:
         pass
     finally:
         task_read.cancel()
         task_write.cancel()
+        task_watch.cancel()
         try:
             p.terminate()
             os.close(master_fd)

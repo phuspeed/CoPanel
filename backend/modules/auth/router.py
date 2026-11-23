@@ -228,6 +228,9 @@ def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
     _clear_login_failures(client_ip, req.username)
     if user.get("role") == "superadmin":
         user_model.clear_admin_password_file()
+    else:
+        # Create a missing home / permitted folder at login (never on a GET).
+        ensure_permitted_folders(user)
     token = create_access_token(
         data={
             "sub": user["username"],
@@ -252,19 +255,53 @@ def login(req: LoginRequest, request: Request) -> Dict[str, Any]:
 @router.post("/stream-ticket")
 def stream_ticket(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     """Issue a ~60s single-use ticket for EventSource / WebSocket query auth."""
-    from core.stream_tickets import TICKET_TTL_SECONDS, issue_ticket
+    from core.stream_tickets import TICKET_TTL_SECONDS, TicketRateLimited, issue_ticket
 
+    try:
+        ticket = issue_ticket(user)
+    except TicketRateLimited as exc:
+        raise ApiError("RATE_LIMITED", str(exc), http_status=429)
     return {
         "status": "success",
-        "ticket": issue_ticket(user),
+        "ticket": ticket,
         "expires_in": TICKET_TTL_SECONDS,
     }
+
+
+class MediaTokenRequest(BaseModel):
+    scope: str
+
+
+@router.post("/media-token")
+def media_token(req: MediaTokenRequest, user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    """Reusable, path-scoped token for <audio>/<img> URLs (see core.stream_tickets)."""
+    from core.auth import user_has_module
+    from core.stream_tickets import (
+        MEDIA_TOKEN_TTL_SECONDS,
+        TicketRateLimited,
+        issue_media_token,
+        media_scope_module,
+    )
+
+    module = media_scope_module(req.scope)
+    if not module or not user_has_module(user, module):
+        raise ApiError("FORBIDDEN", "Not allowed for this scope.", http_status=403)
+    try:
+        token = issue_media_token(user, req.scope)
+    except ValueError:
+        raise ApiError("BAD_REQUEST", "Unknown media scope.", http_status=400)
+    except TicketRateLimited as exc:
+        raise ApiError("RATE_LIMITED", str(exc), http_status=429)
+    return {"status": "success", "token": token, "expires_in": MEDIA_TOKEN_TTL_SECONDS}
 
 
 @router.post("/logout")
 def logout(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
     """Invalidate every token for this user (logout-all)."""
     user_model.bump_token_version(int(user["id"]))
+    from core.stream_tickets import revoke_user_tickets
+
+    revoke_user_tickets(str(user.get("username") or ""))
     record_audit(
         "auth.logout",
         module="auth",

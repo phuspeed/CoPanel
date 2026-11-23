@@ -18,6 +18,7 @@ backend restarts.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -29,6 +30,7 @@ from pathlib import Path
 STATE_FILE = "state.json"
 LOG_FILE = "update.log"
 STAGED_SCRIPT = "install.sh"
+LOCK_FILE = "lock"
 EXIT_MARKER = "__COPANEL_EXIT__"
 
 
@@ -49,9 +51,35 @@ def write_state(state_dir: Path, **fields) -> dict:
     return state
 
 
+def replace_state(state_dir: Path, state: dict) -> None:
+    tmp = state_dir / (STATE_FILE + ".tmp")
+    tmp.write_text(json.dumps(state or {}), encoding="utf-8")
+    os.replace(tmp, state_dir / STATE_FILE)
+
+
+@contextlib.contextmanager
+def update_lock(state_dir: Path, *, blocking: bool):
+    """Exclusive flock on ``<state>/lock``; yields True when held."""
+    import fcntl
+
+    fd = os.open(str(state_dir / LOCK_FILE), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def _git(home: Path, *args: str, log, capture: bool = False, timeout: int = 300):
     return subprocess.run(
-        ["git", "-c", "safe.directory=*", "-C", str(home), *args],
+        ["git", "-c", f"safe.directory={home}", "-C", str(home), *args],
         stdout=subprocess.PIPE if capture else log,
         stderr=log,
         timeout=timeout,
@@ -85,11 +113,19 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     state_dir = Path(args.state_dir)
     home = Path(args.home)
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Same lock as the launcher: waits for the launch to finish, then keeps
+    # any second update out until this install is done.
+    with update_lock(state_dir, blocking=True):
+        return _run_locked(state_dir, home)
+
+
+def _run_locked(state_dir: Path, home: Path) -> int:
     write_state(state_dir, status="running", pid=os.getpid(), runner_started_at=time.time())
 
     rc = -1
-    with open(state_dir / LOG_FILE, "ab", buffering=0) as log:
+    # A new run starts a fresh log (only once the lock is held).
+    with open(state_dir / LOG_FILE, "wb", buffering=0) as log:
         try:
             script = stage_install_script(home, state_dir, log)
             env = {k: v for k, v in os.environ.items() if k != "COPANEL_ENV"}

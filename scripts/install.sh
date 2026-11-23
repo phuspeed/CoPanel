@@ -927,18 +927,44 @@ copanel_apt_error_lines() {
     grep -E "^E:|^Err:|^W: Failed to fetch|changed its '" "$log_file" 2>/dev/null || true
 }
 
+COPANEL_APT_STATE_DIR="${COPANEL_APT_STATE_DIR:-/var/lib/copanel}"
+
 copanel_apt_restore_disabled_sources() {
-    # Undo earlier CoPanel runs that moved sources aside as *.copanel-bak
-    # (older versions disabled every source, including ubuntu.sources). The
-    # error-only matching below disables again only a source that still fails.
-    local bak orig
+    # Sources moved aside as *.copanel-bak are restored only when CoPanel
+    # itself disabled them:
+    #  * once, for legacy backups left by installers before 1.1.15 (they
+    #    disabled every source, including ubuntu.sources) - a marker file
+    #    makes sure this never runs again;
+    #  * sources this installer disabled on its previous run (recorded in
+    #    apt-disabled-by-copanel) are retried, and disabled again only if they
+    #    still fail.
+    # A *.copanel-bak an administrator left in place on purpose stays disabled.
+    local marker="$COPANEL_APT_STATE_DIR/apt-legacy-restored"
+    local list="$COPANEL_APT_STATE_DIR/apt-disabled-by-copanel"
+    local bak orig name
+    local -a candidates=()
+    mkdir -p "$COPANEL_APT_STATE_DIR" 2>/dev/null || true
     shopt -s nullglob
-    for bak in "$COPANEL_APT_SOURCES_DIR"/*.copanel-bak; do
+    if [[ ! -f "$marker" ]]; then
+        for bak in "$COPANEL_APT_SOURCES_DIR"/*.copanel-bak; do
+            candidates+=("$bak")
+        done
+    fi
+    shopt -u nullglob
+    if [[ -f "$list" ]]; then
+        while IFS= read -r name; do
+            [[ -z "$name" || "$name" == */* || "$name" == .* ]] && continue
+            candidates+=("$COPANEL_APT_SOURCES_DIR/${name}.copanel-bak")
+        done < "$list"
+    fi
+    for bak in "${candidates[@]}"; do
+        [[ -f "$bak" && ! -L "$bak" ]] || continue
         orig="${bak%.copanel-bak}"
         [[ -e "$orig" ]] && continue
-        mv "$bak" "$orig" && log_info "Restored apt source $(basename "$orig") (disabled by an earlier CoPanel install)"
+        mv "$bak" "$orig" && log_info "Restored apt source $(basename "$orig") (disabled by CoPanel earlier)"
     done
-    shopt -u nullglob
+    : > "$marker" 2>/dev/null || true
+    : > "$list" 2>/dev/null || true
 }
 
 copanel_disable_apt_source_file() {
@@ -952,6 +978,8 @@ copanel_disable_apt_source_file() {
     log_warning "Temporarily disabling $(basename "$ppa_f") (failed apt mirror in update log)"
     log_warning "  Restore: sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
     mv "$ppa_f" "${ppa_f}.copanel-bak"
+    mkdir -p "$COPANEL_APT_STATE_DIR" 2>/dev/null || true
+    basename "$ppa_f" >> "$COPANEL_APT_STATE_DIR/apt-disabled-by-copanel" 2>/dev/null || true
     return 0
 }
 
@@ -996,6 +1024,55 @@ copanel_apt_failed_source_list_files() {
     rm -f "$err_file"
 }
 
+copanel_apt_releaseinfo_changes() {
+    # From an apt-get update log, print "<source file>|<field>" for each
+    # non-distro source whose release info changed (Label, Origin, Suite,
+    # Codename, Version), e.g. the ondrej PPA relabelling itself.
+    local log_file="$1" line url field f
+    [[ -f "$log_file" ]] || return 0
+    local -A seen=()
+    while IFS= read -r line; do
+        url="$(printf '%s\n' "$line" | grep -oE "https?://[^ ']+" | head -n1)"
+        field="$(printf '%s\n' "$line" | grep -oE "changed its '(Label|Origin|Suite|Codename|Version)'" | grep -oE "(Label|Origin|Suite|Codename|Version)" | head -n1)"
+        [[ -n "$url" && -n "$field" ]] || continue
+        url="${url%/}"
+        shopt -s nullglob
+        for f in "$COPANEL_APT_SOURCES_DIR"/*.list "$COPANEL_APT_SOURCES_DIR"/*.sources; do
+            [[ -f "$f" ]] || continue
+            copanel_apt_source_is_protected "$f" && continue
+            if grep -qF "$url" "$f" 2>/dev/null; then
+                if [[ -z "${seen[$f|$field]:-}" ]]; then
+                    seen["$f|$field"]=1
+                    printf '%s|%s\n' "$f" "$field"
+                fi
+            fi
+        done
+        shopt -u nullglob
+    done < <(grep -E "changed its '" "$log_file" 2>/dev/null || true)
+}
+
+copanel_apt_accept_releaseinfo_changes() {
+    # Accept only the changed field, and only for the source file that
+    # reported it (apt-get update limited to that one file). Signatures are
+    # still verified. Returns 0 when at least one change was accepted.
+    local log_file="$1" entry f field accepted=1 one_log
+    one_log="$(mktemp)"
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        f="${entry%|*}"
+        field="${entry##*|}"
+        field="$(printf '%s' "$field" | tr '[:upper:]' '[:lower:]')"
+        log_warning "apt source $(basename "$f") changed its ${field}; accepting that change for this source only."
+        if apt_get_update_timed "$one_log" \
+            -o "Dir::Etc::sourcelist=$f" -o "Dir::Etc::sourceparts=-" -o "APT::Get::List-Cleanup=0" \
+            "--allow-releaseinfo-change-${field}"; then
+            accepted=0
+        fi
+    done < <(copanel_apt_releaseinfo_changes "$log_file")
+    rm -f "$one_log"
+    return "$accepted"
+}
+
 apt_update_or_recover() {
     if ! command_exists apt-get; then
         return 0
@@ -1017,8 +1094,7 @@ apt_update_or_recover() {
     # A repository that changed its Label/Origin/Suite (e.g. the ondrej PPA
     # marking itself deprecated) only needs the change accepted.
     if grep -q "changed its '" "$log" 2>/dev/null; then
-        log_warning "An apt repository changed its release info; accepting it (--allow-releaseinfo-change)."
-        if apt_get_update_timed "$log" --allow-releaseinfo-change; then
+        if copanel_apt_accept_releaseinfo_changes "$log" && apt_get_update_timed "$log"; then
             log_success "apt-get update succeeded after accepting the release info change"
             rm -f "$log"
             return 0
@@ -1767,8 +1843,13 @@ setup_user_and_dirs() {
         if [[ -d "$CoPanel_HOME/.git" ]]; then
             log_info "CoPanel already exists with Git repository. Updating codebase (branch: ${COPANEL_GIT_BRANCH})..."
             cd "$CoPanel_HOME"
-            git config --global --add safe.directory '*' || true
-            git config --system --add safe.directory '*' || true
+            # Trust only the panel checkout (never safe.directory='*', which turns
+            # off git's repository-ownership check for every repo on the host).
+            git config --global --unset-all safe.directory '^\*$' 2>/dev/null || true
+            git config --system --unset-all safe.directory '^\*$' 2>/dev/null || true
+            if ! git config --system --get-all safe.directory 2>/dev/null | grep -qxF "$CoPanel_HOME"; then
+                git config --system --add safe.directory "$CoPanel_HOME" || true
+            fi
             # Limit worktree to install/runtime paths before fetch/pull
             copanel_apply_sparse_checkout "$CoPanel_HOME"
             git fetch --all || true
@@ -2651,7 +2732,7 @@ copanel_prebuilt_frontend_is_current() {
     [[ -f "$repo/frontend/prebuilt/dist.tar.gz" ]] || return 1
     command_exists git || return 0
     [[ -d "$repo/.git" ]] || return 0
-    local g=(git -c safe.directory='*' -C "$repo")
+    local g=(git -c "safe.directory=$repo" -C "$repo")
     if [[ "$("${g[@]}" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
         return 0
     fi
@@ -2931,23 +3012,20 @@ upstream copanel_backend {
 }
 
 # BEGIN COPANEL LOG REDACTION
-# Never write credentials from the query string to access.log. SSE/WebSocket
-# auth uses a short-lived ?ticket=; older clients sent ?access_token=<JWT>.
-map $request_uri $copanel_log_uri_a {
+# Never write credentials from a query string to access.log: the whole query
+# string (every ?ticket=, ?media_token=, ?access_token=, ?token=, ...) is
+# replaced, and so is the query part of the Referer.
+map $request_uri $copanel_log_uri {
     default $request_uri;
-    "~^(?<cpl_a1>.*[?&]access_token=)[^&]*(?<cpl_a2>.*)$" "${cpl_a1}REDACTED${cpl_a2}";
+    "~^(?<cpl_path>[^?]*)\?" "${cpl_path}?[query-redacted]";
 }
-map $copanel_log_uri_a $copanel_log_uri_b {
-    default $copanel_log_uri_a;
-    "~^(?<cpl_b1>.*[?&]ticket=)[^&]*(?<cpl_b2>.*)$" "${cpl_b1}REDACTED${cpl_b2}";
-}
-map $copanel_log_uri_b $copanel_log_uri {
-    default $copanel_log_uri_b;
-    "~^(?<cpl_c1>.*[?&]token=)[^&]*(?<cpl_c2>.*)$" "${cpl_c1}REDACTED${cpl_c2}";
+map $http_referer $copanel_log_referer {
+    default $http_referer;
+    "~^(?<cpl_ref>[^?]*)\?" "${cpl_ref}?[query-redacted]";
 }
 log_format copanel_redacted '$remote_addr - $remote_user [$time_local] '
                             '"$request_method $copanel_log_uri $server_protocol" '
-                            '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
+                            '$status $body_bytes_sent "$copanel_log_referer" "$http_user_agent"';
 # END COPANEL LOG REDACTION
 
 # BEGIN COPANEL PHPMYADMIN MAP
@@ -3205,7 +3283,7 @@ WorkingDirectory=/opt/copanel/backend
 Environment="PATH=/opt/copanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ${noavx_systemd_env}
 EnvironmentFile=-/opt/copanel/config/copanel.env
-ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+ExecStart=/opt/copanel/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log
 
 # Allow slow first boot (module scan) without blocking forever on nginx hooks.
 TimeoutStartSec=120

@@ -157,9 +157,26 @@ def fm_env(tmp_path, monkeypatch):
 
 
 def test_extract_chowns_created_items(fm_env, monkeypatch):
+    """Extracted items get the home owner through fd-based (no-follow) chown."""
+    from core import safe_fs
+
     client, home, _, user = fm_env
-    calls = []
-    monkeypatch.setattr(fm, "chown_new", lambda paths, u, **kw: calls.append(list(paths)))
+    owned = []
+    monkeypatch.setattr(fm, "owner_for", lambda path, u: (os.getuid(), os.getgid()))
+    real_fchown, real_chown = os.fchown, os.chown
+
+    def rec_fchown(fd, uid, gid):
+        owned.append(os.readlink(f"/proc/self/fd/{fd}"))
+        return real_fchown(fd, uid, gid)
+
+    def rec_chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+        assert follow_symlinks is False
+        base = os.readlink(f"/proc/self/fd/{dir_fd}") if dir_fd is not None else ""
+        owned.append(os.path.join(base, path))
+        return real_chown(path, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(safe_fs.os, "fchown", rec_fchown)
+    monkeypatch.setattr(safe_fs.os, "chown", rec_chown)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("a/b.txt", "x")
@@ -170,19 +187,18 @@ def test_extract_chowns_created_items(fm_env, monkeypatch):
         json={"archive_path": str(home / "arc.zip"), "target_dir": str(home / "out")},
     )
     assert r.status_code == 200, r.text
-    flat = {p for c in calls for p in c}
+    real = {os.path.realpath(p) for p in owned}
     assert {
-        str(home / "out"),
-        str(home / "out" / "a"),
-        str(home / "out" / "a" / "b.txt"),
-        str(home / "out" / "c.txt"),
-    } <= {os.path.normpath(p) for p in flat}
+        os.path.realpath(home / "out"),
+        os.path.realpath(home / "out" / "a"),
+        os.path.realpath(home / "out" / "a" / "b.txt"),
+        os.path.realpath(home / "out" / "c.txt"),
+    } <= real
 
 
-def test_extract_into_existing_dir_does_not_chown_the_dir(fm_env, monkeypatch):
+def test_extract_into_existing_dir_does_not_chown_the_dir(fm_env, monkeypatch, owner_recorder):
     client, home, _, _ = fm_env
-    calls = []
-    monkeypatch.setattr(fm, "chown_new", lambda paths, u, **kw: calls.append(list(paths)))
+    monkeypatch.setattr(fm, "owner_for", lambda path, u: (os.getuid(), os.getgid()))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("c.txt", "y")
@@ -192,9 +208,9 @@ def test_extract_into_existing_dir_does_not_chown_the_dir(fm_env, monkeypatch):
         json={"archive_path": str(home / "arc.zip"), "target_dir": str(home)},
     )
     assert r.status_code == 200, r.text
-    flat = {os.path.normpath(p) for c in calls for p in c}
-    assert str(home) not in flat
-    assert str(home / "c.txt") in flat
+    flat = {p for p, _u, _g in owner_recorder}
+    assert os.path.realpath(home) not in flat
+    assert os.path.realpath(home / "c.txt") in flat
 
 
 # ── Web Manager: restricted users' document roots ───────────────────────────
@@ -222,12 +238,11 @@ def test_web_doc_root_outside_home_is_403(fm_env, web_roots):
     assert not target.exists()
 
 
-def test_web_doc_root_inside_home_is_created_and_chowned(fm_env, web_roots, monkeypatch):
+def test_web_doc_root_inside_home_is_created_and_chowned(fm_env, web_roots, monkeypatch, owner_recorder):
     import core.user_home as user_home
 
     client, home, _, _ = fm_env
-    calls = []
-    monkeypatch.setattr(user_home, "chown_new", lambda paths, u, **kw: calls.append(list(paths)))
+    monkeypatch.setattr(user_home, "owner_for", lambda path, u: (os.getuid(), os.getgid()))
     target = home / "www" / "site1"
     r = client.post(
         "/api/web_manager/create",
@@ -237,7 +252,8 @@ def test_web_doc_root_inside_home_is_created_and_chowned(fm_env, web_roots, monk
     assert r.status_code == 400, r.text
     assert "Apache layout" in r.text
     assert target.is_dir()
-    assert [str(target)] in calls
+    owned = {p for p, _u, _g in owner_recorder}
+    assert os.path.realpath(target) in owned and os.path.realpath(home / "www") in owned
 
 
 def test_web_doc_root_superadmin_unrestricted(fm_env, web_roots, monkeypatch):

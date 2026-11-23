@@ -280,59 +280,97 @@ def _is_alive(state: Dict[str, Any]) -> bool:
     return _pid_alive(state.get("pid"))
 
 
-def launch_update(actor: Optional[str] = None) -> Dict[str, Any]:
-    """Start install.sh detached from copanel.service. Raises UpdateAlreadyRunning."""
-    state_dir = update_state_dir()
-    state_dir.mkdir(parents=True, exist_ok=True)
+class UnsafeStateDir(RuntimeError):
+    pass
+
+
+def prepare_state_dir(state_dir: Path) -> Path:
+    """Create the updater state dir and insist it is a root-only directory.
+
+    Fails closed: a symlink, a directory owned by someone else, or one whose
+    mode cannot be forced to 0700 raises ``UnsafeStateDir``.
+    """
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    st = os.lstat(state_dir)
+    import stat as _stat
+
+    if not _stat.S_ISDIR(st.st_mode):
+        raise UnsafeStateDir(f"{state_dir} is not a directory (symlink?); refusing to run the updater.")
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        raise UnsafeStateDir(f"{state_dir} is not owned by the panel user; refusing to run the updater.")
     try:
         os.chmod(state_dir, 0o700)
-    except OSError:
-        pass
-    current = _runner.read_state(state_dir)
-    if current.get("status") in ("starting", "running") and _is_alive(current):
-        raise UpdateAlreadyRunning("A panel update is already running.")
+    except OSError as exc:
+        raise UnsafeStateDir(f"Could not make {state_dir} private (chmod 0700): {exc}") from exc
+    if _stat.S_IMODE(os.lstat(state_dir).st_mode) & 0o077:
+        raise UnsafeStateDir(f"{state_dir} is readable by other users; refusing to run the updater.")
+    return state_dir
 
-    # Run a copy of the runner: git reset during the install must not touch it.
-    runner = state_dir / "runner.py"
-    _shutil.copyfile(Path(_runner.__file__), runner)
-    (state_dir / _runner.LOG_FILE).write_bytes(b"")
-    home = copanel_home()
-    try:
-        target = check_for_update().get("remote_version")
-    except Exception:  # network trouble is not fatal here
-        target = None
-    python = _updater_python()
-    systemd = systemd_run_available()
-    _runner.write_state(
-        state_dir,
-        status="starting",
-        mode="systemd" if systemd else "process",
-        unit=UPDATE_UNIT if systemd else None,
-        started_at=time.time(),
-        finished_at=None,
-        exit_code=None,
-        pid=None,
-        from_version=read_local_version(),
-        target_version=target,
-        actor=actor,
-    )
-    if systemd:
-        cmd = build_launch_command(python, runner, state_dir, home)
-        proc = _subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
-        if proc.returncode != 0:
-            _runner.write_state(state_dir, status="failed", exit_code=-1, finished_at=time.time())
-            raise RuntimeError(f"systemd-run failed: {(proc.stderr or proc.stdout).strip()}")
-    else:
-        # No systemd (dev box / container): own session, best effort.
-        child = _subprocess.Popen(
-            [python, str(runner), "--state-dir", str(state_dir), "--home", str(home)],
-            stdin=_subprocess.DEVNULL,
-            stdout=_subprocess.DEVNULL,
-            stderr=_subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
+
+def launch_update(actor: Optional[str] = None) -> Dict[str, Any]:
+    """Start install.sh detached from copanel.service. Raises UpdateAlreadyRunning.
+
+    An exclusive ``flock`` on ``<state>/lock`` serialises launches, and the
+    runner holds the same lock for the whole install. A refused launch (lock
+    busy, unit already active, ``systemd-run`` reporting the unit exists)
+    raises ``UpdateAlreadyRunning`` without touching the log or state.
+    """
+    state_dir = prepare_state_dir(update_state_dir())
+    with _runner.update_lock(state_dir, blocking=False) as locked:
+        if not locked:
+            raise UpdateAlreadyRunning("A panel update is already running.")
+        current = _runner.read_state(state_dir)
+        if current.get("status") in ("starting", "running") and _is_alive(current):
+            raise UpdateAlreadyRunning("A panel update is already running.")
+        systemd = systemd_run_available()
+        if systemd and _unit_active():
+            raise UpdateAlreadyRunning("A panel update is already running.")
+
+        # Run a copy of the runner: git reset during the install must not touch it.
+        runner = state_dir / "runner.py"
+        _shutil.copyfile(Path(_runner.__file__), runner)
+        os.chmod(runner, 0o600)
+        home = copanel_home()
+        try:
+            target = check_for_update().get("remote_version")
+        except Exception:  # network trouble is not fatal here
+            target = None
+        python = _updater_python()
+        previous = dict(current)
+        _runner.write_state(
+            state_dir,
+            status="starting",
+            mode="systemd" if systemd else "process",
+            unit=UPDATE_UNIT if systemd else None,
+            started_at=time.time(),
+            finished_at=None,
+            exit_code=None,
+            pid=None,
+            from_version=read_local_version(),
+            target_version=target,
+            actor=actor,
         )
-        _runner.write_state(state_dir, pid=child.pid)
+        if systemd:
+            cmd = build_launch_command(python, runner, state_dir, home)
+            proc = _subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip()
+                if "already" in err.lower() and ("exist" in err.lower() or "loaded" in err.lower()):
+                    _runner.replace_state(state_dir, previous)
+                    raise UpdateAlreadyRunning("A panel update is already running.")
+                _runner.write_state(state_dir, status="failed", exit_code=-1, finished_at=time.time())
+                raise RuntimeError(f"systemd-run failed: {err}")
+        else:
+            # No systemd (dev box / container): own session, best effort.
+            child = _subprocess.Popen(
+                [python, str(runner), "--state-dir", str(state_dir), "--home", str(home)],
+                stdin=_subprocess.DEVNULL,
+                stdout=_subprocess.DEVNULL,
+                stderr=_subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            _runner.write_state(state_dir, pid=child.pid)
     return update_status(0)
 
 

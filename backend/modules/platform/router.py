@@ -18,6 +18,7 @@ from core.api import ApiError, ok
 from core.audit import query_audit, record_audit
 from core.auth import optional_user_sse, require_admin, require_user
 from core.events import sse_stream
+from core.stream_tickets import revalidator
 from core.job_secrets import redact_job_row, user_may_access_job
 from core.jobs import jobs
 from core import notifications as notif
@@ -90,7 +91,7 @@ async def event_stream(
         raise ApiError("UNAUTHORIZED", "Authentication required.", http_status=401)
     chosen = [t.strip() for t in topics.split(",") if t.strip()]
     return StreamingResponse(
-        sse_stream(chosen),
+        sse_stream(chosen, still_valid=revalidator(user)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -126,17 +127,42 @@ class FolderPickerMkdirRequest(BaseModel):
     name: str
 
 
+# Modules whose UI uses the folder picker. A user needs at least one of them;
+# the folder list itself is still limited to their ``permitted_folders``.
+FOLDER_PICKER_MODULES = (
+    "file_manager",
+    "docker_manager",
+    "download_manager",
+    "audio_station",
+    "web_manager",
+    "backup_manager",
+    "ftp_manager",
+    "rsync_manager",
+    "cloud_sync",
+    "webdav",
+)
+
+
+def require_folder_picker(user: Dict[str, Any] = Depends(require_user)) -> Dict[str, Any]:
+    from core.auth import user_has_module
+
+    if any(user_has_module(user, m) for m in FOLDER_PICKER_MODULES):
+        return user
+    raise ApiError("FORBIDDEN", "The folder picker needs access to a module that uses it.", http_status=403)
+
+
 @router.get("/folder-picker")
 def folder_picker_list(
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(require_folder_picker),
     path: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
-    """List sub-directories of ``path`` (default: the user's start folder)."""
+    """List sub-directories of ``path`` (default: the user's start folder).
+
+    Read-only: it never creates folders. Users with no assigned folders get 403.
+    """
     from fastapi import HTTPException
-    from core.user_home import ensure_permitted_folders
     from modules.file_manager.router import check_safe_path
 
-    ensure_permitted_folders(user)
     target = check_safe_path(path or "", user)
     if not os.path.isdir(target):
         raise HTTPException(status_code=404, detail="Folder not found.")
@@ -145,8 +171,11 @@ def folder_picker_list(
         entries = list(os.scandir(target))
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied.")
+    restricted = user.get("role") != "superadmin"
     for entry in entries:
         try:
+            if restricted and entry.is_symlink():
+                continue
             if entry.is_dir():
                 dirs.append({"name": entry.name, "path": os.path.abspath(entry.path), "is_dir": True})
         except OSError:
@@ -158,7 +187,7 @@ def folder_picker_list(
 @router.post("/folder-picker/create-dir")
 def folder_picker_mkdir(
     req: FolderPickerMkdirRequest,
-    user: Dict[str, Any] = Depends(require_user),
+    user: Dict[str, Any] = Depends(require_folder_picker),
 ) -> Dict[str, Any]:
     """Create one new directory ``name`` directly inside ``parent``."""
     from fastapi import HTTPException
@@ -173,10 +202,16 @@ def folder_picker_mkdir(
     target = safe_join(parent, name, user)
     if os.path.lexists(os.path.join(parent, name)):
         raise HTTPException(status_code=400, detail="Path already exists.")
-    os.mkdir(target)
-    from core.user_home import chown_new
+    if user.get("role") == "superadmin":
+        os.mkdir(target)
+    else:
+        from core import safe_fs
+        from core.user_home import owner_for
 
-    chown_new([target], user)
+        try:
+            safe_fs.mkdir(os.path.join(parent, name), owner_for(target, user))
+        except safe_fs.SymlinkRefused:
+            raise HTTPException(status_code=403, detail="Access denied: the path contains a symbolic link.")
     return {"status": "success", "path": target}
 
 
