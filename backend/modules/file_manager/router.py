@@ -12,7 +12,14 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from modules.auth.router import get_current_user
 from core.auth import require_module
-from core.user_home import chown_new, ensure_permitted_folders
+try:
+    from core.user_home import chown_new, ensure_permitted_folders
+except ImportError:  # AppStore zip installed on a core older than 1.1.12
+    def chown_new(paths, user, recursive=False):  # type: ignore[no-redef]
+        return None
+
+    def ensure_permitted_folders(user):  # type: ignore[no-redef]
+        return []
 
 # Every endpoint also requires the file_manager module grant (superadmin always passes).
 router = APIRouter(dependencies=[Depends(require_module("file_manager"))])
