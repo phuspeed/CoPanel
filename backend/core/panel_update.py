@@ -1,10 +1,11 @@
 """
-Panel self-update: compare local install vs GitHub main (VERSION file) and
+Panel self-update: compare local install vs the latest GitHub release and
 locate install.sh for scripted upgrades.
 """
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.error
@@ -120,22 +121,40 @@ def _fetch_release_by_tag(version: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+RELEASES_LATEST_PAGE = f"{GITHUB_RELEASES}/latest"
+_TAG_RE = re.compile(r"/releases/tag/(v\d+\.\d+\.\d+)$")
+
+
+def _latest_release_tag_from_redirect() -> Optional[str]:
+    """``github.com/<repo>/releases/latest`` redirects to the newest tag (no API quota)."""
+    req = urllib.request.Request(RELEASES_LATEST_PAGE, headers={"User-Agent": "CoPanel-Updater"}, method="HEAD")
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - fixed https URL
+        final = resp.geturl()
+    m = _TAG_RE.search(final or "")
+    return m.group(1) if m else None
+
+
 def _fetch_remote_version() -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Return (version, fetch_error, fetch_error_kind)."""
-    attempts: Tuple[Tuple[str, bool], ...] = (
-        (VERSION_API_URL, True),
-        (REMOTE_VERSION_RAW, False),
-    )
+    """Return (version, fetch_error, fetch_error_kind) of the latest *release*.
+
+    Panel Update installs the latest signed GitHub release (not main), so
+    the version shown as available comes from the release too.
+    """
     last_error: Optional[str] = None
     last_kind: Optional[str] = None
-    for url, use_raw in attempts:
-        try:
-            text = _http_get_text(url, headers=_github_headers(raw=use_raw))
-            version = normalize_version(text.strip())
-            if version and version != "0.0.0":
-                return version, None, None
-        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
-            last_kind, last_error = _classify_fetch_error(e)
+    try:
+        rel = _http_get_json(RELEASES_LATEST_API)
+        version = normalize_version(str(rel.get("tag_name", "")))
+        if version and version != "0.0.0":
+            return version, None, None
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as e:
+        last_kind, last_error = _classify_fetch_error(e)
+    try:
+        tag = _latest_release_tag_from_redirect()
+        if tag:
+            return normalize_version(tag), None, None
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
+        last_kind, last_error = _classify_fetch_error(e)
     return None, last_error, last_kind
 
 

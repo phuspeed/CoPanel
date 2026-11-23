@@ -140,3 +140,4 @@ frontend/src/modules/download_manager/
 frontend/src/modules/storage_manager/
 frontend/src/modules/webdav/
 frontend/src/modules/audio_station/
+release-artifacts/
