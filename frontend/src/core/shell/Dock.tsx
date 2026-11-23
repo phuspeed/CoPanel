@@ -47,6 +47,12 @@ interface Props {
   username?: string;
   siteTitle?: string;
   logoDataUrl?: string | null;
+  /** Installed CoPanel version (shown as a small tray badge). */
+  panelVersion?: string;
+  /** Newer version on GitHub, or null when up to date / unknown. */
+  updateVersion?: string | null;
+  /** Opens the shared upgrade dialog (superadmin only). */
+  onOpenPanelUpdate?: () => void;
 }
 
 export default function Dock({
@@ -66,6 +72,9 @@ export default function Dock({
   username,
   siteTitle = 'CoPanel',
   logoDataUrl,
+  panelVersion,
+  updateVersion = null,
+  onOpenPanelUpdate,
 }: Props) {
   const navigate = useNavigate();
   const { windows, focusedId } = useStore(windowStore, (s) => ({
@@ -243,6 +252,33 @@ export default function Dock({
         <DockButton isDark={isDark} title="Language" onClick={onToggleLanguage}>
           <span className="text-[10px] font-bold">{language === 'en' ? 'EN' : 'VI'}</span>
         </DockButton>
+        {panelVersion && (
+          <button
+            type="button"
+            onClick={onOpenPanelUpdate}
+            disabled={!onOpenPanelUpdate}
+            title={
+              updateVersion
+                ? language === 'vi'
+                  ? `CoPanel v${panelVersion} — có bản cập nhật v${updateVersion}`
+                  : `CoPanel v${panelVersion} — update available: v${updateVersion}`
+                : `CoPanel v${panelVersion}`
+            }
+            className={cn(
+              'relative hidden items-center gap-1 rounded-lg px-1.5 py-1 font-mono text-[10px] transition-colors sm:flex disabled:cursor-default',
+              updateVersion
+                ? isDark
+                  ? 'text-amber-400 hover:bg-slate-800'
+                  : 'text-amber-600 hover:bg-slate-100'
+                : isDark
+                  ? 'text-slate-500 enabled:hover:bg-slate-800'
+                  : 'text-slate-400 enabled:hover:bg-slate-100',
+            )}
+          >
+            {updateVersion && <Icons.ArrowUpCircle className="h-3.5 w-3.5" />}
+            v{panelVersion}
+          </button>
+        )}
         <div className={cn('hidden text-right leading-tight md:block md:px-1', isDark ? 'text-slate-300' : 'text-slate-700')}>
           <p className="text-[11px] font-bold tabular-nums">{timeStr}</p>
           <p className={cn('text-[9px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{dateStr}</p>

@@ -6,7 +6,6 @@ to the frontend Task Center, Notification Center and Audit pages.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -253,8 +252,13 @@ def check_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> Dict[st
 
 
 @router.post("/panel-update/run")
-async def run_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> StreamingResponse:
-    """Stream `scripts/install.sh` stdout (root/VPS installs only). Superadmin only."""
+def run_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+    """Start `scripts/install.sh` detached from copanel.service (superadmin only).
+
+    The installer runs in its own systemd transient unit, so it survives the
+    service stop/restart (and the service cgroup) during the install.
+    Progress: ``GET /panel-update/status``.
+    """
     script = panel_update.install_script_path()
     if not script.is_file():
         raise ApiError(
@@ -262,6 +266,13 @@ async def run_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> Str
             f"Upgrade script not found at {script}. Panel self-upgrade runs only on Linux installs under /opt/copanel.",
             http_status=404,
         )
+    try:
+        status = panel_update.launch_update(actor=user.get("username"))
+    except panel_update.UpdateAlreadyRunning as exc:
+        raise ApiError("CONFLICT", str(exc), http_status=409)
+    except (OSError, RuntimeError) as exc:
+        logger.exception("Failed to start panel update")
+        raise ApiError("UPDATE_START_FAILED", str(exc), http_status=500)
     record_audit(
         "panel.upgrade",
         module="platform",
@@ -269,40 +280,16 @@ async def run_panel_update(user: Dict[str, Any] = Depends(require_admin)) -> Str
         actor=user.get("username"),
         actor_id=user.get("id"),
     )
+    return ok(status)
 
-    async def stream_stdout() -> Any:
-        env = os.environ.copy()
-        env["COPANEL_NONINTERACTIVE"] = "1"
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "/bin/bash",
-                str(script),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env,
-            )
-        except OSError as e:
-            logger.exception("Failed to start panel upgrade subprocess")
-            yield f"\n__COPANEL_EXIT__:-1\n{e}\n"
-            return
 
-        if proc.stdout:
-            while True:
-                chunk = await proc.stdout.readline()
-                if not chunk:
-                    break
-                yield chunk.decode("utf-8", errors="replace")
-        rc = await proc.wait()
-        yield f"\n__COPANEL_EXIT__:{rc}\n"
-
-    return StreamingResponse(
-        stream_stdout(),
-        media_type="text/plain; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+@router.get("/panel-update/status")
+def panel_update_status(
+    offset: int = Query(0, ge=0),
+    user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    """Detached updater state + log from byte ``offset`` (superadmin only)."""
+    return ok(panel_update.update_status(offset))
 
 
 @router.get("/metrics")

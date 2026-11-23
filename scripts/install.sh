@@ -876,35 +876,79 @@ copanel_remove_apt_timeouts() {
 }
 
 apt_get_update_timed() {
-    # Exit 124 = GNU timeout — treat as failure and run recovery
+    # Exit 124 = GNU timeout — treat as failure and run recovery.
+    # Extra arguments (e.g. --allow-releaseinfo-change) go to apt-get update.
     local log_file="${1:-}"
+    shift || true
     local code=0
     if command_exists timeout; then
         if [[ -n "$log_file" ]]; then
             set +e
-            timeout 240 apt-get update 2>&1 | tee "$log_file"
+            timeout 240 apt-get update "$@" 2>&1 | tee "$log_file"
             code="${PIPESTATUS[0]}"
             set -e
             return "$code"
         fi
-        timeout 240 apt-get update
+        timeout 240 apt-get update "$@"
         return $?
     fi
     if [[ -n "$log_file" ]]; then
         set +e
-        apt-get update 2>&1 | tee "$log_file"
+        apt-get update "$@" 2>&1 | tee "$log_file"
         code="${PIPESTATUS[0]}"
         set -e
         return "$code"
     fi
-    apt-get update
+    apt-get update "$@"
     return $?
+}
+
+COPANEL_APT_SOURCES_DIR="${COPANEL_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
+
+copanel_apt_source_is_protected() {
+    # Distro sources are never disabled: without them nothing installs.
+    local f="$1" base
+    base="$(basename "$f")"
+    case "$base" in
+        ubuntu.sources|debian.sources|ubuntu.sources.*|debian.sources.*) return 0 ;;
+    esac
+    if grep -qE '(archive|security|ports)\.ubuntu\.com|deb\.debian\.org|security\.debian\.org' "$f" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+copanel_apt_error_lines() {
+    # Only the lines that report a failure. "Hit:/Get:" lines name every
+    # source, so matching against the whole log disabled working sources too.
+    local log_file="$1"
+    [[ -f "$log_file" ]] || return 0
+    # Warnings such as "Key is stored in legacy trusted.gpg" are not failures.
+    grep -E "^E:|^Err:|^W: Failed to fetch|changed its '" "$log_file" 2>/dev/null || true
+}
+
+copanel_apt_restore_disabled_sources() {
+    # Undo earlier CoPanel runs that moved sources aside as *.copanel-bak
+    # (older versions disabled every source, including ubuntu.sources). The
+    # error-only matching below disables again only a source that still fails.
+    local bak orig
+    shopt -s nullglob
+    for bak in "$COPANEL_APT_SOURCES_DIR"/*.copanel-bak; do
+        orig="${bak%.copanel-bak}"
+        [[ -e "$orig" ]] && continue
+        mv "$bak" "$orig" && log_info "Restored apt source $(basename "$orig") (disabled by an earlier CoPanel install)"
+    done
+    shopt -u nullglob
 }
 
 copanel_disable_apt_source_file() {
     local ppa_f="$1"
     [[ -f "$ppa_f" ]] || return 1
     case "$ppa_f" in *.copanel-bak) return 1 ;; esac
+    if copanel_apt_source_is_protected "$ppa_f"; then
+        log_warning "Not disabling distro source $(basename "$ppa_f")"
+        return 1
+    fi
     log_warning "Temporarily disabling $(basename "$ppa_f") (failed apt mirror in update log)"
     log_warning "  Restore: sudo mv ${ppa_f}.copanel-bak $ppa_f && sudo apt-get update"
     mv "$ppa_f" "${ppa_f}.copanel-bak"
@@ -916,11 +960,19 @@ copanel_apt_failed_source_list_files() {
     local log_file="$1"
     [[ -f "$log_file" ]] || return 0
     local -A seen=()
-    local ppa_f base needle
+    local ppa_f base needle err_file
+    err_file="$(mktemp)"
+    copanel_apt_error_lines "$log_file" > "$err_file"
+    if [[ ! -s "$err_file" ]]; then
+        rm -f "$err_file"
+        return 0
+    fi
+    log_file="$err_file"
     shopt -s nullglob
-    for ppa_f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    for ppa_f in "$COPANEL_APT_SOURCES_DIR"/*.list "$COPANEL_APT_SOURCES_DIR"/*.sources; do
         [[ -f "$ppa_f" ]] || continue
         case "$ppa_f" in *.copanel-bak) continue ;; esac
+        copanel_apt_source_is_protected "$ppa_f" && continue
         base="$(basename "$ppa_f")"
         if grep -qF "$base" "$log_file" 2>/dev/null; then
             if [[ -z "${seen[$base]:-}" ]]; then
@@ -938,9 +990,10 @@ copanel_apt_failed_source_list_files() {
                 fi
                 break
             fi
-        done < <(grep -oE 'https?://[^ ]+' "$log_file" 2>/dev/null | sort -u)
+        done < <(grep -oE 'https?://[^ ]+' "$log_file" 2>/dev/null | sed -E "s#[\"',]+\$##" | sort -u)
     done
     shopt -u nullglob
+    rm -f "$err_file"
 }
 
 apt_update_or_recover() {
@@ -952,11 +1005,24 @@ apt_update_or_recover() {
 
     log_info "Running apt-get update (timeouts: 20s per mirror, max ~4m total if timeout(1) is available)…"
 
+    copanel_apt_restore_disabled_sources
+
     local log disabled_any=false attempt=0
     log="$(mktemp)"
     if apt_get_update_timed "$log"; then
         rm -f "$log"
         return 0
+    fi
+
+    # A repository that changed its Label/Origin/Suite (e.g. the ondrej PPA
+    # marking itself deprecated) only needs the change accepted.
+    if grep -q "changed its '" "$log" 2>/dev/null; then
+        log_warning "An apt repository changed its release info; accepting it (--allow-releaseinfo-change)."
+        if apt_get_update_timed "$log" --allow-releaseinfo-change; then
+            log_success "apt-get update succeeded after accepting the release info change"
+            rm -f "$log"
+            return 0
+        fi
     fi
 
     log_warning "apt-get update failed or timed out."
@@ -2200,7 +2266,7 @@ copanel_use_prebuilt_frontend() {
         fi
     fi
     [[ -n "$archive" && -f "$archive" ]] || return 1
-    log_info "CPU without AVX — installing the prebuilt frontend. Vite is not run on this CPU."
+    log_info "${COPANEL_PREBUILT_REASON:-CPU without AVX} — installing the prebuilt frontend. Vite is not run."
     local ext_backup=""
     if [[ -d dist/extensions ]]; then
         ext_backup="$(mktemp -d)"
@@ -2577,13 +2643,66 @@ copanel_frontend_build_noavx() {
     return 1
 }
 
+copanel_prebuilt_frontend_is_current() {
+    # The committed frontend/prebuilt/dist.tar.gz is rebuilt whenever the
+    # frontend changes. Treat it as current unless git history shows frontend
+    # sources committed after it (shallow clones cannot tell: trust it).
+    local repo="${CoPanel_HOME:-/opt/copanel}"
+    [[ -f "$repo/frontend/prebuilt/dist.tar.gz" ]] || return 1
+    command_exists git || return 0
+    [[ -d "$repo/.git" ]] || return 0
+    local g=(git -c safe.directory='*' -C "$repo")
+    if [[ "$("${g[@]}" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+        return 0
+    fi
+    local pre src
+    pre="$("${g[@]}" log -1 --format=%ct -- frontend/prebuilt/dist.tar.gz 2>/dev/null || true)"
+    src="$("${g[@]}" log -1 --format=%ct -- frontend/src frontend/index.html frontend/package.json \
+        frontend/package-lock.json frontend/vite.config.ts 2>/dev/null || true)"
+    [[ "$pre" =~ ^[0-9]+$ ]] || return 1
+    [[ "$src" =~ ^[0-9]+$ ]] || return 0
+    [[ "$pre" -ge "$src" ]]
+}
+
+copanel_extra_modules_have_prebuilt_ui() {
+    # Preserved App Store modules installed as sources (rebuild mode) only get
+    # a UI from a Vite build; with the prebuilt panel they would disappear.
+    local modules_root="${CoPanel_HOME}/frontend/src/modules" mod mod_dir
+    while IFS= read -r mod; do
+        [[ -z "$mod" ]] && continue
+        mod_dir="${modules_root}/${mod}"
+        [[ -f "${CoPanel_HOME}/frontend/dist/extensions/${mod}/module.js" ]] && continue
+        copanel_module_has_prebuilt_bundle "$mod_dir" && continue
+        copanel_module_has_frontend_src "$mod_dir" && return 1
+    done < <(copanel_frontend_preserved_module_ids)
+    return 0
+}
+
+copanel_should_use_prebuilt_frontend() {
+    # No AVX: Vite cannot run at all. Low RAM (<= COPANEL_LOW_MEM_MB, 2 GB):
+    # a Vite build takes many minutes and can be OOM-killed, so use the
+    # committed bundle when it matches the code. COPANEL_FORCE_FRONTEND_BUILD=1
+    # builds anyway.
+    if ! copanel_cpu_has_avx; then
+        COPANEL_PREBUILT_REASON="CPU without AVX"
+        return 0
+    fi
+    [[ "${COPANEL_FORCE_FRONTEND_BUILD:-0}" == "1" ]] && return 1
+    if copanel_is_low_memory && copanel_prebuilt_frontend_is_current \
+        && copanel_extra_modules_have_prebuilt_ui; then
+        COPANEL_PREBUILT_REASON="Low-memory host ($(copanel_mem_total_mb) MB RAM)"
+        return 0
+    fi
+    return 1
+}
+
 setup_frontend() {
     log_info "Setting up React frontend..."
     
     if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
         cd "$CoPanel_HOME/frontend"
 
-        if ! copanel_cpu_has_avx && copanel_use_prebuilt_frontend; then
+        if copanel_should_use_prebuilt_frontend && copanel_use_prebuilt_frontend; then
             copanel_noavx_register_extensions
             copanel_noavx_merge_prebuilt_with_extra_modules
             cd - >/dev/null || true
