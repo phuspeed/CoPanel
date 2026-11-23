@@ -214,8 +214,20 @@ def _apache_vhost_template(
 """
 
 
+def _restricted_doc_root(doc_root: str, user: Dict[str, Any]) -> str:
+    """Non-superadmin: the document root must be inside the user's permitted folders."""
+    if user.get("role") == "superadmin":
+        return doc_root
+    from modules.file_manager.router import check_safe_path
+
+    return check_safe_path(doc_root, user)
+
+
 @router.post("/create")
-def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
+def create_site(
+    req: CreateSiteRequest,
+    user: Dict[str, Any] = Depends(require_module("web_manager")),
+) -> Dict[str, Any]:
     """Create a new Nginx or Apache vhost from a basic template."""
     try:
         try:
@@ -223,6 +235,7 @@ def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             doc_root = validate_doc_root(req.root)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        doc_root = _restricted_doc_root(doc_root, user)
 
         if req.issue_ssl:
             email = (req.ssl_email or "").strip()
@@ -248,7 +261,15 @@ def create_site(req: CreateSiteRequest) -> Dict[str, Any]:
             server_name_str += f" www.{domain}"
 
         try:
+            doc_root_existed = os.path.isdir(doc_root)
             os.makedirs(doc_root, exist_ok=True)
+            if not doc_root_existed:
+                try:
+                    from core.user_home import chown_new
+
+                    chown_new([doc_root], user)
+                except ImportError:
+                    pass
         except Exception:
             pass
 

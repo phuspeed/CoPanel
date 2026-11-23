@@ -6,6 +6,17 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.13: core modules on CPUs without AVX, dialogs inside app windows, restricted-user audit**
+
+- **Terminal (`terminal` 1.0.8).** The AppStore's `terminal` 1.0.7 zip carried older code than the panel (it still used `?access_token=` on `/api/terminal/ws` and had no mobile layout), so it would break the terminal on panels 1.1.10+. The panel's terminal is now 1.0.8 and the AppStore zip is rebuilt from it.
+- **AppStore on CPUs without AVX (`appstore_manager` 1.0.40).** The panel always uses its own built-in UI for core modules (an AppStore UI bundle for a core module id is ignored), so a core-module zip no longer fails with "This CPU has no AVX…". On a no-AVX host it installs the backend only and logs that the UI comes with Panel Settings → Update. Core modules are recognised from the catalog's `is_core` flag, or, if missing, because the module is tracked in the panel's git checkout. Hosts with AVX keep the normal rebuild. Other (non-core) packages still need a prebuilt/extension bundle on no-AVX CPUs, as before. Core modules should be updated with Panel Update; the AppStore entry is only a backend refresh.
+- **Dialogs in AppStore apps.** AppStore apps bundle their own copy of the window modal, which could not see the desktop window and opened behind it. The panel modal now finds the enclosing app window through the DOM and opens inside it; dialogs from already-installed apps that still open on the page body are lifted above windows (below the dock and start menu). No AppStore app reinstall is needed.
+- **Restricted users.**
+  - File Manager extract (`file_manager` 1.0.15): extracted files and folders get the home folder's owner, like upload/create.
+  - Web Manager (`web_manager` 1.3.2): for non-superadmin users, a new site's document root must be inside their permitted folders (403 outside); a new document root gets the home owner.
+  - Users panel: Package Manager system packages (Nginx, Node.js & npm, Zip & Unzip, …) are no longer offered as grantable modules. They have no panel UI or API, so granting them did nothing.
+  - Not changed, admin-only by design: Docker Manager/Docker Engine (docker access is root-equivalent), SSL Manager and Web Manager's raw vhost editing, PHP, services and phpMyAdmin settings (server-wide). Grant these only to administrators.
+
 **Fixed: restricted users can write in their own folders (CoPanel 1.1.12, `file_manager` 1.0.14, `platform` 1.0.3, `auth` 1.0.3)**
 
 - Creating or editing a non-superadmin user now creates each missing permitted folder (e.g. `/home/phutv`, mode 0750). Before, the panel never created it: File Manager showed an empty folder, and creating a file or uploading into it failed. File Manager and the folder picker also create a missing permitted folder on first open.
@@ -67,6 +78,11 @@ All notable changes to CoPanel are documented in this file.
 - Project list status uses a single `docker ps` instead of N× `compose ps`.
 
 ### Tiếng Việt (tóm tắt)
+
+- CoPanel 1.1.13: Terminal lên 1.0.8 (bản 1.0.7 trên AppStore là code cũ hơn, dùng `?access_token=` nên sẽ làm hỏng terminal); zip AppStore được build lại từ panel.
+- AppStore trên CPU không có AVX (`appstore_manager` 1.0.40): module lõi (terminal, file_manager, docker_manager…) không còn báo lỗi "no AVX"; chỉ cài phần backend, giao diện đi kèm Panel Update (panel luôn dùng giao diện có sẵn cho module lõi). Module lõi nên cập nhật bằng Panel Update.
+- Hộp thoại của ứng dụng AppStore giờ mở bên trong cửa sổ ứng dụng thay vì nằm phía sau; ứng dụng đã cài không cần cài lại.
+- User bị giới hạn: giải nén trong File Manager (1.0.15) giao quyền sở hữu cho chủ thư mục home; Web Manager (1.3.2) chỉ cho tạo site có thư mục gốc nằm trong thư mục được cấp (ngoài ra 403). Trang Users không còn liệt kê gói hệ thống (Nginx, Node.js & npm, Zip & Unzip) như module để cấp quyền. Docker, SSL Manager và các phần cấu hình server của Web Manager chỉ nên cấp cho admin.
 
 - User bị giới hạn giờ tạo/sửa/xoá/tải lên được trong thư mục của mình (CoPanel 1.1.12). Panel tự tạo thư mục được cấp (vd `/home/phutv`) khi tạo/sửa user hoặc lần đầu mở File Manager; nếu có tài khoản Linux cùng tên có home là thư mục đó thì giao quyền sở hữu cho tài khoản đó. File Manager hiện đúng thông báo lỗi từ server thay vì "Create failed". Ngoài thư mục được cấp vẫn bị chặn (403).
 - Bảo mật File Manager (1.0.13): upload chỉ giữ tên file, chặn tên rỗng, `.`, `..`, ký tự NUL, và kiểm tra lại đường dẫn cuối (kể cả symlink) trước khi ghi, nên không ghi được ra ngoài thư mục đích hay thư mục được cấp. Copy/di chuyển nhiều file cũng kiểm tra lại đích. Mọi API File Manager giờ cần quyền module `file_manager`, không chỉ cần đăng nhập.

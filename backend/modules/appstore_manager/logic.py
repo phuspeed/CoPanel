@@ -887,6 +887,39 @@ NO_AVX_REBUILD_ERROR = (
 )
 
 
+CORE_UI_FROM_PANEL_NOTE = (
+    "core module on a CPU without AVX: installing backend only. The panel shell always "
+    "uses the built-in UI for core modules (AppStore UI bundles are ignored for them), "
+    "so the matching UI arrives with Panel Settings → Update."
+)
+
+
+def _is_core_module(pkg_id: str, project_root: Path, hint: Optional[bool] = None) -> bool:
+    """True when ``pkg_id`` is a built-in CoPanel module.
+
+    ``hint`` comes from the catalog (``is_core``). Without it, a module whose
+    ``frontend/src/modules/<id>/config.ts`` is tracked by the panel's own git
+    checkout is core (AppStore installs only add untracked files there).
+    """
+    if hint is not None:
+        return bool(hint)
+    rel = f"frontend/src/modules/{pkg_id}/config.ts"
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", pkg_id or ""):
+        return False
+    if not (project_root / ".git").exists():
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "ls-files", "--error-unmatch", rel],
+            capture_output=True,
+            timeout=10,
+            shell=False,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _coerce_frontend_install_for_cpu(mode: str, extracted_dir: Path) -> str:
     """On no-AVX hosts, never use rebuild — prefer prebuilt or fail clearly."""
     if not _cpu_lacks_avx():
@@ -1917,6 +1950,7 @@ def _install_package_files(
     task_key: str,
     install_deps: bool = True,
     run_frontend_build: bool = True,
+    is_core: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Download, extract, and install one package.
@@ -1985,11 +2019,15 @@ def _install_package_files(
         src_extension = extracted_dir / "extension"
         backend_updated = src_backend.exists()
 
-        try:
-            install_mode = _normalize_frontend_install(frontend_install, extracted_dir)
-        except ValueError as ve:
-            task["logs"].append(f"❌ «{pkg_id}» — {ve}")
-            return result
+        if _cpu_lacks_avx() and _is_core_module(pkg_id, project_root, is_core):
+            install_mode = "none"
+            task["logs"].append(f"ℹ️ «{pkg_id}» — {CORE_UI_FROM_PANEL_NOTE}")
+        else:
+            try:
+                install_mode = _normalize_frontend_install(frontend_install, extracted_dir)
+            except ValueError as ve:
+                task["logs"].append(f"❌ «{pkg_id}» — {ve}")
+                return result
 
         task["logs"].append(f"«{pkg_id}» — frontend install mode: {install_mode}")
 
@@ -2275,6 +2313,7 @@ class AppStoreManager:
         pip_packages: list = None,
         requires_copanel_restart: bool = False,
         frontend_install: str = "rebuild",
+        is_core: Optional[bool] = None,
     ) -> dict:
         """Starts package installation and frontend build in a background thread."""
         global BUILD_TASKS
@@ -2294,6 +2333,7 @@ class AppStoreManager:
                 task_key=pkg_id,
                 install_deps=True,
                 run_frontend_build=True,
+                is_core=is_core,
             )
             if result.get("ok"):
                 task["status"] = "success"
@@ -2423,6 +2463,7 @@ class AppStoreManager:
                     task_key=BATCH_UPDATE_TASK_ID,
                     install_deps=False,
                     run_frontend_build=False,
+                    is_core=pkg.get("is_core"),
                 )
                 if result.get("ok"):
                     install_results.append(result)
