@@ -227,3 +227,47 @@ def pkg_install(packages: Sequence[str], timeout: int = 900) -> Dict[str, object
         "missing": missing,
         "output_tail": combined_output(result),
     }
+
+
+def pipe_to_file(
+    producer: Sequence[str],
+    consumer: Sequence[str],
+    out_path: str,
+    *,
+    timeout: int = 3600,
+    producer_as_root: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run ``producer | consumer > out_path`` without a shell.
+
+    Returns a CompletedProcess whose returncode is the first non-zero exit
+    code of the two (producer first) and whose stderr joins both.
+    """
+    p_argv = prepare_argv(producer, as_root=producer_as_root)
+    c_argv = prepare_argv(consumer)
+    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "wb") as out:
+        p1 = subprocess.Popen(p_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            p2 = subprocess.Popen(c_argv, stdin=p1.stdout, stdout=out, stderr=subprocess.PIPE)
+        except BaseException:
+            p1.kill()
+            p1.wait()
+            raise
+        assert p1.stdout is not None
+        p1.stdout.close()  # let p1 get SIGPIPE if p2 exits
+        try:
+            _, err2 = p2.communicate(timeout=timeout)
+            err1 = p1.stderr.read() if p1.stderr else b""
+            p1.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            p1.kill()
+            p2.kill()
+            p1.wait()
+            p2.wait()
+            raise CommandError(f"Command timed out after {timeout}s.")
+        finally:
+            if p1.stderr:
+                p1.stderr.close()
+    rc = p1.returncode or p2.returncode
+    stderr = (err1 or b"").decode("utf-8", "replace") + (err2 or b"").decode("utf-8", "replace")
+    return subprocess.CompletedProcess([*p_argv, "|", *c_argv], rc, "", stderr)

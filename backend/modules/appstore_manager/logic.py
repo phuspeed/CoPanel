@@ -170,6 +170,209 @@ _RESTART_LOG_HINT = (
 )
 
 
+# ----- Package integrity (1.1.15) ---------------------------------------------
+#
+# Installs never trust the browser: the package entry (download URL, SHA-256,
+# dependencies) is looked up in the catalog the server fetched itself. Official
+# packages must come from the official AppStore repository over HTTPS and match
+# the SHA-256 published in packages.json. Community catalogs (added by the
+# superadmin) must also publish a SHA-256 for every package and use HTTPS.
+
+import hashlib as _hashlib
+import ipaddress as _ipaddress
+import stat as _stat
+import urllib.error as _urlerror
+import urllib.parse as _urlparse
+
+OFFICIAL_DOWNLOAD_PREFIXES = (
+    "https://raw.githubusercontent.com/phuspeed/copanel-appstore/",
+    "https://github.com/phuspeed/copanel-appstore/",
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PKG_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_APT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.\-]{0,127}$")
+_PIP_SPEC_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,99}"
+    r"(\[[A-Za-z0-9._\-]+(,[A-Za-z0-9._\-]+)*\])?"
+    r"((===?|>=|<=|~=|!=|<|>)[A-Za-z0-9.*+!_\-]{1,40}"
+    r"(,(===?|>=|<=|~=|!=|<|>)[A-Za-z0-9.*+!_\-]{1,40}){0,4})?$"
+)
+MAX_PACKAGE_BYTES = 200 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
+MAX_ZIP_MEMBERS = 20000
+_FRONTEND_INSTALL_MODES = ("rebuild", "prebuilt", "extension", "none", "auto")
+
+
+class PackageIntegrityError(ValueError):
+    """Download URL, checksum or archive content is not acceptable."""
+
+
+def validate_pkg_id(pkg_id: Any) -> str:
+    pid = str(pkg_id or "").strip()
+    if not PKG_ID_RE.match(pid):
+        raise PackageIntegrityError("Invalid package id.")
+    return pid
+
+
+def validate_system_packages(names: Any) -> List[str]:
+    out: List[str] = []
+    for n in names or []:
+        if not isinstance(n, str) or not _APT_NAME_RE.match(n.strip().lower()):
+            raise PackageIntegrityError(f"Invalid system package name: {n!r}")
+        out.append(n.strip().lower())
+    return out
+
+
+def validate_pip_specs(specs: Any) -> List[str]:
+    out: List[str] = []
+    for spec in specs or []:
+        if not isinstance(spec, str):
+            raise PackageIntegrityError(f"Invalid Python package spec: {spec!r}")
+        s = spec.strip()
+        if not s or s.startswith("-") or not _PIP_SPEC_RE.match(s):
+            raise PackageIntegrityError(f"Invalid Python package spec: {spec!r}")
+        out.append(s)
+    return out
+
+
+def _is_official_url(url: str) -> bool:
+    low = url.lower()
+    return any(low.startswith(p) for p in OFFICIAL_DOWNLOAD_PREFIXES) and ".." not in url
+
+
+def validate_download_url(url: Any, *, community: bool) -> str:
+    if not isinstance(url, str) or not url.strip():
+        raise PackageIntegrityError("Package has no download URL.")
+    url = url.strip()
+    parsed = _urlparse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise PackageIntegrityError("Package download URL must be a plain https:// URL.")
+    if not community:
+        if not _is_official_url(url):
+            raise PackageIntegrityError("Official packages must be downloaded from the official AppStore repository.")
+        return url
+    host = parsed.hostname.lower()
+    if host in ("localhost",) or host.endswith(".local") or host.endswith(".internal"):
+        raise PackageIntegrityError("Package download host is not allowed.")
+    try:
+        ip = _ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        raise PackageIntegrityError("Package download URL must use a host name, not an IP address.")
+    return url
+
+
+def resolve_catalog_package(pkg_id: str, catalog: Optional[List[dict]] = None) -> Dict[str, Any]:
+    """Server-side package entry for ``pkg_id`` with validated fields."""
+    pid = validate_pkg_id(pkg_id)
+    packages = catalog if catalog is not None else AppStoreManager.get_catalog()
+    entry = next((p for p in packages or [] if isinstance(p, dict) and p.get("id") == pid), None)
+    if entry is None:
+        raise PackageIntegrityError(f"Package '{pid}' is not in the AppStore catalog (or the catalog could not be loaded).")
+    community = bool(entry.get("is_community"))
+    url = validate_download_url(entry.get("download_url"), community=community)
+    sha = str(entry.get("sha256") or "").strip().lower()
+    if not _SHA256_RE.match(sha):
+        raise PackageIntegrityError(f"Package '{pid}' has no valid SHA-256 in the catalog; refusing to install it.")
+    frontend_install = str(entry.get("frontend_install") or "rebuild")
+    if frontend_install not in _FRONTEND_INSTALL_MODES:
+        frontend_install = "rebuild"
+    return {
+        "id": pid,
+        "download_url": url,
+        "sha256": sha,
+        "version": normalize_version(str(entry.get("version") or "1.0.0")),
+        "system_packages": validate_system_packages(entry.get("system_packages")),
+        "pip_packages": validate_pip_specs(entry.get("pip_packages")),
+        "requires_copanel_restart": bool(entry.get("requires_copanel_restart", False)),
+        "frontend_install": frontend_install,
+        "is_core": entry.get("is_core") if isinstance(entry.get("is_core"), bool) else None,
+        "is_community": community,
+    }
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _urlparse.urlparse(newurl).scheme != "https":
+            raise PackageIntegrityError("Package download redirected to a non-https URL.")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download_verified(url: str, sha256: str, dest: Path, *, timeout: int = 60) -> None:
+    """Download ``url`` to ``dest`` and require its SHA-256 to equal ``sha256``."""
+    opener = urllib.request.build_opener(_HttpsOnlyRedirects())
+    req = urllib.request.Request(url, headers={"User-Agent": "CoPanel-AppStore/1.1"})
+    digest = _hashlib.sha256()
+    total = 0
+    with opener.open(req, timeout=timeout) as response, open(dest, "wb") as out:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_PACKAGE_BYTES:
+                raise PackageIntegrityError("Package download is too large.")
+            digest.update(chunk)
+            out.write(chunk)
+    got = digest.hexdigest()
+    if not _hmac_compare(got, sha256.lower()):
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        raise PackageIntegrityError(
+            f"Checksum mismatch: expected {sha256.lower()}, got {got}. The package was not installed."
+        )
+
+
+def _hmac_compare(a: str, b: str) -> bool:
+    import hmac as _hmac
+
+    return _hmac.compare_digest(a, b)
+
+
+def safe_extract_zip(zip_path: Path, dest: Path) -> None:
+    """Extract a package zip: no absolute paths, no '..', no symlinks or
+    special files, bounded size and member count."""
+    dest.mkdir(parents=True, exist_ok=True)
+    root = dest.resolve()
+    total = 0
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > MAX_ZIP_MEMBERS:
+            raise PackageIntegrityError("Package archive has too many entries.")
+        for info in infos:
+            name = info.filename.replace("\\", "/")
+            if not name or "\x00" in name:
+                raise PackageIntegrityError("Package archive has an invalid entry name.")
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            if name.startswith("/") or (parts and ":" in parts[0]) or any(p == ".." for p in parts):
+                raise PackageIntegrityError(f"Unsafe path in package archive: {info.filename}")
+            mode = (info.external_attr >> 16) & 0xFFFF
+            ftype = _stat.S_IFMT(mode)
+            if ftype and ftype not in (_stat.S_IFREG, _stat.S_IFDIR):
+                raise PackageIntegrityError(f"Package archive contains a link or special file: {info.filename}")
+            if not parts:
+                continue
+            target = root.joinpath(*parts)
+            if root not in target.parents and target != root:
+                raise PackageIntegrityError(f"Unsafe path in package archive: {info.filename}")
+            if info.is_dir() or name.endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            total += info.file_size
+            if total > MAX_EXTRACTED_BYTES:
+                raise PackageIntegrityError("Package archive is too large when extracted.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink():
+                raise PackageIntegrityError(f"Unsafe path in package archive: {info.filename}")
+            with zf.open(info, "r") as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out, 1024 * 1024)
+            perm = _stat.S_IMODE(mode) & 0o755 if mode else 0o644
+            os.chmod(target, perm or 0o644)
+
+
 def _new_build_task(logs: Optional[List[str]] = None) -> Dict[str, Any]:
     return {
         "status": "running",
@@ -1694,28 +1897,41 @@ def _is_apt_lock_error(text: str) -> bool:
     )
 
 
+def _apt_argv(*args: str) -> List[str]:
+    """argv for apt-get (never a shell string). Root runs it directly."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return ["apt-get", *args]
+    return ["sudo", "-n", "DEBIAN_FRONTEND=noninteractive", "apt-get", *args]
+
+
+def _run_apt(*args: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    return subprocess.run(_apt_argv(*args), capture_output=True, text=True, env=env, timeout=1800)
+
+
 def _apt_install_packages(pkg_names: list, max_retries: int = 8, retry_delay: int = 8) -> dict:
     """Install multiple Debian packages in one apt-get invocation (avoids dpkg lock races)."""
-    names = [p for p in pkg_names if p]
+    try:
+        names = validate_system_packages([p for p in pkg_names if p])
+    except PackageIntegrityError as exc:
+        return {"ok": False, "message": str(exc)}
     if not names:
         return {"ok": True, "message": "No packages to install."}
 
-    quoted = " ".join(shlex.quote(p) for p in names)
-    cmd = f"sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y {quoted}"
     last_err = ""
     for attempt in range(max_retries):
         if attempt > 0:
             time.sleep(retry_delay)
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        res = _run_apt("install", "-y", "--", *names)
         out = (res.stderr or res.stdout or "").strip()
         if res.returncode == 0:
             return {"ok": True, "message": out}
         last_err = out
-        
+
         # If the local package index is outdated, we might get 404s. Auto-update and retry immediately.
         if "404 Not Found" in out or "Unable to fetch some archives" in out:
-            subprocess.run("sudo -n apt-get update", shell=True, capture_output=True, text=True)
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            _run_apt("update")
+            res = _run_apt("install", "-y", "--", *names)
             out = (res.stderr or res.stdout or "").strip()
             if res.returncode == 0:
                 return {"ok": True, "message": out}
@@ -1820,6 +2036,10 @@ def _install_pip_packages(packages: List[str], is_windows: bool) -> List[Dict[st
             for pkg in packages
         ]
 
+    try:
+        packages = validate_pip_specs(packages)
+    except PackageIntegrityError as exc:
+        return [{"package": "pip", "ok": False, "message": str(exc)}]
     pip_bin = _resolve_pip_bin()
     if not pip_bin:
         return [{"package": "pip", "ok": False, "message": "pip not found in CoPanel venv."}]
@@ -1830,7 +2050,7 @@ def _install_pip_packages(packages: List[str], is_windows: bool) -> List[Dict[st
         if not isinstance(pkg, str) or not pkg.strip():
             continue
         spec = pkg.strip()
-        name = spec.split("==")[0].split("[")[0]
+        name = re.split(r"[=<>!~\[,]", spec, maxsplit=1)[0]
         if _is_pip_package_installed(pip_bin, name):
             results.append({"package": name, "ok": True, "message": f"Python package '{name}' already installed."})
         else:
@@ -1876,26 +2096,18 @@ def _install_system_dependency(dep: dict, is_windows: bool) -> dict:
     if _is_pkg_installed(pkg_manager, target_pkg):
         return {"id": dep_id, "ok": True, "message": f"Dependency '{dep_id}' already installed ({target_pkg})."}
 
+    try:
+        target_pkg = validate_system_packages([target_pkg])[0]
+    except PackageIntegrityError as exc:
+        return {"id": dep_id, "ok": False, "message": str(exc)}
     if pkg_manager == "apt":
-        cmd = ["sudo", "-n", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", target_pkg]
-        # sudo with env var inline needs shell; fallback to split update below if shellless fails.
-        res = subprocess.run(
-            "sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y " + target_pkg,
-            shell=True,
-            capture_output=True,
-            text=True,
-        )
+        res = _run_apt("install", "-y", "--", target_pkg)
         out = (res.stderr or res.stdout or "").strip()
         if res.returncode != 0 and ("404 Not Found" in out or "Unable to fetch some archives" in out):
-            subprocess.run("sudo -n apt-get update", shell=True, capture_output=True, text=True)
-            res = subprocess.run(
-                "sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y " + target_pkg,
-                shell=True,
-                capture_output=True,
-                text=True,
-            )
+            _run_apt("update")
+            res = _run_apt("install", "-y", "--", target_pkg)
     else:
-        res = subprocess.run(["sudo", "-n", "yum", "install", "-y", target_pkg], shell=False, capture_output=True, text=True)
+        res = subprocess.run(["sudo", "-n", "yum", "install", "-y", "--", target_pkg], shell=False, capture_output=True, text=True)
 
     if res.returncode != 0:
         detail = (res.stderr or res.stdout or "").strip()
@@ -1951,9 +2163,11 @@ def _install_package_files(
     install_deps: bool = True,
     run_frontend_build: bool = True,
     is_core: Optional[bool] = None,
+    sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Download, extract, and install one package.
+    The download must match *sha256* (from the server-side catalog).
     When *run_frontend_build* is False (batch mode), frontend sources are copied but npm build is deferred.
     """
     global BUILD_TASKS
@@ -2002,16 +2216,15 @@ def _install_package_files(
     dst_frontend = frontend_cwd / "src" / "modules" / pkg_id
 
     try:
+        if not sha256 or not _SHA256_RE.match(str(sha256).lower()):
+            raise PackageIntegrityError("No SHA-256 for this package; refusing to install it.")
         task["logs"].append(f"«{pkg_id}» — downloading from {download_url}...")
-        req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as response, open(tmp_zip, "wb") as out_file:
-            out_file.write(response.read())
-        task["logs"].append(f"«{pkg_id}» — download complete.")
+        download_verified(download_url, str(sha256), tmp_zip)
+        task["logs"].append(f"«{pkg_id}» — download complete, SHA-256 verified ({str(sha256)[:12]}…).")
 
         if extracted_dir.exists():
             shutil.rmtree(extracted_dir)
-        with zipfile.ZipFile(tmp_zip, "r") as zip_ref:
-            zip_ref.extractall(extracted_dir)
+        safe_extract_zip(tmp_zip, extracted_dir)
         task["logs"].append(f"«{pkg_id}» — extraction complete.")
 
         src_backend = extracted_dir / "backend"
@@ -2237,12 +2450,19 @@ class AppStoreManager:
                     packages = json.loads(response.read().decode("utf-8"))
             except Exception:
                 packages = []
+        if not isinstance(packages, list):
+            packages = []
+        packages = [p for p in packages if isinstance(p, dict) and "id" in p]
+        for p in packages:
+            # Only the official catalog may publish official packages.
+            p["is_community"] = False
 
-        # Load community URLs from config
+        # Load community URLs from config (https only; they can never
+        # replace an official package id because the first entry wins).
         cfg = AppStoreManager.load_config()
         community_urls = cfg.get("community_urls", [])
         for url in community_urls:
-            if not url or not isinstance(url, str) or not url.startswith("http"):
+            if not url or not isinstance(url, str) or not url.lower().startswith("https://"):
                 continue
             try:
                 fetch_url = url
@@ -2314,8 +2534,13 @@ class AppStoreManager:
         requires_copanel_restart: bool = False,
         frontend_install: str = "rebuild",
         is_core: Optional[bool] = None,
+        sha256: Optional[str] = None,
     ) -> dict:
-        """Starts package installation and frontend build in a background thread."""
+        """Starts package installation and frontend build in a background thread.
+
+        Callers pass the fields of ``resolve_catalog_package`` (server-side
+        catalog), never values from the client.
+        """
         global BUILD_TASKS
         BUILD_TASKS[pkg_id] = _new_build_task()
 
@@ -2334,6 +2559,7 @@ class AppStoreManager:
                 install_deps=True,
                 run_frontend_build=True,
                 is_core=is_core,
+                sha256=sha256,
             )
             if result.get("ok"):
                 task["status"] = "success"
@@ -2464,6 +2690,7 @@ class AppStoreManager:
                     install_deps=False,
                     run_frontend_build=False,
                     is_core=pkg.get("is_core"),
+                    sha256=pkg.get("sha256"),
                 )
                 if result.get("ok"):
                     install_results.append(result)
@@ -2661,9 +2888,8 @@ class AppStoreManager:
                 if extracted_dir.exists():
                     shutil.rmtree(extracted_dir)
                 
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(extracted_dir)
-                    
+                safe_extract_zip(zip_path, extracted_dir)
+
                 BUILD_TASKS[pkg_id]["logs"].append("Extraction complete.")
                 BUILD_TASKS[pkg_id]["progress"] = 40
                 

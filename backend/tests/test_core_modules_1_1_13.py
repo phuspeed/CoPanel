@@ -42,6 +42,11 @@ def store_home(tmp_path, monkeypatch):
 
 
 def _run(pkg_id, url, is_core):
+    import hashlib
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    sha = hashlib.sha256(open(url2pathname(urlparse(url).path), "rb").read()).hexdigest()
     store.BUILD_TASKS[pkg_id] = store._new_build_task()
     res = store._install_package_files(
         pkg_id,
@@ -52,6 +57,7 @@ def _run(pkg_id, url, is_core):
         install_deps=False,
         run_frontend_build=False,
         is_core=is_core,
+        sha256=sha,
     )
     return res, store.BUILD_TASKS[pkg_id]["logs"]
 
@@ -107,27 +113,46 @@ def test_is_core_hint_and_git_fallback(tmp_path):
     assert store._is_core_module("../terminal", root) is False
 
 
-def test_router_forwards_is_core(monkeypatch):
+def test_router_takes_is_core_from_server_catalog_not_client(monkeypatch):
     import modules.appstore_manager.router as srouter
 
     single, batch = [], []
+    catalog = [
+        {
+            "id": "terminal",
+            "version": "1.0.8",
+            "is_core": True,
+            "download_url": "https://raw.githubusercontent.com/phuspeed/CoPanel-Appstore/main/packages/terminal.v1.0.8.zip",
+            "sha256": "a" * 64,
+        },
+        {
+            "id": "speedtest",
+            "version": "1.0.2",
+            "download_url": "https://raw.githubusercontent.com/phuspeed/CoPanel-Appstore/main/packages/speedtest.v1.0.2.zip",
+            "sha256": "b" * 64,
+        },
+    ]
+    monkeypatch.setattr(srouter.AppStoreManager, "get_catalog", staticmethod(lambda: [dict(c) for c in catalog]))
     monkeypatch.setattr(
         srouter.AppStoreManager,
         "install_package",
-        staticmethod(lambda *a, **k: single.append(a) or {"status": "started"}),
+        staticmethod(lambda *a, **k: single.append((a, k)) or {"status": "started"}),
     )
     monkeypatch.setattr(
         srouter.AppStoreManager,
         "install_packages_batch",
         staticmethod(lambda pkgs: batch.append(pkgs) or {"status": "started"}),
     )
-    base = {"id": "terminal", "download_url": "https://example.invalid/t.zip"}
-    srouter.install_package({**base, "is_core": True})
-    srouter.install_package({**base, "is_core": "yes"})
-    srouter.install_package(dict(base))
-    assert [a[-1] for a in single] == [True, None, None]
-    srouter.install_packages_batch({"packages": [{**base, "is_core": True}, dict(base)]})
+    evil = {"download_url": "https://evil.example/x.zip", "is_core": False, "pip_packages": ["--index-url=http://x"]}
+    srouter.install_package({"id": "terminal", **evil})
+    srouter.install_package({"id": "speedtest", **evil, "is_core": True})
+    (a1, k1), (a2, k2) = single
+    assert a1[0] == "terminal" and a1[1] == catalog[0]["download_url"] and a1[-1] is True
+    assert k1["sha256"] == "a" * 64 and a1[4] == []
+    assert a2[0] == "speedtest" and a2[-1] is None
+    srouter.install_packages_batch({"packages": [{"id": "terminal", **evil}, {"id": "speedtest"}]})
     assert [p["is_core"] for p in batch[0]] == [True, None]
+    assert [p["download_url"] for p in batch[0]] == [c["download_url"] for c in catalog]
 
 
 # ── File Manager extract: new items owned by the home owner ─────────────────

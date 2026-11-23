@@ -141,22 +141,10 @@ GROUP BY s.schema_name;
             os.unlink(path)
         except OSError:
             pass
-        quoted_name = shlex.quote(db_name)
-        quoted_path = shlex.quote(path)
-        dump_argv = sysexec.prepare_argv(
-            [dump_bin, "-u", "root", "--single-transaction", "--quick", "--routines", "--events", "--triggers", db_name],
-            as_root=True,
-        )
-        quoted_dump = " ".join(shlex.quote(part) for part in dump_argv[:-1])
-        cmd = f"{quoted_dump} {quoted_name} | gzip -c > {quoted_path}"
+        gzip_bin = shutil.which("gzip") or "/bin/gzip"
+        dump_argv = [dump_bin, "-u", "root", "--single-transaction", "--quick", "--routines", "--events", "--triggers", db_name]
         try:
-            res = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3600,
-            )
+            res = sysexec.pipe_to_file(dump_argv, [gzip_bin, "-c"], path, timeout=3600, producer_as_root=True)
             if res.returncode != 0 or not os.path.isfile(path) or os.path.getsize(path) == 0:
                 try:
                     if os.path.isfile(path):
