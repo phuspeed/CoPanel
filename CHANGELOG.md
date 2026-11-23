@@ -10,7 +10,8 @@ All notable changes to CoPanel are documented in this file.
 
 - Upload kept the client-supplied file name as-is, so a name with directory parts or an absolute path could be written outside the chosen folder and outside a user's permitted folders. Upload now keeps only the base name, rejects empty, `.`, `..` and NUL names with 400, and re-checks the final path with `check_safe_path` (symlinks resolved) before writing. A symlink in the folder that points outside the user's permitted folders is refused with 403.
 - Copy and move-multiple re-check the final destination the same way.
-- All `/api/file_manager/*` endpoints now require the `file_manager` module grant (`require_module`), not only a valid login. Superadmin is unchanged. A limited user without that grant also loses the Docker Manager folder picker, which browses through File Manager.
+- All `/api/file_manager/*` endpoints now require the `file_manager` module grant (`require_module`), not only a valid login. Superadmin is unchanged.
+- New directory-only folder picker for other modules (CoPanel **1.1.11**, `platform` 1.0.2, `docker_manager` 1.0.19): `GET /api/platform/folder-picker?path=` lists sub-folders (no files) and `POST /api/platform/folder-picker/create-dir` creates one folder. Any logged-in user may use it, limited to their permitted folders (403 outside). Docker Manager's project folder picker uses it, so it works for users who have Docker Manager but not File Manager; outside their folders it falls back to their first permitted folder.
 
 **File Manager: type a path (`file_manager` 1.0.12)**
 
@@ -61,6 +62,7 @@ All notable changes to CoPanel are documented in this file.
 ### Tiếng Việt (tóm tắt)
 
 - Bảo mật File Manager (1.0.13): upload chỉ giữ tên file, chặn tên rỗng, `.`, `..`, ký tự NUL, và kiểm tra lại đường dẫn cuối (kể cả symlink) trước khi ghi, nên không ghi được ra ngoài thư mục đích hay thư mục được cấp. Copy/di chuyển nhiều file cũng kiểm tra lại đích. Mọi API File Manager giờ cần quyền module `file_manager`, không chỉ cần đăng nhập.
+- Chọn thư mục (CoPanel 1.1.11): Docker Manager dùng API chọn thư mục riêng, chỉ liệt kê thư mục (không có file) và tạo thư mục mới. User có quyền ở thư mục nào thì chọn được thư mục trong đó, không cần quyền File Manager.
 - File Manager: gõ được đường dẫn trên thanh địa chỉ (bấm biểu tượng bút chì, chỗ trống trên thanh, hoặc nhấp đúp). Enter để mở, Esc/bấm ra ngoài để huỷ. Hỗ trợ đường dẫn tuyệt đối và tương đối với thư mục hiện tại. Đường dẫn không tồn tại hoặc không có quyền sẽ báo lỗi và giữ nguyên thư mục hiện tại.
 - phpMyAdmin qua Cloudflare Tunnel không còn 502. Cài PHP-FPM cùng phpMyAdmin, nginx trỏ một socket đang chạy, và nhận scheme HTTPS từ tunnel. Mở trực tiếp `http://HOST:8686/phpmyadmin/` vẫn là HTTP.
 - Máy không có AVX (Intel NUC) không còn chạy Vite lúc cài. Installer giải nén frontend đã build sẵn, vì esbuild native và WASM đều bị segfault trên CPU này.
