@@ -115,6 +115,67 @@ def list_installed_extensions(user: Dict[str, Any] = Depends(require_user)) -> D
     return ok(AppStoreManager.list_installed_extensions())
 
 
+# ----- Folder picker -----------------------------------------------------
+# Directory-only browser for pickers in other modules (e.g. Docker Manager
+# "choose project folder"). Any logged-in user may use it, but only inside
+# the folders File Manager's ``check_safe_path`` allows them (superadmin:
+# whole filesystem; others: their ``permitted_folders``). It never returns
+# file names or contents; the only write is creating one directory.
+
+class FolderPickerMkdirRequest(BaseModel):
+    parent: str
+    name: str
+
+
+@router.get("/folder-picker")
+def folder_picker_list(
+    user: Dict[str, Any] = Depends(require_user),
+    path: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """List sub-directories of ``path`` (default: the user's start folder)."""
+    from fastapi import HTTPException
+    from modules.file_manager.router import check_safe_path
+
+    target = check_safe_path(path or "", user)
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=404, detail="Folder not found.")
+    dirs: List[Dict[str, Any]] = []
+    try:
+        entries = list(os.scandir(target))
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied.")
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                dirs.append({"name": entry.name, "path": os.path.abspath(entry.path), "is_dir": True})
+        except OSError:
+            continue
+    dirs.sort(key=lambda d: d["name"].lower())
+    return {"status": "success", "path": target, "files": dirs}
+
+
+@router.post("/folder-picker/create-dir")
+def folder_picker_mkdir(
+    req: FolderPickerMkdirRequest,
+    user: Dict[str, Any] = Depends(require_user),
+) -> Dict[str, Any]:
+    """Create one new directory ``name`` directly inside ``parent``."""
+    from fastapi import HTTPException
+    from modules.file_manager.router import check_safe_path, safe_child_name, safe_join
+
+    parent = check_safe_path(req.parent, user)
+    if not os.path.isdir(parent):
+        raise HTTPException(status_code=404, detail="Folder not found.")
+    name = safe_child_name(req.name)
+    if name != req.name:
+        raise HTTPException(status_code=400, detail="Invalid folder name.")
+    target = safe_join(parent, name, user)
+    if os.path.lexists(os.path.join(parent, name)):
+        raise HTTPException(status_code=400, detail="Path already exists.")
+    os.mkdir(target)
+    return {"status": "success", "path": target}
+
+
 # ----- Notifications -----------------------------------------------------
 
 class MarkReadRequest(BaseModel):

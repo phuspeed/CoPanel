@@ -50,8 +50,13 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
       try {
         const headers: Record<string, string> = {};
         if (token) headers.Authorization = `Bearer ${token}`;
-        const url = `/api/file_manager/list${path ? `?path=${encodeURIComponent(path)}` : ''}`;
-        const res = await fetch(url, { headers });
+        // Directory-only picker endpoint: works for users without the File Manager
+        // module, limited to their permitted folders. Outside them (403/404) we
+        // fall back to the user's start folder.
+        const pickerUrl = (p: string) =>
+          `/api/platform/folder-picker${p ? `?path=${encodeURIComponent(p)}` : ''}`;
+        let res = await fetch(pickerUrl(path), { headers });
+        if (!res.ok && path) res = await fetch(pickerUrl(''), { headers });
         if (!res.ok) return;
         const data = await res.json();
         const files = (data.files || []) as FileEntry[];
@@ -88,19 +93,21 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
     if (!name) return;
     setCreating(true);
     setCreateError(null);
-    const target = joinPath(currentPath, name);
+    let target = joinPath(currentPath, name);
+    const folderName = target.slice(target.lastIndexOf('/') + 1);
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch('/api/file_manager/create-dir', {
+      const res = await fetch('/api/platform/folder-picker/create-dir', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ path: target }),
+        body: JSON.stringify({ parent: currentPath, name: folderName }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.detail || 'Failed to create folder');
+        throw new Error(data.detail || data.error?.message || 'Failed to create folder');
       }
+      if (data.path) target = data.path;
       setCreateOpen(false);
       setNewFolderName('');
       await fetchDir(currentPath);
