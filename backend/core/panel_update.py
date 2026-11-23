@@ -188,3 +188,188 @@ def check_for_update() -> Dict[str, Any]:
     _CACHE = result
     _CACHE_AT = now
     return dict(result)
+
+
+# ----- Detached self-update -------------------------------------------------
+#
+# The web "Start upgrade" used to run install.sh as a child of the uvicorn
+# process, i.e. inside copanel.service's cgroup. When the service stops or its
+# cgroup is killed (OOM during the frontend build on small VPSes), the update
+# died with it. It now runs in its own transient unit
+# (``systemd-run --unit=copanel-update``) and reports through files.
+
+import shutil as _shutil  # noqa: E402
+import subprocess as _subprocess  # noqa: E402
+import sys as _sys  # noqa: E402
+
+from core import panel_update_runner as _runner  # noqa: E402
+
+UPDATE_UNIT = "copanel-update"
+_LOG_CHUNK_MAX = 64 * 1024
+_START_GRACE_S = 20
+
+
+class UpdateAlreadyRunning(RuntimeError):
+    pass
+
+
+def update_state_dir() -> Path:
+    override = os.environ.get("COPANEL_UPDATE_STATE_DIR", "").strip()
+    return Path(override) if override else Path("/var/lib/copanel-update")
+
+
+def _updater_python() -> str:
+    # install.sh may rebuild the panel venv; prefer the system python.
+    for cand in ("/usr/bin/python3", "/usr/local/bin/python3"):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return _sys.executable
+
+
+def systemd_run_available() -> bool:
+    return bool(_shutil.which("systemd-run")) and Path("/run/systemd/system").is_dir()
+
+
+def build_launch_command(python: str, runner: Path, state_dir: Path, home: Path) -> list:
+    """argv for the detached updater (list form, never a shell string)."""
+    return [
+        "systemd-run",
+        f"--unit={UPDATE_UNIT}",
+        "--collect",
+        "--quiet",
+        "--description=CoPanel panel update",
+        "--setenv=COPANEL_NONINTERACTIVE=1",
+        python,
+        str(runner),
+        "--state-dir",
+        str(state_dir),
+        "--home",
+        str(home),
+    ]
+
+
+def _unit_active() -> Optional[bool]:
+    if not _shutil.which("systemctl"):
+        return None
+    try:
+        out = _subprocess.run(
+            ["systemctl", "is-active", f"{UPDATE_UNIT}.service"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, _subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() in ("active", "activating", "reloading")
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _is_alive(state: Dict[str, Any]) -> bool:
+    if state.get("mode") == "systemd":
+        active = _unit_active()
+        if active is not None:
+            return active
+    return _pid_alive(state.get("pid"))
+
+
+def launch_update(actor: Optional[str] = None) -> Dict[str, Any]:
+    """Start install.sh detached from copanel.service. Raises UpdateAlreadyRunning."""
+    state_dir = update_state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(state_dir, 0o700)
+    except OSError:
+        pass
+    current = _runner.read_state(state_dir)
+    if current.get("status") in ("starting", "running") and _is_alive(current):
+        raise UpdateAlreadyRunning("A panel update is already running.")
+
+    # Run a copy of the runner: git reset during the install must not touch it.
+    runner = state_dir / "runner.py"
+    _shutil.copyfile(Path(_runner.__file__), runner)
+    (state_dir / _runner.LOG_FILE).write_bytes(b"")
+    home = copanel_home()
+    try:
+        target = check_for_update().get("remote_version")
+    except Exception:  # network trouble is not fatal here
+        target = None
+    python = _updater_python()
+    systemd = systemd_run_available()
+    _runner.write_state(
+        state_dir,
+        status="starting",
+        mode="systemd" if systemd else "process",
+        unit=UPDATE_UNIT if systemd else None,
+        started_at=time.time(),
+        finished_at=None,
+        exit_code=None,
+        pid=None,
+        from_version=read_local_version(),
+        target_version=target,
+        actor=actor,
+    )
+    if systemd:
+        cmd = build_launch_command(python, runner, state_dir, home)
+        proc = _subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        if proc.returncode != 0:
+            _runner.write_state(state_dir, status="failed", exit_code=-1, finished_at=time.time())
+            raise RuntimeError(f"systemd-run failed: {(proc.stderr or proc.stdout).strip()}")
+    else:
+        # No systemd (dev box / container): own session, best effort.
+        child = _subprocess.Popen(
+            [python, str(runner), "--state-dir", str(state_dir), "--home", str(home)],
+            stdin=_subprocess.DEVNULL,
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        _runner.write_state(state_dir, pid=child.pid)
+    return update_status(0)
+
+
+def update_status(offset: int = 0) -> Dict[str, Any]:
+    """Updater state plus the log from byte ``offset`` (survives backend restarts)."""
+    state_dir = update_state_dir()
+    state = _runner.read_state(state_dir)
+    status = state.get("status") or "idle"
+    if status in ("starting", "running") and not _is_alive(state):
+        started = float(state.get("started_at") or 0)
+        if status == "running" or time.time() - started > _START_GRACE_S:
+            status = "interrupted"
+    log_path = state_dir / _runner.LOG_FILE
+    chunk = ""
+    next_offset = max(0, int(offset or 0))
+    try:
+        size = log_path.stat().st_size
+        if next_offset > size:
+            next_offset = 0
+        with open(log_path, "rb") as fh:
+            fh.seek(next_offset)
+            data = fh.read(_LOG_CHUNK_MAX)
+        next_offset += len(data)
+        chunk = data.decode("utf-8", errors="replace")
+    except OSError:
+        pass
+    return {
+        "status": status,
+        "exit_code": state.get("exit_code"),
+        "mode": state.get("mode"),
+        "unit": state.get("unit"),
+        "started_at": state.get("started_at"),
+        "finished_at": state.get("finished_at"),
+        "from_version": state.get("from_version"),
+        "target_version": state.get("target_version"),
+        "local_version": read_local_version(),
+        "log": chunk,
+        "offset": next_offset,
+        "log_path": str(log_path),
+    }
