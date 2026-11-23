@@ -484,22 +484,19 @@ async def install_fail2ban() -> Dict[str, Any]:
 
     # Determine package manager
     try:
-        if shutil.which("apt-get"):
-            cmd = "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban"
-        elif shutil.which("yum"):
-            cmd = "sudo yum install -y fail2ban"
-        else:
-            raise HTTPException(status_code=500, detail="No suitable package manager found.")
+        from core import sysexec as _sysexec
 
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if res.returncode == 0:
+        result = _sysexec.pkg_install(["fail2ban"])
+        if result.get("ok"):
             # Start and enable service right after install so status endpoint
             # immediately reports active state.
             if shutil.which("systemctl"):
                 _run_with_optional_sudo(["systemctl", "enable", "fail2ban"])
                 _run_with_optional_sudo(["systemctl", "restart", "fail2ban"])
             return {"status": "success", "message": "Fail2Ban installed successfully!"}
-        raise HTTPException(status_code=500, detail=res.stderr or "Installation failed.")
+        raise HTTPException(status_code=500, detail=str(result.get("output_tail") or "Installation failed."))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

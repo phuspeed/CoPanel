@@ -624,23 +624,11 @@ class BackupTaskEngine:
         except OSError as e:
             return False, f"Cannot create backup directory: {e}"
 
-        quoted_dump = shlex.quote(dump_bin)
-        quoted_name = shlex.quote(db_name)
-        quoted_gzip = shlex.quote(gzip_bin)
-        quoted_out = shlex.quote(str(out_file))
-        cmd = (
-            f"sudo {quoted_dump} -u root --single-transaction --quick "
-            f"--routines --events --triggers {quoted_name} "
-            f"| {quoted_gzip} -c > {quoted_out}"
-        )
+        from core import sysexec as _sysexec
+
+        dump_argv = [dump_bin, "-u", "root", "--single-transaction", "--quick", "--routines", "--events", "--triggers", db_name]
         try:
-            res = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3600,
-            )
+            res = _sysexec.pipe_to_file(dump_argv, [gzip_bin, "-c"], str(out_file), timeout=3600, producer_as_root=True)
             if res.returncode != 0:
                 err = (res.stderr or res.stdout or "").strip() or f"mysqldump exited with code {res.returncode}"
                 try:

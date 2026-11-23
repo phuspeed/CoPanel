@@ -413,6 +413,8 @@ export default function BackupManagerDashboard() {
 
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
+      // Only trust the OAuth popup served by this panel (same origin).
+      if (event.origin !== window.location.origin) return;
       const data = event.data;
       if (!data || data.type !== 'copanel_google_oauth') return;
       if (data.ok && data.remote_name) {

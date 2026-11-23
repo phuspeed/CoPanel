@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import json
@@ -19,6 +20,7 @@ from datetime import datetime
 import asyncio
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 api = APIRouter(dependencies=[Depends(require_module("backup_manager"))])
 
 
@@ -156,24 +158,31 @@ def oauth_google_manual_token(data: dict) -> Dict[str, Any]:
 
 @router.get("/oauth/google/callback")
 def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
+    """Public OAuth popup callback. Never reflects request text as HTML."""
+    from core.oauth_popup import oauth_result_page, safe_error_code
+
+    kind = "copanel_google_oauth"
     if error:
-        return HTMLResponse(
-            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': error})}, '*');window.close();</script>Authorization failed: {error}</body></html>"
+        return oauth_result_page(
+            {"type": kind, "ok": False, "error": safe_error_code(error)},
+            "Authorization failed. You can close this window.",
         )
     try:
         result = GoogleOAuthService.exchange_code(code=code, state=state)
-        payload = {"type": "copanel_google_oauth", "ok": True, "remote_name": result["remote_name"]}
-        return HTMLResponse(
-            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps(payload)}, '*');window.close();</script>Authorization completed. You can close this window.</body></html>"
-        )
-    except ValueError as e:
-        return HTMLResponse(
-            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': str(e)})}, '*');window.close();</script>{str(e)}</body></html>",
+        payload = {"type": kind, "ok": True, "remote_name": str(result["remote_name"])}
+        return oauth_result_page(payload, "Authorization completed. You can close this window.")
+    except ValueError:
+        logger.warning("Google OAuth callback rejected (invalid code/state)")
+        return oauth_result_page(
+            {"type": kind, "ok": False, "error": "invalid_request"},
+            "Authorization failed: the request was invalid or has expired.",
             status_code=400,
         )
-    except Exception as e:
-        return HTMLResponse(
-            content=f"<html><body><script>window.opener && window.opener.postMessage({json.dumps({'type': 'copanel_google_oauth', 'ok': False, 'error': str(e)})}, '*');window.close();</script>OAuth callback failed.</body></html>",
+    except Exception:
+        logger.exception("Google OAuth callback failed")
+        return oauth_result_page(
+            {"type": kind, "ok": False, "error": "server_error"},
+            "OAuth callback failed. Check the CoPanel log.",
             status_code=500,
         )
 
