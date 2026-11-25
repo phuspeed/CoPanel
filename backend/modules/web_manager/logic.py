@@ -33,12 +33,21 @@ def sanitize_filename(value: str) -> str:
 def get_site_auth_dir() -> Path:
     if IS_WINDOWS:
         return Path(os.path.abspath("./test_copanel/config/web_auth"))
-    return Path("/opt/copanel/config/web_auth")
+    from core.paths import config_dir
+    return config_dir() / "web_auth"
 
 
 def ensure_site_auth_dir() -> Path:
+    from core.nginx_htpasswd import HTPASSWD_DIR_MODE
+
     base = get_site_auth_dir()
     base.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(base, HTPASSWD_DIR_MODE)
+        if base.parent.is_dir():
+            os.chmod(base.parent, HTPASSWD_DIR_MODE)
+    except OSError:
+        pass
     return base
 
 
@@ -97,8 +106,10 @@ def inject_site_auth(content: str, htpasswd_path: str, realm: str = "Restricted"
 
 
 def write_site_htpasswd(filename: str, username: str, password: str) -> str:
+    from core.nginx_htpasswd import write_htpasswd_text
+
     path = site_htpasswd_path(filename)
-    path.write_text(f"{username}:{apr_md5_crypt.hash(password)}\n", encoding="utf-8")
+    write_htpasswd_text(path, f"{username}:{apr_md5_crypt.hash(password)}\n")
     return str(path).replace("\\", "/")
 
 
@@ -106,6 +117,10 @@ def save_site_auth_meta(filename: str, username: str, enabled: bool = True) -> N
     path = site_auth_meta_path(filename)
     data = {"enabled": enabled, "username": username}
     path.write_text(json.dumps(data, ensure_ascii=True), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def read_site_auth_meta(filename: str) -> Dict[str, Any]:

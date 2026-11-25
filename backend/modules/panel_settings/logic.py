@@ -1194,13 +1194,15 @@ def _inject_nginx_gate_block(content: str, htpasswd_path: str) -> str:
 
 def _write_nginx_htpasswd(username: str, password: str) -> str:
     """Write nginx auth_basic_user_file using passlib (no apache2-utils)."""
+    from core.nginx_htpasswd import secure_htpasswd_file, write_htpasswd_text
+
     ht_line = f"{username}:{apr_md5_crypt.hash(password)}\n"
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _write_file_privileged(HTPASSWD_PATH, ht_line)
     try:
-        HTPASSWD_PATH.chmod(0o644)
+        write_htpasswd_text(HTPASSWD_PATH, ht_line)
     except OSError:
-        _run_privileged(["chmod", "644", str(HTPASSWD_PATH)])
+        _write_file_privileged(HTPASSWD_PATH, ht_line)
+        secure_htpasswd_file(HTPASSWD_PATH)
     return str(HTPASSWD_PATH)
 
 

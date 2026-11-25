@@ -738,8 +738,9 @@ async def update_site(req: UpdateSiteRequest) -> Dict[str, Any]:
                 with open(available_path, "w", encoding="utf-8") as f:
                     f.write(backup_content)
                 if auth_file_backup is not None:
-                    auth_htpasswd_path.parent.mkdir(parents=True, exist_ok=True)
-                    auth_htpasswd_path.write_text(auth_file_backup, encoding="utf-8")
+                    from core.nginx_htpasswd import write_htpasswd_text
+
+                    write_htpasswd_text(auth_htpasswd_path, auth_file_backup)
                 else:
                     delete_site_auth_files(safe_filename)
                 if auth_meta_backup.get("enabled") and auth_meta_backup.get("username"):

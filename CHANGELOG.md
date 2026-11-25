@@ -6,6 +6,14 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.17: nginx can read Basic Auth htpasswd files after 1.1.16 lock-down**
+
+- **Regression fix.** 1.1.16 set `config/` to `0700 root:root`, so nginx workers (`www-data` on Debian/Ubuntu, `nginx` on RHEL) could not open `config/panel_access.htpasswd` or `config/web_auth/*.htpasswd`. A panel or site with Basic Auth enabled returned HTTP 500 after upgrade.
+- Paths are unchanged so existing vhosts keep working: `config/` and `config/web_auth/` are now `0711 root:root` (traverse by exact path, no directory listing). `panel_access.htpasswd` and `web_auth/*.htpasswd` are `0640 root:<nginx-user>`.
+- `jwt_secret`, SQLite DBs, `panel_settings.json` and site auth JSON, and `config/ssl/` (`0700`) stay root-only.
+- The nginx worker user is detected from the uncommented `user` directive in `nginx.conf`, then `www-data`, then `nginx`.
+- `scripts/install.sh` repairs these permissions on upgrade. The backend (`panel_settings`, `web_manager`) applies the same mode/owner whenever it writes an htpasswd file, and again at service startup so already-upgraded 1.1.16 installs recover on first 1.1.17 start.
+
 **CoPanel 1.1.16: security hardening (root-owned install tree, service & PHP/PM2 validation, download SHA-256)**
 
 - **Install tree ownership (`scripts/install.sh`).** Fixed privilege escalation where `/opt/copanel` (backend, venv, scripts, frontend, config) was `chown -R copanel:copanel` while `copanel.service` runs as `User=root`.
@@ -156,6 +164,12 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- CoPanel 1.1.17 (bảo mật):
+  - **Sửa hồi quy Basic Auth sau 1.1.16.** Bản 1.1.16 khoá `config/` ở `0700 root:root`, nên worker nginx (`www-data` / `nginx` trên RHEL) không đọc được `panel_access.htpasswd` và `config/web_auth/*.htpasswd`. Panel hoặc website đang bật Basic Auth sẽ trả HTTP 500 sau khi nâng cấp.
+  - Giữ nguyên đường dẫn (vhost cũ không cần viết lại): `config/` và `config/web_auth/` là `0711 root:root` (đi theo đúng đường dẫn, không liệt kê được thư mục). File htpasswd là `0640 root:<user-nginx>`.
+  - `jwt_secret`, cơ sở dữ liệu SQLite, JSON cấu hình, và `config/ssl/` (`0700`) vẫn chỉ root đọc được.
+  - Tự nhận diện user nginx từ `nginx.conf`, rồi `www-data`, rồi `nginx`.
+  - `scripts/install.sh` tự sửa quyền khi nâng cấp. Backend gán đúng quyền mỗi lần ghi htpasswd, và sửa lại lúc khởi động dịch vụ để máy đã lên 1.1.16 phục hồi khi chạy 1.1.17 lần đầu.
 - CoPanel 1.1.16 (bảo mật):
   - **Quyền sở hữu thư mục cài đặt (`scripts/install.sh`)**: sửa lỗi leo quyền từ user `copanel` lên `root` do `/opt/copanel` trước đây thuộc `copanel:copanel` trong khi `copanel.service` chạy `User=root`. Giờ `root:root` sở hữu `/opt/copanel` (backend, venv, scripts, frontend, `.git`, `config`, dữ liệu/log), bỏ quyền ghi nhóm/khác, khoá `config/` ở `0700`/`0600` và tự động sửa lại khi nâng cấp từ bản cũ.
   - **Điều khiển dịch vụ web (`web_manager`)**: `POST /api/web_manager/web_services/{service_id}/{action}` chỉ cho phép `nginx`, `apache2`, `litespeed` và các hành động hợp lệ, ánh xạ tên gói/unit cố định, chạy qua `core.sysexec` và truyền `--` cho `systemctl`.
