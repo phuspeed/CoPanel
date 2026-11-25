@@ -3,12 +3,16 @@ Web Manager Module Router
 Nginx + Apache vhosts, stack bootstrap (LEMP/LAMP), PHP-FPM and DB service overview.
 """
 import asyncio
+import hashlib
+import hmac
 import os
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 from typing import List, Dict, Any, Optional, Literal
 
+from core import sysexec
 from core.jobs import jobs
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -924,35 +928,69 @@ def install_web_stack(req: dict) -> Dict[str, Any]:
         "message": f"Stack '{stack}' install started.",
     }
 
+_WEB_SERVICE_SPEC: Dict[str, Dict[str, Any]] = {
+    "nginx": {
+        "apt_pkg": "nginx",
+        "rpm_pkg": "nginx",
+        "units": ("nginx",),
+    },
+    "apache2": {
+        "apt_pkg": "apache2",
+        "rpm_pkg": "httpd",
+        "units": ("apache2", "httpd"),
+    },
+    "litespeed": {
+        "apt_pkg": "openlitespeed",
+        "rpm_pkg": "openlitespeed",
+        "units": ("litespeed", "lshttpd"),
+    },
+}
+_WEB_SERVICE_ACTIONS = frozenset({"install", "start", "stop", "restart"})
+
+
 @router.post("/web_services/{service_id}/{action}")
 async def control_web_service(service_id: str, action: str) -> Dict[str, Any]:
-    """Control starting, stopping, restarting, or removing web server services."""
+    """Control starting, stopping, restarting, or installing supported web server services."""
+    spec = _WEB_SERVICE_SPEC.get(service_id)
+    if not spec:
+        raise HTTPException(status_code=400, detail=f"Unsupported web service: {service_id}")
+    if action not in _WEB_SERVICE_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
+
     if IS_WINDOWS:
         return {"status": "success", "message": f"Service {service_id} action '{action}' performed successfully (Mock mode)."}
 
     if action == "install":
-        # Run package installation using apt/yum
-        pkg_manager = "apt-get" if shutil.which("apt-get") else ("yum" if shutil.which("yum") else None)
-        if pkg_manager == "apt-get":
-            subprocess.run(["sudo", "apt-get", "update", "-y"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "apt-get", "install", "-y", service_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        elif pkg_manager == "yum":
-            subprocess.run(["sudo", "yum", "install", "-y", service_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        family = logic.php_package_family()
+        if not family:
+            raise HTTPException(status_code=400, detail="No supported package manager found (apt-get, dnf, or yum).")
+        pkg_name = spec["apt_pkg"] if family == "apt" else spec["rpm_pkg"]
+        result = sysexec.pkg_install([pkg_name])
+        if not result.get("ok"):
+            tail = str(result.get("output_tail") or "").strip()
+            raise HTTPException(status_code=400, detail=f"Failed to install {pkg_name}. {tail}".strip())
         return {"status": "success", "message": f"{service_id} installed successfully."}
 
-    if action in ["start", "stop", "restart"]:
-        unit = service_id
-        if service_id == "apache2":
-            r_a = subprocess.run(["systemctl", "cat", "apache2"], capture_output=True, text=True)
-            r_h = subprocess.run(["systemctl", "cat", "httpd"], capture_output=True, text=True)
-            unit = "apache2" if r_a.returncode == 0 else ("httpd" if r_h.returncode == 0 else "apache2")
-        try:
-            subprocess.run(["sudo", "systemctl", action, unit], check=True, capture_output=True, text=True)
-            return {"status": "success", "message": f"Service {unit} {action}ed successfully."}
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=400, detail=f"Service control failed: {e.stderr or e.stdout}")
+    units = spec["units"]
+    unit = units[0]
+    if len(units) > 1:
+        for candidate in units:
+            try:
+                probe = sysexec.run(["systemctl", "cat", "--", candidate], timeout=10)
+                if probe.returncode == 0:
+                    unit = candidate
+                    break
+            except sysexec.CommandError:
+                continue
 
-    return {"status": "error", "message": "Unknown action"}
+    try:
+        res = sysexec.run(["systemctl", action, "--", unit], timeout=60, as_root=True)
+    except sysexec.CommandError as e:
+        raise HTTPException(status_code=400, detail=f"Service control failed: {e}")
+    if res.returncode != 0:
+        detail = sysexec.combined_output(res) or f"systemctl exited {res.returncode}"
+        raise HTTPException(status_code=400, detail=f"Service control failed: {detail}")
+    return {"status": "success", "message": f"Service {unit} {action}ed successfully."}
 
 
 
@@ -1105,11 +1143,37 @@ async def install_adminer() -> Dict[str, Any]:
     nginx_conf = "/etc/nginx/conf.d/adminer.conf"
     apache_conf = "/etc/apache2/conf-available/adminer.conf"
 
+    class _HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not str(newurl).lower().startswith("https://"):
+                raise ValueError("Adminer download redirected to a non-HTTPS URL")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    adminer_url = "https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
+    adminer_sha256 = "2fd7e6d8f987b243ab1839249551f62adce19704c47d3d0c8dd9e57ea5b9c6b3"
+    max_adminer_bytes = 5 * 1024 * 1024
     try:
         os.makedirs(adminer_dir, exist_ok=True)
         os.makedirs("/var/www/html", exist_ok=True)
-        url = "https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
-        urllib.request.urlretrieve(url, adminer_path)
+        opener = urllib.request.build_opener(_HttpsOnlyRedirect())
+        req = urllib.request.Request(adminer_url, headers={"User-Agent": "CoPanel-AdminerInstaller/1.0"})
+        with opener.open(req, timeout=30) as resp:
+            payload = resp.read(max_adminer_bytes + 1)
+        if len(payload) > max_adminer_bytes:
+            raise ValueError("Adminer download exceeded maximum allowed size")
+        actual_sha = hashlib.sha256(payload).hexdigest().lower()
+        if not hmac.compare_digest(actual_sha, adminer_sha256):
+            raise ValueError(f"SHA-256 mismatch (got {actual_sha})")
+        fd, tmp_name = tempfile.mkstemp(prefix=".adminer-", suffix=".php", dir=adminer_dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+            os.chmod(tmp_name, 0o644)
+            os.replace(tmp_name, adminer_path)
+        except Exception:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+            raise
         try:
             shutil.copy2(adminer_path, public_adminer_path)
         except Exception:
@@ -1279,9 +1343,15 @@ def get_php_modules_endpoint() -> Dict[str, Any]:
 
 @router.get("/php/modules/{version}")
 def get_php_modules_for_version(version: str) -> Dict[str, Any]:
+    if version not in logic.PHP_SUPPORTED_VERSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported PHP version selected.")
+    try:
+        enabled = logic.get_enabled_modules(version)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "status": "success",
-        "enabled": logic.get_enabled_modules(version),
+        "enabled": enabled,
         "all": logic.get_php_modules(),
     }
 
@@ -1323,6 +1393,8 @@ def get_php_ini_endpoint(version: str) -> Dict[str, Any]:
     try:
         content = logic.get_php_ini(version)
         return {"status": "success", "content": content}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

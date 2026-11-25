@@ -6,6 +6,17 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.16: security hardening (root-owned install tree, service & PHP/PM2 validation, download SHA-256)**
+
+- **Install tree ownership (`scripts/install.sh`).** Fixed privilege escalation where `/opt/copanel` (backend, venv, scripts, frontend, config) was `chown -R copanel:copanel` while `copanel.service` runs as `User=root`.
+  - `copanel_harden_install_permissions` keeps `/opt/copanel`, `backend`, `venv`, `scripts`, `frontend`, `.git`, `backups`, `logs`, `stacks`, and `/var/lib/copanel` owned by `root:root` with `go-w` on runtime/code and `0700`/`0600` on `config/` secrets and SQLite DBs.
+  - Runs as a repair step on upgrades (including after frontend build/extraction) and runs `init_db()` directly as `root`.
+  - Newly created `copanel` user uses a `nologin` shell and `-M`; prebuilt tar extraction uses `--no-same-owner`.
+- **Web service control (`web_manager`).** `POST /api/web_manager/web_services/{service_id}/{action}` now allowlists `nginx`, `apache2`, and `litespeed`, maps to fixed package and systemd unit names, allowlists `install`/`start`/`stop`/`restart`, and executes via `core.sysexec` with `--` for `systemctl`.
+- **PHP version and module validation (`web_manager`).** `toggle_php_module`, `get_enabled_modules`, `get_php_ini`, `save_php_ini`, and `install_php_extensions` enforce `PHP_SUPPORTED_VERSIONS`. `toggle_php_module` validates module names against `^[a-zA-Z0-9_.-]{1,64}$` and rejects leading `-`.
+- **PM2 process control (`system_monitor`).** `POST /api/system_monitor/pm2/{action}/{name_or_id}` now requires superadmin (`require_admin`), allowlists actions, validates `name_or_id` (`^[a-zA-Z0-9_.-]{1,128}$`, no leading `-`), verifies the target exists in `pm2 jlist`, passes `--` to `pm2`, and writes an audit entry.
+- **Download integrity.** `install_adminer` (`web_manager`) and `copanel_download_prebuilt_frontend` (`scripts/install.sh`) verify SHA-256 checksums (HTTPS-only, fail closed).
+
 **CoPanel 1.1.15: security hardening (signed updates, AppStore integrity, symlink-safe file operations)**
 
 - **Panel Update installs only signed releases.** The updater used to run whatever was on GitHub `main`.
@@ -145,6 +156,12 @@ All notable changes to CoPanel are documented in this file.
 
 ### Tiếng Việt (tóm tắt)
 
+- CoPanel 1.1.16 (bảo mật):
+  - **Quyền sở hữu thư mục cài đặt (`scripts/install.sh`)**: sửa lỗi leo quyền từ user `copanel` lên `root` do `/opt/copanel` trước đây thuộc `copanel:copanel` trong khi `copanel.service` chạy `User=root`. Giờ `root:root` sở hữu `/opt/copanel` (backend, venv, scripts, frontend, `.git`, `config`, dữ liệu/log), bỏ quyền ghi nhóm/khác, khoá `config/` ở `0700`/`0600` và tự động sửa lại khi nâng cấp từ bản cũ.
+  - **Điều khiển dịch vụ web (`web_manager`)**: `POST /api/web_manager/web_services/{service_id}/{action}` chỉ cho phép `nginx`, `apache2`, `litespeed` và các hành động hợp lệ, ánh xạ tên gói/unit cố định, chạy qua `core.sysexec` và truyền `--` cho `systemctl`.
+  - **Kiểm tra phiên bản & module PHP (`web_manager`)**: ép buộc `PHP_SUPPORTED_VERSIONS` cho `module_toggle`, `modules/{version}`, `php_ini` và `install_php_extensions`; tên module phải khớp `^[a-zA-Z0-9_.-]{1,64}$` và không bắt đầu bằng `-`.
+  - **Quản lý PM2 (`system_monitor`)**: `POST /api/system_monitor/pm2/{action}/{name_or_id}` yêu cầu quyền superadmin (`require_admin`), kiểm tra hành động và tên/ID hợp lệ, đối chiếu đúng tiến trình đang có trong `pm2 jlist`, truyền `--` cho `pm2` và ghi nhật ký kiểm toán.
+  - **Kiểm tra SHA-256 khi tải xuống**: xác minh SHA-256 cho Adminer 4.8.1 và gói frontend build sẵn khi tải từ GitHub release.
 - CoPanel 1.1.15 (bảo mật):
   - **Cập nhật panel chỉ cài bản phát hành đã ký.**
     - Trình cập nhật đọc release mới nhất trên GitHub và kiểm tra chữ ký của manifest (`ssh-keygen -Y verify`, khoá công khai đi kèm panel).

@@ -5,6 +5,7 @@ Provides system resource monitoring using psutil, listing processes, and PM2 man
 from __future__ import annotations
 
 import json
+import re
 import os
 import platform
 import shutil
@@ -22,6 +23,31 @@ _SKIP_DISK_FSTYPES = frozenset({
     "rpc_pipefs", "autofs", "binfmt_misc", "securityfs", "debugfs",
     "hugetlbfs", "configfs", "squashfs", "fuse.portal", "fuse.gvfsd-fuse",
 })
+
+
+PM2_ALLOWED_ACTIONS = frozenset({"restart", "stop", "delete", "start"})
+PM2_TARGET_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,128}$")
+
+
+def validate_pm2_target(target: str) -> bool:
+    if not isinstance(target, str) or not target:
+        return False
+    if target.startswith("-") or target in {".", ".."}:
+        return False
+    return bool(PM2_TARGET_RE.fullmatch(target))
+
+
+def _pm2_target_exists(processes: List[Dict[str, Any]], target: str) -> bool:
+    for proc in processes or []:
+        if not isinstance(proc, dict):
+            continue
+        name = proc.get("name")
+        if isinstance(name, str) and name == target:
+            return True
+        pm_id = proc.get("pm_id")
+        if pm_id is not None and str(pm_id) == target:
+            return True
+    return False
 
 
 class SystemMonitor:
@@ -445,13 +471,18 @@ class SystemMonitor:
 
     @staticmethod
     def manage_pm2(action: str, target: str) -> bool:
-        """Control PM2 processes lifecycle."""
+        """Control PM2 processes lifecycle for an existing PM2 process."""
         if not shutil.which("pm2"):
             return False
-        if action not in ["restart", "stop", "delete", "start"]:
+        if action not in PM2_ALLOWED_ACTIONS:
+            return False
+        if not validate_pm2_target(target):
+            return False
+        processes = SystemMonitor.get_pm2_processes()
+        if not _pm2_target_exists(processes, target):
             return False
         try:
-            res = subprocess.run(["pm2", action, target], capture_output=True, text=True, timeout=5)
+            res = subprocess.run(["pm2", action, "--", target], capture_output=True, text=True, timeout=5)
             return res.returncode == 0
         except Exception:
             return False

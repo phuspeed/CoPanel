@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from core.audit import record_audit
 from core.auth import require_admin, require_module
 
-from .logic import SystemMonitor
+from .logic import PM2_ALLOWED_ACTIONS, SystemMonitor, validate_pm2_target
 
 router = APIRouter()
 
@@ -171,13 +171,25 @@ async def get_pm2_processes(_user: Dict[str, Any] = Depends(require_module("syst
 async def action_pm2_process(
     action: str,
     name_or_id: str,
-    _user: Dict[str, Any] = Depends(require_module("system_monitor")),
+    user: Dict[str, Any] = Depends(require_admin),
 ) -> Dict[str, Any]:
-    """Action for a PM2 process (restart, stop, delete, start)."""
+    """Action for a PM2 process (restart, stop, delete, start). Superadmin only."""
+    if action not in PM2_ALLOWED_ACTIONS:
+        raise HTTPException(status_code=400, detail="Invalid PM2 action.")
+    if not validate_pm2_target(name_or_id):
+        raise HTTPException(status_code=400, detail="Invalid PM2 process name or ID.")
     try:
         ok = SystemMonitor.manage_pm2(action, name_or_id)
         if not ok:
-            raise HTTPException(status_code=400, detail="Failed to run action or PM2 is not installed.")
+            raise HTTPException(status_code=400, detail="Failed to run action, process not found, or PM2 is not installed.")
+        record_audit(
+            "pm2.action",
+            module="system_monitor",
+            target=name_or_id,
+            actor=user.get("username"),
+            actor_id=user.get("id"),
+            meta={"action": action},
+        )
         return {"status": "success", "message": f"Successfully performed {action} on {name_or_id}"}
     except HTTPException:
         raise
