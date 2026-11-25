@@ -1934,9 +1934,12 @@ copanel_tar_copy_with_module_preservation() {
 setup_user_and_dirs() {
     log_info "Setting up user and directories..."
     
-    # Create user if doesn't exist
+    # Create legacy system user without an interactive shell or owned home dir
     if ! id "$CoPanel_USER" &>/dev/null; then
-        useradd -r -s /bin/bash -d "$CoPanel_HOME" -m "$CoPanel_USER"
+        local nologin_shell="/usr/sbin/nologin"
+        [[ -x "$nologin_shell" ]] || nologin_shell="/sbin/nologin"
+        [[ -x "$nologin_shell" ]] || nologin_shell="/bin/false"
+        useradd -r -s "$nologin_shell" -d "$CoPanel_HOME" -M "$CoPanel_USER"
         log_success "Created user: $CoPanel_USER"
     else
         log_success "User exists: $CoPanel_USER"
@@ -2082,18 +2085,57 @@ setup_user_and_dirs() {
         copanel_prune_nonessential_files "$CoPanel_HOME"
     fi
 
-    # Secure permissions and ownership
-    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
-    chmod -R u+rwX,go+rX "$CoPanel_HOME"
-    # The recursive chmod above makes secrets world-readable. Lock them down
-    # again when a previous install already created them.
-    copanel_lock_down_secrets
+    # Secure permissions and ownership (repair existing copanel-owned installs too)
+    copanel_harden_install_permissions
     
     log_success "Directories ready"
 }
 
+copanel_harden_install_permissions() {
+    local root="${CoPanel_HOME:-/opt/copanel}"
+    [[ -d "$root" ]] || return 0
+
+    # copanel.service runs as User=root; all code, venv, scripts, frontend,
+    # git checkout, and config must belong to root:root so the unprivileged
+    # copanel user cannot modify anything executed by root.
+    chown -R root:root "$root" || true
+    chmod 755 "$root" || true
+
+    local d
+    for d in backend venv scripts frontend; do
+        if [[ -d "${root}/${d}" ]]; then
+            chown -R root:root "${root}/${d}" || true
+            chmod -R u+rwX,go+rX,go-w "${root}/${d}" || true
+        fi
+    done
+
+    for d in .git backend/data backups logs stacks; do
+        if [[ -d "${root}/${d}" ]]; then
+            chown -R root:root "${root}/${d}" || true
+            chmod -R u+rwX,go-rwx "${root}/${d}" || true
+        fi
+    done
+
+    if [[ -d /var/lib/copanel ]]; then
+        chown -R root:root /var/lib/copanel || true
+        chmod 700 /var/lib/copanel || true
+    fi
+
+    copanel_lock_down_secrets
+}
+
 copanel_lock_down_secrets() {
-    local f
+    local cfg="${CoPanel_HOME}/config"
+    local f d
+    if [[ -d "$cfg" ]]; then
+        chown -R root:root "$cfg" || true
+        chmod 700 "$cfg" || true
+        for d in "${cfg}/ssl" "${cfg}/web_auth"; do
+            if [[ -d "$d" ]]; then
+                chmod 700 "$d" || true
+            fi
+        done
+    fi
     # Recursive chmod u+rwX,go+rX would leave DBs/secrets world-readable.
     for f in \
         "${CoPanel_HOME}/config/jwt_secret" \
@@ -2101,20 +2143,20 @@ copanel_lock_down_secrets() {
         "${CoPanel_HOME}/config/admin_password.txt" \
         "${CoPanel_HOME}/config/mysql_credentials.txt" \
         "${CoPanel_HOME}/config/security_entrance.json" \
+        "${CoPanel_HOME}/config/panel_settings.json" \
+        "${CoPanel_HOME}/config/rclone.conf" \
         "${CoPanel_HOME}/config/ssl/panel.key"
     do
         if [[ -f "$f" ]]; then
             chmod 600 "$f" || true
-            if id "${CoPanel_USER}" &>/dev/null; then
-                chown "${CoPanel_USER}:${CoPanel_USER}" "$f" || true
-            fi
+            chown root:root "$f" || true
         fi
     done
     shopt -s nullglob
-    for f in "${CoPanel_HOME}/config"/*.db; do
-        chmod 600 "$f" || true
-        if id "${CoPanel_USER}" &>/dev/null; then
-            chown "${CoPanel_USER}:${CoPanel_USER}" "$f" || true
+    for f in "${CoPanel_HOME}/config"/*.db "${CoPanel_HOME}/config"/*.json "${CoPanel_HOME}/config"/*.txt "${CoPanel_HOME}/config"/*.env "${CoPanel_HOME}/backend"/*.db; do
+        if [[ -f "$f" ]]; then
+            chmod 600 "$f" || true
+            chown root:root "$f" || true
         fi
     done
     shopt -u nullglob
@@ -2258,9 +2300,9 @@ setup_backend() {
     log_success "Python dependencies installed"
 
     log_info "Initializing CoPanel database..."
-    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
+    copanel_harden_install_permissions
     copanel_mark_admin_password_before_install
-    if ! copanel_run_as "$CoPanel_USER" env "ADMIN_PASSWORD=${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
+    if ! env "ADMIN_PASSWORD=${ADMIN_PASSWORD:-}" "$VENV_PATH/bin/python3" -c "import sys; sys.path.append('$CoPanel_HOME/backend'); from core.user_model import init_db; init_db()"; then
         log_error "Database initialization failed (core.user_model.init_db)."
         deactivate 2>/dev/null || true
         exit 1
@@ -2269,9 +2311,10 @@ setup_backend() {
     copanel_note_admin_password_after_install
     
     # Final ownership check
-    chown -R "$CoPanel_USER:$CoPanel_USER" "$CoPanel_HOME"
-    chmod -R u+rwX,go+rX "$CoPanel_HOME"
+    chown -R root:root "$CoPanel_HOME"
+    chmod -R u+rwX,go+rX,go-w "$CoPanel_HOME"
     copanel_lock_down_secrets
+    copanel_harden_install_permissions
     
     deactivate 2>/dev/null || true
 }
@@ -2386,17 +2429,83 @@ copanel_download_prebuilt_frontend() {
     local dest="$1"
     [[ -n "$dest" ]] || return 1
     command -v curl &>/dev/null || return 1
-    local api="https://api.github.com/repos/phuspeed/CoPanel/releases/latest"
-    local asset_url=""
-    asset_url="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" "$api" 2>/dev/null \
-        | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*dist\.tar\.gz\)".*/\1/p' | head -1)"
-    [[ -n "$asset_url" ]] || return 1
+    local api="https://api.github.com/repos/${COPANEL_RELEASE_REPO:-phuspeed/CoPanel}/releases/latest"
+    if [[ -n "${COPANEL_GIT_REF:-}" ]]; then
+        api="https://api.github.com/repos/${COPANEL_RELEASE_REPO:-phuspeed/CoPanel}/releases/tags/${COPANEL_GIT_REF}"
+    fi
+    local meta_json=""
+    meta_json="$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github+json" "$api" 2>/dev/null || true)"
+    [[ -n "$meta_json" ]] || return 1
+
+    local asset_url="" expected_sha="" sums_url=""
+    if command_exists python3; then
+        local parsed
+        parsed="$(python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+asset_url = ""
+digest = ""
+sums_url = ""
+for a in d.get("assets") or []:
+    name = str(a.get("name") or "")
+    url = str(a.get("browser_download_url") or "")
+    if name == "SHA256SUMS" and url.startswith("https://"):
+        sums_url = url
+    if url.endswith("dist.tar.gz") and url.startswith("https://") and not asset_url:
+        asset_url = url
+        raw_dig = str(a.get("digest") or "")
+        if raw_dig.startswith("sha256:"):
+            digest = raw_dig[7:].strip().lower()
+print(asset_url)
+print(digest)
+print(sums_url)
+' <<<"$meta_json" 2>/dev/null || true)"
+        asset_url="$(printf '%s\n' "$parsed" | sed -n '1p')"
+        expected_sha="$(printf '%s\n' "$parsed" | sed -n '2p')"
+        sums_url="$(printf '%s\n' "$parsed" | sed -n '3p')"
+    else
+        asset_url="$(printf '%s\n' "$meta_json" \
+            | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*dist\.tar\.gz\)".*/\1/p' | head -1)"
+    fi
+    if [[ -n "${COPANEL_PREBUILT_SHA256:-}" ]]; then
+        expected_sha="$(printf '%s' "$COPANEL_PREBUILT_SHA256" | tr '[:upper:]' '[:lower:]')"
+    fi
+    [[ "$asset_url" == "https://github.com/${COPANEL_RELEASE_REPO:-phuspeed/CoPanel}/releases/download/"* ]] || return 1
+    if [[ -z "$expected_sha" && -n "$sums_url" ]]; then
+        local sums_txt
+        sums_txt="$(curl -fsSL --max-time 20 "$sums_url" 2>/dev/null || true)"
+        expected_sha="$(printf '%s\n' "$sums_txt" | awk '/dist\.tar\.gz$/ {print tolower($1); exit}')"
+    fi
+    if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+        log_error "Refusing prebuilt frontend download without a valid SHA-256 checksum."
+        return 1
+    fi
     log_info "Downloading prebuilt frontend from GitHub release..."
     if ! curl -fsSL --max-time 300 -o "$dest" "$asset_url"; then
         rm -f "$dest"
         return 1
     fi
     [[ -s "$dest" ]] || { rm -f "$dest"; return 1; }
+    local actual_sha=""
+    if command_exists sha256sum; then
+        actual_sha="$(sha256sum "$dest" | awk '{print tolower($1)}')"
+    elif command_exists shasum; then
+        actual_sha="$(shasum -a 256 "$dest" | awk '{print tolower($1)}')"
+    elif command_exists python3; then
+        actual_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest().lower())' "$dest")"
+    else
+        rm -f "$dest"
+        log_error "No SHA-256 tool available to verify prebuilt frontend download."
+        return 1
+    fi
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+        rm -f "$dest"
+        log_error "Prebuilt frontend SHA-256 mismatch (expected ${expected_sha}, got ${actual_sha})."
+        return 1
+    fi
     return 0
 }
 
@@ -2479,7 +2588,7 @@ copanel_use_prebuilt_frontend() {
         cp -a dist/extensions/. "$ext_backup/"
     fi
     rm -rf dist
-    tar -xzf "$archive"
+    tar --no-same-owner -xzf "$archive"
     if [[ -n "$ext_backup" ]]; then
         mkdir -p dist/extensions
         if compgen -G "$ext_backup/*" >/dev/null 2>&1; then
@@ -3511,7 +3620,7 @@ ${BLUE}Installation Summary:${NC}
 🖥  Interface:        ${GREEN}$(copanel_ui_track_label)${NC} ${YELLOW}(toggle anytime in panel)${NC}
 🔐 Admin password:    ${GREEN}${admin_pw_line}${NC}
 📍 Location:          ${CoPanel_HOME}
-👤 Service User:      ${CoPanel_USER}
+👤 Service User:      root
 ${access_block}
 📊 Backend API:       http://127.0.0.1:${BACKEND_PORT} (localhost only)
 📜 phpMyAdmin:        http://${panel_ip}:${NGINX_PORT}/phpmyadmin
@@ -3595,6 +3704,7 @@ EOF
         log_warning "Frontend build failed. Keeping the previous dist/ when present; continuing to restart services."
     fi
     copanel_write_ui_track
+    copanel_harden_install_permissions
 
     log_step "Step 5: Configure Nginx & Firewall"
     setup_nginx

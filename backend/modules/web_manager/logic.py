@@ -723,6 +723,7 @@ def pkg_manager() -> Optional[str]:
 # --- PHP version / extension / php.ini management (merged from php_manager) ---
 
 PHP_SUPPORTED_VERSIONS = ["8.4", "8.3", "8.2", "8.1", "8.0", "7.4"]
+PHP_MODULE_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,64}$")
 PHP_DEFAULT_MODULES = ["mysqli", "curl", "mbstring", "gd", "zip", "xml", "redis", "intl", "soap", "bcmath"]
 
 # Distro package names. `phpX.Y-mysqli` does not exist (the module is in
@@ -928,7 +929,22 @@ def _normalize_mods_enabled_stem(stem: str) -> str:
     return re.sub(r"^\d+-", "", name).strip().lower()
 
 
+def _validate_php_version(version: str) -> str:
+    ver = (version or "").strip()
+    if ver not in PHP_SUPPORTED_VERSIONS:
+        raise ValueError("Unsupported PHP version selected.")
+    return ver
+
+
+def _validate_php_module(module: str) -> str:
+    mod = (module or "").strip()
+    if not mod or mod.startswith("-") or mod in {".", ".."} or not PHP_MODULE_NAME_RE.fullmatch(mod):
+        raise ValueError("Invalid PHP module name.")
+    return mod
+
+
 def get_enabled_modules(version: str) -> List[str]:
+    version = _validate_php_version(version)
     if IS_WINDOWS:
         return list(PHP_DEFAULT_MODULES)
 
@@ -1109,7 +1125,8 @@ def _extension_loaded(loaded: set[str], module: str) -> bool:
 
 def install_php_extensions(version: str, modules: List[str]) -> Dict[str, Any]:
     """Install the distro packages for ``modules`` and require them to load."""
-    requested = [m.strip() for m in modules if m and m.strip()]
+    version = _validate_php_version(version)
+    requested = [_validate_php_module(m) for m in modules if m and m.strip()]
     if not requested:
         return {"status": "success", "packages": [], "message": "No PHP extensions requested."}
     if IS_WINDOWS:
@@ -1252,8 +1269,14 @@ def set_active_php_version(version: str) -> Dict[str, Any]:
 
 
 def toggle_php_module(version: str, module: str, enable: bool) -> Dict[str, Any]:
+    if version not in PHP_SUPPORTED_VERSIONS:
+        return {"status": "error", "message": "Unsupported PHP version selected."}
     if not module:
         return {"status": "error", "message": "Module is required."}
+    try:
+        module = _validate_php_module(module)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
     if IS_WINDOWS:
         return {"status": "success", "message": f"Module {module} {'enabled' if enable else 'disabled'} (Mock mode)."}
     try:
@@ -1267,7 +1290,7 @@ def toggle_php_module(version: str, module: str, enable: bool) -> Dict[str, Any]
                 if "not found" in low or "doesn't exist" in low or "cannot find" in low:
                     return {"status": "error", "message": f"Module '{module}' not found for PHP {version}."}
                 return {"status": "error", "message": err.strip() or f"phpenmod/phpdismod exited {res.returncode}"}
-            sysexec.run(["systemctl", "restart", php_fpm_unit(version)], timeout=30, as_root=True)
+            sysexec.run(["systemctl", "restart", "--", php_fpm_unit(version)], timeout=30, as_root=True)
             after = set(get_enabled_modules(version))
             mod_l = module.lower()
             if enable and mod_l not in after:
@@ -1287,6 +1310,7 @@ def toggle_php_module(version: str, module: str, enable: bool) -> Dict[str, Any]
 
 
 def get_php_ini(version: str) -> str:
+    version = _validate_php_version(version)
     ini_path = Path(f"/etc/php/{version}/fpm/php.ini") if not IS_WINDOWS else Path(f"./test_nginx/php_{version}_fpm_php.ini")
     if ini_path.exists():
         return ini_path.read_text(encoding="utf-8", errors="ignore")
@@ -1306,12 +1330,14 @@ display_errors = Off
 
 
 def save_php_ini(version: str, content: str) -> Dict[str, Any]:
+    if version not in PHP_SUPPORTED_VERSIONS:
+        return {"status": "error", "message": "Unsupported PHP version selected."}
     ini_path = Path(f"/etc/php/{version}/fpm/php.ini") if not IS_WINDOWS else Path(f"./test_nginx/php_{version}_fpm_php.ini")
     try:
         ini_path.parent.mkdir(parents=True, exist_ok=True)
         ini_path.write_text(content, encoding="utf-8")
         if not IS_WINDOWS:
-            sysexec.run(["systemctl", "restart", php_fpm_unit(version)], timeout=30, as_root=True, check=True)
+            sysexec.run(["systemctl", "restart", "--", php_fpm_unit(version)], timeout=30, as_root=True, check=True)
         return {"status": "success", "message": f"php.ini for PHP {version} successfully updated and restarted."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
