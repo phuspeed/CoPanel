@@ -2124,17 +2124,80 @@ copanel_harden_install_permissions() {
     copanel_lock_down_secrets
 }
 
+# Resolve the nginx worker user (Debian/Ubuntu: www-data, RHEL/Fedora: nginx).
+copanel_nginx_user() {
+    local conf user
+    local -a confs=()
+    if [[ -n "${COPANEL_TEST_NGINX_CONF:-}" ]]; then
+        confs+=("${COPANEL_TEST_NGINX_CONF}")
+    fi
+    confs+=(/etc/nginx/nginx.conf /usr/local/nginx/conf/nginx.conf)
+
+    for conf in "${confs[@]}"; do
+        [[ -f "$conf" ]] || continue
+        # First uncommented `user NAME;` (optional group) in the main config.
+        user="$(sed -n 's/^[[:space:]]*user[[:space:]]\+\([A-Za-z0-9_-]\+\).*/\1/p' "$conf" | head -n1 || true)"
+        if [[ -n "$user" ]] && getent passwd "$user" >/dev/null 2>&1; then
+            printf '%s\n' "$user"
+            return 0
+        fi
+    done
+    for user in www-data nginx; do
+        if getent passwd "$user" >/dev/null 2>&1; then
+            printf '%s\n' "$user"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# After lock-down, make only Basic Auth htpasswd files readable by nginx.
+# config/ and config/web_auth/ are 0711 (traverse by exact path, no listing).
+# config/ssl/ stays 0700. jwt_secret, DBs, JSON, and keys stay 0600 root:root.
+# htpasswd files become 0640 root:<nginx-user>.
+copanel_expose_nginx_htpasswd() {
+    local config_dir="${CoPanel_HOME}/config"
+    local web_auth="${config_dir}/web_auth"
+    local nginx_user=""
+    local f
+
+    [[ -d "$config_dir" ]] || return 0
+    chmod 711 "$config_dir" || true
+
+    if [[ -d "$web_auth" ]]; then
+        chmod 711 "$web_auth" || true
+    fi
+
+    nginx_user="$(copanel_nginx_user || true)"
+
+    if [[ -f "${config_dir}/panel_access.htpasswd" ]]; then
+        chmod 640 "${config_dir}/panel_access.htpasswd" || true
+        if [[ -n "$nginx_user" ]]; then
+            chown "root:${nginx_user}" "${config_dir}/panel_access.htpasswd" || true
+        fi
+    fi
+    if [[ -d "$web_auth" ]]; then
+        for f in "${web_auth}"/*.htpasswd; do
+            [[ -f "$f" ]] || continue
+            chmod 640 "$f" || true
+            if [[ -n "$nginx_user" ]]; then
+                chown "root:${nginx_user}" "$f" || true
+            fi
+        done
+    fi
+}
+
 copanel_lock_down_secrets() {
     local cfg="${CoPanel_HOME}/config"
     local f d
     if [[ -d "$cfg" ]]; then
         chown -R root:root "$cfg" || true
-        chmod 700 "$cfg" || true
-        for d in "${cfg}/ssl" "${cfg}/web_auth"; do
-            if [[ -d "$d" ]]; then
-                chmod 700 "$d" || true
-            fi
-        done
+        # Traversable by exact path so nginx can open htpasswd files; not listable.
+        chmod 711 "$cfg" || true
+        # ssl/ stays root-only (private keys). web_auth/ is opened to 0711 below.
+        if [[ -d "${cfg}/ssl" ]]; then
+            chmod 700 "${cfg}/ssl" || true
+        fi
     fi
     # Recursive chmod u+rwX,go+rX would leave DBs/secrets world-readable.
     for f in \
@@ -2159,7 +2222,18 @@ copanel_lock_down_secrets() {
             chown root:root "$f" || true
         fi
     done
+    # Non-htpasswd files under web_auth/ (JSON metadata) stay root-only now
+    # that the directory itself is traversable by nginx.
+    for f in "${CoPanel_HOME}/config/web_auth"/*; do
+        if [[ -f "$f" && "$f" != *.htpasswd ]]; then
+            chmod 600 "$f" || true
+            chown root:root "$f" || true
+        fi
+    done
     shopt -u nullglob
+
+    # Re-open only htpasswd paths for the nginx worker after the 0600 sweep.
+    copanel_expose_nginx_htpasswd
 }
 
 # Create the JWT secret once and point systemd at it. Reinstalls keep the
@@ -3436,6 +3510,9 @@ EOF
     # does not include # BEGIN COPANEL NGINX GATE — without this, gate is lost
     # until the admin re-saves Settings (or until copanel startup auto-repair).
     restore_nginx_gate_from_settings
+    # setup_nginx runs after the first harden pass; re-apply htpasswd
+    # permissions in case the nginx user only existed after package install.
+    copanel_expose_nginx_htpasswd
     copanel_install_entrance_command
 
     # UFW alone does not open the panel on Oracle Cloud Ubuntu: UFW is often

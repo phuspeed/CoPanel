@@ -118,7 +118,7 @@ def test_harden_install_permissions_behavior(tmp_path):
     assert res.returncode == 0, res.stderr
 
     assert stat.S_IMODE(home.stat().st_mode) == 0o755
-    assert stat.S_IMODE((home / "config").stat().st_mode) == 0o700
+    assert stat.S_IMODE((home / "config").stat().st_mode) == 0o711
     assert stat.S_IMODE(secret.stat().st_mode) == 0o600
     assert stat.S_IMODE(db_file.stat().st_mode) == 0o600
     assert (stat.S_IMODE((home / "backend" / "main.py").stat().st_mode) & 0o022) == 0

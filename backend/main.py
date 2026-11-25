@@ -64,6 +64,14 @@ APP_VERSION = _read_app_version()
 async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler."""
     logger.info("CoPanel starting...")
+    try:
+        # 1.1.16 locked config/ to 0700, which made nginx 500 on Basic Auth.
+        # Repair traverse + htpasswd modes before workers serve those files.
+        from core.nginx_htpasswd import repair_nginx_htpasswd_permissions
+
+        repair_nginx_htpasswd_permissions()
+    except Exception as exc:
+        logger.warning("nginx htpasswd permission repair: %s", exc)
     logger.info("Scanning modules in: %s", MODULES_DIR)
     if module_reload is not None:
         module_reload.set_event_loop(asyncio.get_running_loop())
