@@ -63,12 +63,12 @@ export default function NotificationCenter({ open, onClose }: Props) {
         <header className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
           <div>
             <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">{tr.title}</h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">{unread} {tr.unread}</p>
+            <p className="text-[0.6875rem] text-slate-500 mt-0.5">{unread} {tr.unread}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => notificationsApi.markAllRead()}
-              className="text-[11px] font-bold text-blue-500 hover:text-blue-400"
+              className="text-[0.6875rem] font-bold text-blue-500 hover:text-blue-400"
             >
               {tr.markAllRead}
             </button>
@@ -103,7 +103,7 @@ export default function NotificationCenter({ open, onClose }: Props) {
                       {n.body && (
                         <p className="text-xs mt-0.5 text-slate-600 dark:text-slate-400 whitespace-pre-line line-clamp-3">{n.body}</p>
                       )}
-                      <p className="text-[10px] uppercase tracking-wider mt-1 text-slate-400">
+                      <p className="text-[0.625rem] uppercase tracking-wider mt-1 text-slate-400">
                         {n.module || tr.system}
                       </p>
                     </div>

@@ -56,7 +56,7 @@ export default function UploadDrawer({ fm }: { fm: FileManagerState }) {
         <div className="h-full bg-sky-500 transition-all" style={{ width: `${pct}%` }} />
       </div>
       {!collapsed && (
-        <ul className="max-h-56 overflow-y-auto py-1 text-[11px]">
+        <ul className="max-h-56 overflow-y-auto py-1 text-[0.6875rem]">
           {uploads.map((u) => {
             const p = u.file.size ? Math.round((u.loaded / u.file.size) * 100) : u.status === 'done' ? 100 : 0;
             const label = u.relPath || u.file.name;
@@ -67,7 +67,7 @@ export default function UploadDrawer({ fm }: { fm: FileManagerState }) {
                     <span className="truncate font-medium">{label}</span>
                     <span
                       className={cn(
-                        'shrink-0 text-[10px]',
+                        'shrink-0 text-[0.625rem]',
                         u.status === 'error' ? 'text-red-500' : u.status === 'done' ? 'text-emerald-500' : 'opacity-60',
                       )}
                     >
@@ -79,7 +79,7 @@ export default function UploadDrawer({ fm }: { fm: FileManagerState }) {
                       <div className="h-full bg-sky-500 transition-all" style={{ width: `${p}%` }} />
                     </div>
                   ) : (
-                    <span className="text-[10px] opacity-50">{u.error ? u.error : formatSize(u.file.size)}</span>
+                    <span className="text-[0.625rem] opacity-50">{u.error ? u.error : formatSize(u.file.size)}</span>
                   )}
                 </div>
                 {ACTIVE.includes(u.status) ? (

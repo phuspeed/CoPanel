@@ -34,7 +34,7 @@ export default function ToastLayer() {
                 <p className="text-xs mt-0.5 text-slate-600 dark:text-slate-400 line-clamp-3">{t.body}</p>
               )}
               {t.module && (
-                <p className="text-[10px] uppercase tracking-wider mt-1 text-slate-400 dark:text-slate-500">
+                <p className="text-[0.625rem] uppercase tracking-wider mt-1 text-slate-400 dark:text-slate-500">
                   {t.module}
                 </p>
               )}

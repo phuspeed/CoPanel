@@ -28,7 +28,7 @@ export default function FeaturedBanner({ packages, isDark, language, title, subt
               {title}
             </p>
           )}
-          {subtitle && <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-500')}>{subtitle}</p>}
+          {subtitle && <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-500')}>{subtitle}</p>}
         </div>
       )}
       <div className="grid grid-cols-1 gap-2 overflow-hidden sm:grid-cols-3">
@@ -92,7 +92,7 @@ function BannerCard({
         </div>
         <div className="min-w-0">
           <p className={cn('truncate text-sm font-bold', isDark ? 'text-slate-100' : 'text-slate-800')}>{pkg.name}</p>
-          <p className={cn('line-clamp-1 text-[10px]', isDark ? 'text-slate-500' : 'text-slate-500')}>
+          <p className={cn('line-clamp-1 text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-500')}>
             {pkg.description || (language === 'vi' ? 'Dịch vụ chính thức' : 'Official service')}
           </p>
         </div>

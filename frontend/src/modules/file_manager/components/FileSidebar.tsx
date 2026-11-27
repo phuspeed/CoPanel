@@ -83,7 +83,7 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
     }
   };
 
-  const sectionTitle = cn('mb-1 px-2 text-[10px] font-bold uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400');
+  const sectionTitle = cn('mb-1 px-2 text-[0.625rem] font-bold uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400');
   const currentBookmarked = !!currentPath && bookmarkPathSet.has(currentPath);
 
   return (
@@ -147,9 +147,9 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
             </button>
           </div>
           {bookmarkBackendMissing ? (
-            <p className={cn('px-2 text-[10px] leading-relaxed', isDark ? 'text-amber-400/80' : 'text-amber-700')}>{tr.bookmarksUpgradeHint}</p>
+            <p className={cn('px-2 text-[0.625rem] leading-relaxed', isDark ? 'text-amber-400/80' : 'text-amber-700')}>{tr.bookmarksUpgradeHint}</p>
           ) : bookmarks.length === 0 ? (
-            <p className={cn('px-2 text-[10px]', isDark ? 'text-slate-600' : 'text-slate-400')}>{tr.bookmarksEmpty}</p>
+            <p className={cn('px-2 text-[0.625rem]', isDark ? 'text-slate-600' : 'text-slate-400')}>{tr.bookmarksEmpty}</p>
           ) : (
             <div className="max-h-36 space-y-0.5 overflow-y-auto">
               {bookmarks.map((b) => (

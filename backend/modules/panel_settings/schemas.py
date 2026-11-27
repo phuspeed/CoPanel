@@ -35,6 +35,7 @@ class BrandingSettingsRequest(BaseModel):
     logo_data_url: Optional[str] = None
     wallpapers: List[WallpaperItemRequest] = Field(default_factory=list)
     selected_wallpaper_id: Optional[str] = Field(None, max_length=64)
+    font_size: Optional[str] = Field(None, max_length=8)
 
 
 class TotpVerifyRequest(BaseModel):

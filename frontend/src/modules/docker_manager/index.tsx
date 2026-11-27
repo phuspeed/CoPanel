@@ -924,7 +924,7 @@ export default function DockerManagerDashboard() {
           )}
         >
           <div>
-            <p className={cn('text-[10px] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
+            <p className={cn('text-[0.625rem] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
               {tr.totalContainers}
             </p>
             <p className={cn('text-3xl font-extrabold', isDark ? 'text-white' : 'text-slate-800')}>{totalCount}</p>
@@ -945,7 +945,7 @@ export default function DockerManagerDashboard() {
           )}
         >
           <div>
-            <p className={cn('text-[10px] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
+            <p className={cn('text-[0.625rem] mb-1 uppercase font-bold tracking-widest', isDark ? 'text-slate-400' : 'text-slate-500')}>
               {tr.activeContainers}
             </p>
             <p className={cn('text-3xl font-extrabold', isDark ? 'text-white' : 'text-slate-800')}>{runningCount}</p>
@@ -984,9 +984,9 @@ export default function DockerManagerDashboard() {
               isDark ? 'border-slate-800' : 'border-slate-100',
             )}
           >
-            <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.tapForDetails}</p>
+            <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.tapForDetails}</p>
             <div className="flex items-center gap-2">
-              <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colProject}</label>
+              <label className={cn('text-[0.625rem] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colProject}</label>
               <select
                 value={projectFilter}
                 onChange={(e) => setProjectFilter(e.target.value)}
@@ -1013,7 +1013,7 @@ export default function DockerManagerDashboard() {
               {containerGroups.map(([groupKey, items]) => (
                 <div key={groupKey || 'flat'} className="space-y-2">
                   {projectFilter === 'all' && (
-                    <div className={cn('px-1 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                    <div className={cn('px-1 text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
                       {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
                       <span className="ml-2 font-normal tabular-nums">({items.length})</span>
                     </div>
@@ -1045,12 +1045,12 @@ export default function DockerManagerDashboard() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className={cn('font-bold text-xs truncate', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
-                              <div className={cn('text-[10px] font-mono mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{item.id}</div>
+                              <div className={cn('text-[0.625rem] font-mono mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{item.id}</div>
                             </div>
                             <div className="flex flex-col items-end gap-1 shrink-0">
                               <span
                                 className={cn(
-                                  'px-2 py-0.5 text-[10px] font-semibold rounded-full border',
+                                  'px-2 py-0.5 text-[0.625rem] font-semibold rounded-full border',
                                   isRunning
                                     ? 'bg-green-500/10 border-green-500/20 text-green-500'
                                     : isDark
@@ -1061,17 +1061,17 @@ export default function DockerManagerDashboard() {
                                 {item.status}
                               </span>
                               {busy && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold text-blue-500">
                                   <Icons.Loader2 className="w-3 h-3 animate-spin" />
                                   {tr.actionBusy}
                                 </span>
                               )}
                             </div>
                           </div>
-                          <div className={cn('text-[11px] font-mono truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={item.image}>
+                          <div className={cn('text-[0.6875rem] font-mono truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={item.image}>
                             {item.image}
                           </div>
-                          <div className="grid grid-cols-3 gap-2 text-[10px]">
+                          <div className="grid grid-cols-3 gap-2 text-[0.625rem]">
                             <div>
                               <p className={cn('uppercase font-bold tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.colCpu}</p>
                               <p className={cn('font-mono mt-0.5', isDark ? 'text-slate-200' : 'text-slate-700')}>
@@ -1092,10 +1092,10 @@ export default function DockerManagerDashboard() {
                             </div>
                           </div>
                           <div className="flex items-center justify-between gap-2 pt-1">
-                            <span className={cn('text-[10px] font-mono truncate', isDark ? 'text-slate-500' : 'text-slate-400')} title={item.ports}>
+                            <span className={cn('text-[0.625rem] font-mono truncate', isDark ? 'text-slate-500' : 'text-slate-400')} title={item.ports}>
                               {item.ports || '—'}
                             </span>
-                            <span className="text-[10px] font-semibold text-blue-500 shrink-0">{tr.clickForStatus}</span>
+                            <span className="text-[0.625rem] font-semibold text-blue-500 shrink-0">{tr.clickForStatus}</span>
                           </div>
                           <div
                             className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-200/50 dark:border-slate-800"
@@ -1136,7 +1136,7 @@ export default function DockerManagerDashboard() {
                     <Fragment key={groupKey || 'flat'}>
                       {projectFilter === 'all' && (
                         <tr key={`group-${groupKey}`} className={isDark ? 'bg-slate-900/60' : 'bg-slate-50/80'}>
-                          <td colSpan={9} className={cn('px-3 py-2 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+                          <td colSpan={9} className={cn('px-3 py-2 text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
                             {groupKey === '__standalone__' ? tr.standaloneProject : groupKey}
                             <span className="ml-2 font-normal tabular-nums">({items.length})</span>
                           </td>
@@ -1158,7 +1158,7 @@ export default function DockerManagerDashboard() {
                           >
                             <td className="p-3">
                               <div className={cn('font-bold text-xs', isDark ? 'text-slate-100' : 'text-slate-800')}>{item.name}</div>
-                              <div className={cn('text-[10px] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                              <div className={cn('text-[0.625rem] font-mono select-all mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>
                                 {item.id}
                               </div>
                             </td>
@@ -1183,7 +1183,7 @@ export default function DockerManagerDashboard() {
                                   {item.status}
                                 </span>
                                 {busy && (
-                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                                  <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold text-blue-500">
                                     <Icons.Loader2 className="w-3 h-3 animate-spin" />
                                     {tr.actionBusy}
                                   </span>
@@ -1193,7 +1193,7 @@ export default function DockerManagerDashboard() {
                             <td className={cn('p-3 font-mono text-xs tabular-nums', isDark ? 'text-slate-300' : 'text-slate-700')}>
                               {isRunning ? stats?.cpu || '…' : '—'}
                             </td>
-                            <td className={cn('p-3 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.mem_usage}>
+                            <td className={cn('p-3 font-mono text-[0.6875rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.mem_usage}>
                               {isRunning ? (
                                 <div>
                                   <div>{stats?.mem_percent || '…'}</div>
@@ -1203,7 +1203,7 @@ export default function DockerManagerDashboard() {
                                 '—'
                               )}
                             </td>
-                            <td className={cn('p-3 font-mono text-[11px] truncate max-w-[7rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.net_io}>
+                            <td className={cn('p-3 font-mono text-[0.6875rem] truncate max-w-[7rem]', isDark ? 'text-slate-400' : 'text-slate-600')} title={stats?.net_io}>
                               {isRunning ? stats?.net_io || '…' : '—'}
                             </td>
                             <td className={cn('p-3 font-mono text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{item.ports || '—'}</td>
@@ -1265,7 +1265,7 @@ export default function DockerManagerDashboard() {
   const renderImages = () => (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.updateHint}</p>
+        <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.updateHint}</p>
         <button
           type="button"
           onClick={() => void handleCheckImageUpdates()}
@@ -1298,28 +1298,28 @@ export default function DockerManagerDashboard() {
                 <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{img.size}</td>
                 <td className="p-3">
                   {!canCheck ? (
-                    <span className="text-[10px] text-slate-500">—</span>
+                    <span className="text-[0.625rem] text-slate-500">—</span>
                   ) : info?.status === 'checking' ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                    <span className="inline-flex items-center gap-1 text-[0.625rem] text-slate-400">
                       <Icons.Loader2 className="w-3 h-3 animate-spin" />
                       {tr.checkingUpdates}
                     </span>
                   ) : info?.status === 'update_available' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold bg-amber-500/10 border-amber-500/30 text-amber-500">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[0.625rem] font-bold bg-amber-500/10 border-amber-500/30 text-amber-500">
                       <Icons.ArrowUpCircle className="w-3 h-3" />
                       {tr.updateAvailable}
                     </span>
                   ) : info?.status === 'up_to_date' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold bg-emerald-500/10 border-emerald-500/30 text-emerald-500">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[0.625rem] font-bold bg-emerald-500/10 border-emerald-500/30 text-emerald-500">
                       <Icons.CheckCircle2 className="w-3 h-3" />
                       {tr.upToDate}
                     </span>
                   ) : info?.status === 'error' ? (
-                    <span className="text-[10px] text-red-400" title={info.error || undefined}>
+                    <span className="text-[0.625rem] text-red-400" title={info.error || undefined}>
                       {tr.updateCheckError}
                     </span>
                   ) : (
-                    <span className={cn('text-[10px]', isDark ? 'text-slate-600' : 'text-slate-400')}>—</span>
+                    <span className={cn('text-[0.625rem]', isDark ? 'text-slate-600' : 'text-slate-400')}>—</span>
                   )}
                 </td>
                 <td className="p-3 text-center">
@@ -1412,7 +1412,7 @@ export default function DockerManagerDashboard() {
           <tr key={idx} className={cn('transition', isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50')}>
             <td className={cn('p-3 text-xs font-medium', isDark ? 'text-slate-200' : 'text-slate-800')}>{vol.name}</td>
             <td className={cn('p-3 text-xs', isDark ? 'text-slate-400' : 'text-slate-600')}>{vol.driver}</td>
-            <td className={cn('p-3 font-mono text-[11px] break-all', isDark ? 'text-slate-400' : 'text-slate-500')}>{vol.mountpoint}</td>
+            <td className={cn('p-3 font-mono text-[0.6875rem] break-all', isDark ? 'text-slate-400' : 'text-slate-500')}>{vol.mountpoint}</td>
             <td className="p-3 text-center">
               <button
                 onClick={() => handleRemoveVolume(vol.name)}
@@ -1548,7 +1548,7 @@ export default function DockerManagerDashboard() {
       >
         <div className="flex min-h-0 flex-1 flex-col space-y-3 p-4">
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
+            <label className={cn('text-[0.625rem] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
             <select
               value={logsTail}
               onChange={(e) => {
@@ -1596,7 +1596,7 @@ export default function DockerManagerDashboard() {
           >
             <div
               className={cn(
-                'grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[10px] uppercase tracking-wider font-bold border-b shrink-0',
+                'grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-3 px-3 py-2 text-[0.625rem] uppercase tracking-wider font-bold border-b shrink-0',
                 isDark ? 'border-slate-800 text-slate-500 bg-slate-900/50' : 'border-slate-200 text-slate-400 bg-slate-100/80',
               )}
             >

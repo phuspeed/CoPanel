@@ -129,7 +129,7 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
     >
       <div
         className={cn(
-          'flex items-center justify-between gap-2 px-3 py-2 border-b text-[11px] font-mono',
+          'flex items-center justify-between gap-2 px-3 py-2 border-b text-[0.6875rem] font-mono',
           isDark ? 'border-slate-800 text-slate-400' : 'border-slate-100 text-slate-500',
         )}
       >
@@ -145,7 +145,7 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
               setNewFolderName('');
             }}
             className={cn(
-              'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold transition',
+              'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[0.625rem] font-bold transition',
               createOpen
                 ? 'bg-blue-600 text-white'
                 : isDark
@@ -194,7 +194,7 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
               type="button"
               disabled={creating || !newFolderName.trim()}
               onClick={() => void handleCreateFolder()}
-              className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5"
+              className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[0.625rem] font-bold px-2.5 py-1.5"
             >
               {creating ? <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" /> : labels.createFolderBtn}
             </button>
@@ -206,14 +206,14 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
                 setCreateError(null);
               }}
               className={cn(
-                'shrink-0 rounded-lg border px-2 py-1.5 text-[10px] font-bold',
+                'shrink-0 rounded-lg border px-2 py-1.5 text-[0.625rem] font-bold',
                 isDark ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500',
               )}
             >
               {labels.cancel}
             </button>
           </div>
-          {createError && <p className="text-[10px] text-red-400">{createError}</p>}
+          {createError && <p className="text-[0.625rem] text-red-400">{createError}</p>}
         </div>
       )}
 
@@ -267,7 +267,7 @@ export default function FolderBrowser({ isDark, selectedPath, onSelect, labels }
         <button
           type="button"
           onClick={() => onSelect(currentPath)}
-          className="w-full rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold py-2 transition"
+          className="w-full rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[0.6875rem] font-bold py-2 transition"
         >
           {labels.selectFolder}
         </button>

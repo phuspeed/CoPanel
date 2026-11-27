@@ -54,7 +54,7 @@ export default function PanelUpgradeModal({ state, isDark, labels }: Props) {
             <h3 className={`text-base font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{labels.upgradeTitle}</h3>
             <p className={`mt-1 text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{labels.upgradeIntro}</p>
             {info && (
-              <p className="mt-2 font-mono text-[11px] text-blue-400">
+              <p className="mt-2 font-mono text-[0.6875rem] text-blue-400">
                 {info.local_version}
                 {info.remote_version ? ` → ${info.remote_version}` : ''}
               </p>
@@ -76,11 +76,11 @@ export default function PanelUpgradeModal({ state, isDark, labels }: Props) {
           )}
           {info?.changelog ? (
             <div>
-              <div className={`mb-1 text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+              <div className={`mb-1 text-[0.625rem] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                 {labels.changelog}
               </div>
               <pre
-                className={`max-h-40 overflow-auto whitespace-pre-wrap rounded-xl border p-3 text-[11px] leading-relaxed ${isDark ? 'border-slate-800 bg-slate-950/50 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'
+                className={`max-h-40 overflow-auto whitespace-pre-wrap rounded-xl border p-3 text-[0.6875rem] leading-relaxed ${isDark ? 'border-slate-800 bg-slate-950/50 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'
                   }`}
               >
                 {info.changelog}
@@ -100,7 +100,7 @@ export default function PanelUpgradeModal({ state, isDark, labels }: Props) {
           )}
 
           <div>
-            <div className={`mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+            <div className={`mb-1 flex items-center justify-between text-[0.625rem] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
               <span>{labels.progress}</span>
               <span className="font-mono normal-case">{Math.round(progress)}%</span>
             </div>
@@ -113,10 +113,10 @@ export default function PanelUpgradeModal({ state, isDark, labels }: Props) {
           </div>
 
           <div>
-            <div className={`mb-1 text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{labels.liveLog}</div>
+            <div className={`mb-1 text-[0.625rem] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{labels.liveLog}</div>
             <pre
               ref={logRef}
-              className={`max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border p-3 font-mono text-[10px] leading-snug ${isDark ? 'border-slate-800 bg-black/40 text-green-400/90' : 'border-slate-200 bg-slate-900 text-green-200'
+              className={`max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border p-3 font-mono text-[0.625rem] leading-snug ${isDark ? 'border-slate-800 bg-black/40 text-green-400/90' : 'border-slate-200 bg-slate-900 text-green-200'
                 }`}
             >
               {log || (running ? labels.upgradeRunning : '—')}

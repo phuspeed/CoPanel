@@ -73,7 +73,7 @@ export default function AppStoreSidebar({ active, onChange, isDark, tr, updateCo
       </nav>
 
       <div className={cn('border-t p-3', isDark ? 'border-slate-800' : 'border-slate-200')}>
-        <p className={cn('flex items-center gap-1.5 text-[10px]', isDark ? 'text-slate-500' : 'text-slate-400')}>
+        <p className={cn('flex items-center gap-1.5 text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>
           <Icons.Cloud className={cn('h-3 w-3', chromeAccentIcon('sky'))} />
           {tr.live}
         </p>

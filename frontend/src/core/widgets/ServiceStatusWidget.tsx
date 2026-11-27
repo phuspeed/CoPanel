@@ -60,7 +60,7 @@ export default function ServiceStatusWidget() {
             >
               <span className="font-semibold text-slate-700 dark:text-slate-200">{s.name}</span>
               <span
-                className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                className={`text-[0.625rem] uppercase tracking-wider px-2 py-0.5 rounded-full ${
                   s.status === 'running'
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
                     : s.installed

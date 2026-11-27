@@ -234,7 +234,7 @@ export default function FileManagerShell({ fm }: { fm: FileManagerState }) {
               <div
                 data-testid="fm-clipboard-bar"
                 className={cn(
-                  'flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5 text-[11px]',
+                  'flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5 text-[0.6875rem]',
                   isDark ? 'border-amber-900/40 bg-amber-950/20 text-amber-100' : 'border-amber-200 bg-amber-50 text-amber-900',
                 )}
               >
@@ -286,7 +286,7 @@ export default function FileManagerShell({ fm }: { fm: FileManagerState }) {
             <footer
               data-testid="fm-status"
               className={cn(
-                'flex shrink-0 items-center gap-3 border-t px-3 py-1 text-[10px]',
+                'flex shrink-0 items-center gap-3 border-t px-3 py-1 text-[0.625rem]',
                 isDark ? 'border-slate-800 bg-slate-900/80 text-slate-500' : 'border-slate-200 bg-slate-50 text-slate-500',
               )}
             >

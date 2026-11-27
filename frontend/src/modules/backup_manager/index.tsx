@@ -988,7 +988,7 @@ export default function BackupManagerDashboard() {
                   <button
                     type="button"
                     onClick={fetchRemotes}
-                    className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition ${
+                    className={`flex items-center gap-1 text-[0.625rem] font-bold px-2 py-1 rounded-lg border transition ${
                       isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-100'
                     }`}
                   >
@@ -1017,14 +1017,14 @@ export default function BackupManagerDashboard() {
                         <div className={`flex items-center gap-2 mt-1 text-xs ${meta.color}`}>
                           <Icons.Cloud className="w-3.5 h-3.5" />
                           <span className="font-semibold">{meta.label}</span>
-                          <span className={`font-mono text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>type: {selected.type}</span>
+                          <span className={`font-mono text-[0.625rem] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>type: {selected.type}</span>
                         </div>
                       );
                     })()}
 
                     {/* Detected config path info */}
                     {remotesConfigPath && (
-                      <p className={`text-[10px] font-mono mt-1 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                      <p className={`text-[0.625rem] font-mono mt-1 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
                         {tr.configFile}: {remotesConfigPath}
                       </p>
                     )}
@@ -1035,7 +1035,7 @@ export default function BackupManagerDashboard() {
                       <Icons.AlertTriangle className="w-4 h-4 shrink-0" />
                       {tr.noRemotes}
                     </p>
-                    <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.noRemotesHint}</p>
+                    <p className={`text-[0.6875rem] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.noRemotesHint}</p>
                     <button
                       type="button"
                       onClick={() => { fetchRcloneConfig(); setTab('cloud_setup'); setShowWizard(false); }}
@@ -1112,7 +1112,7 @@ export default function BackupManagerDashboard() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.frequency}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.frequency}</label>
                         <select value={cronFrequency} onChange={(e) => setCronFrequency(e.target.value as CronFrequency)} className={input}>
                           <option value="hourly">{tr.freqHourly}</option>
                           <option value="daily">{tr.freqDaily}</option>
@@ -1121,26 +1121,26 @@ export default function BackupManagerDashboard() {
                         </select>
                       </div>
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.minute}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.minute}</label>
                         <input type="number" min={0} max={59} value={cronMinute} onChange={(e) => setCronMinute(parseInt(e.target.value) || 0)} className={input} />
                       </div>
                     </div>
 
                     {cronFrequency !== 'hourly' && (
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.hour}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.hour}</label>
                         <input type="number" min={0} max={23} value={cronHour} onChange={(e) => setCronHour(parseInt(e.target.value) || 0)} className={input} />
                       </div>
                     )}
                     {cronFrequency === 'hourly' && (
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.everyNHours}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.everyNHours}</label>
                         <input type="number" min={1} max={23} value={cronIntervalHours} onChange={(e) => setCronIntervalHours(parseInt(e.target.value) || 1)} className={input} />
                       </div>
                     )}
                     {cronFrequency === 'weekly' && (
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.weekday}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.weekday}</label>
                         <select value={cronWeekday} onChange={(e) => setCronWeekday(parseInt(e.target.value) || 0)} className={input}>
                           <option value={0}>{tr.weekdaySun}</option>
                           <option value={1}>{tr.weekdayMon}</option>
@@ -1154,7 +1154,7 @@ export default function BackupManagerDashboard() {
                     )}
                     {cronFrequency === 'monthly' && (
                       <div className="space-y-1">
-                        <label className={`text-[11px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.dayOfMonth}</label>
+                        <label className={`text-[0.6875rem] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{tr.dayOfMonth}</label>
                         <input type="number" min={1} max={31} value={cronDayOfMonth} onChange={(e) => setCronDayOfMonth(parseInt(e.target.value) || 1)} className={input} />
                       </div>
                     )}
@@ -1170,15 +1170,15 @@ export default function BackupManagerDashboard() {
                     placeholder="0 2 * * *"
                     className={`${input} font-mono`}
                   />
-                  <p className={`text-[10px] ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                  <p className={`text-[0.625rem] ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
                     Tip: <code>0 2 * * *</code> = daily at 2:00 AM · <code>0 */6 * * *</code> = every 6 hours
                   </p>
                 </div>
               )}
-              <div className={`text-[11px] rounded-xl border px-3 py-2 font-mono ${isDark ? 'border-slate-800 bg-slate-950/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <div className={`text-[0.6875rem] rounded-xl border px-3 py-2 font-mono ${isDark ? 'border-slate-800 bg-slate-950/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
                 <span className="font-semibold mr-2">{tr.cronPreview}:</span>{form.cron_expression}
-                <div className={`mt-1 font-sans text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.cronHumanHint}</div>
-                <div className={`mt-1 font-sans text-[10px] ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                <div className={`mt-1 font-sans text-[0.625rem] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.cronHumanHint}</div>
+                <div className={`mt-1 font-sans text-[0.625rem] ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>
                   {tr.cronHumanLabel}: {humanizeCron(String(form.cron_expression || ''), language || 'en')}
                 </div>
               </div>
@@ -1306,14 +1306,14 @@ export default function BackupManagerDashboard() {
 
             {/* Stats row */}
             {streamStats && (
-              <div className={`grid grid-cols-3 gap-3 text-[11px] font-mono ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+              <div className={`grid grid-cols-3 gap-3 text-[0.6875rem] font-mono ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 {[
                   { label: 'Transferred', val: fmtBytes(streamStats.bytes ?? 0) },
                   { label: 'Files', val: String(streamStats.transfers ?? 0) },
                   { label: 'Checks', val: String(streamStats.checks ?? 0) },
                 ].map(({ label, val }) => (
                   <div key={label} className={`p-2 rounded-lg text-center border ${isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'}`}>
-                    <div className={`text-[9px] uppercase tracking-widest mb-1 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>{label}</div>
+                    <div className={`text-[0.5625rem] uppercase tracking-widest mb-1 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>{label}</div>
                     <div className="font-bold">{val}</div>
                   </div>
                 ))}
@@ -1323,7 +1323,7 @@ export default function BackupManagerDashboard() {
             {/* Terminal log */}
             <div
               ref={streamLogsRef}
-              className={`h-56 p-4 rounded-xl font-mono text-[10px] overflow-y-auto scroll-smooth ${isDark ? 'bg-slate-950 text-green-400 border border-slate-800' : 'bg-slate-900 text-green-400 border border-slate-800'}`}
+              className={`h-56 p-4 rounded-xl font-mono text-[0.625rem] overflow-y-auto scroll-smooth ${isDark ? 'bg-slate-950 text-green-400 border border-slate-800' : 'bg-slate-900 text-green-400 border border-slate-800'}`}
             >
               {streamLogs.map((log, i) => (
                 <div key={i} className={`mb-0.5 leading-relaxed break-all whitespace-pre-wrap ${log.isError ? 'text-red-400' : ''}`}>
@@ -1353,7 +1353,7 @@ export default function BackupManagerDashboard() {
               <button
                 key={f.path}
                 onClick={() => loadExplorer(f.path)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition ${isDark ? 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300' : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-600'}`}
+                className={`px-2.5 py-1 rounded-lg text-[0.625rem] font-bold border transition ${isDark ? 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300' : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-600'}`}
               >
                 {f.name}
               </button>
@@ -1396,7 +1396,7 @@ export default function BackupManagerDashboard() {
                       setForm({ ...form, source_path: item.path });
                       setShowExplorer(false);
                     }}
-                    className="px-3 py-1 text-[10px] font-bold bg-indigo-600 text-white rounded hover:bg-indigo-500 shrink-0 ml-2"
+                    className="px-3 py-1 text-[0.625rem] font-bold bg-indigo-600 text-white rounded hover:bg-indigo-500 shrink-0 ml-2"
                   >
                     Select
                   </button>
@@ -1463,7 +1463,7 @@ export default function BackupManagerDashboard() {
                       )}
                       <span className="truncate">{p.profile_name}</span>
                     </h4>
-                    <div className={`text-[11px] font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <div className={`text-[0.6875rem] font-mono truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       <span className="text-indigo-400">{p.source_path}</span>
                       <span className="mx-1">→</span>
                       <span className={remoteMeta?.color ?? 'text-slate-400'}>
@@ -1471,30 +1471,30 @@ export default function BackupManagerDashboard() {
                       </span>
                     </div>
                     {remoteMeta && (
-                      <div className={`text-[10px] font-semibold ${remoteMeta.color}`}>
+                      <div className={`text-[0.625rem] font-semibold ${remoteMeta.color}`}>
                         {remoteMeta.label}
                       </div>
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     {p.realtime_sync === 1 && (
-                      <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded text-[10px] font-bold flex items-center gap-1">
+                      <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded text-[0.625rem] font-bold flex items-center gap-1">
                         <Icons.Eye className="w-3 h-3" /> Watch
                       </span>
                     )}
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-slate-500/10 text-slate-500 border border-slate-500/20'}`}>
+                    <span className={`px-2 py-0.5 rounded text-[0.625rem] font-bold ${p.is_active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-slate-500/10 text-slate-500 border border-slate-500/20'}`}>
                       {p.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </div>
                 </div>
 
-                <div className={`flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                <div className={`flex items-center gap-4 text-[0.625rem] font-bold uppercase tracking-wider mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                   <span className="flex items-center gap-1.5">
                     <Icons.Calendar className="w-3.5 h-3.5" />
                     {p.cron_expression || 'No cron'}
                   </span>
                 </div>
-                <p className={`text-[11px] mb-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                <p className={`text-[0.6875rem] mb-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                   {humanizeCron(p.cron_expression || '', language || 'en')}
                 </p>
 
@@ -1540,7 +1540,7 @@ export default function BackupManagerDashboard() {
       </div>
 
       {remotesConfigPath && (
-        <p className={`text-[10px] font-mono mb-4 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+        <p className={`text-[0.625rem] font-mono mb-4 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
           {tr.configFile}: {remotesConfigPath}
         </p>
       )}
@@ -1572,9 +1572,9 @@ export default function BackupManagerDashboard() {
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{r.name}</p>
                   <p className={cn('text-xs font-semibold', meta.color)}>{meta.label}</p>
-                  <p className={`text-[10px] font-mono mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>type: {r.type}</p>
+                  <p className={`text-[0.625rem] font-mono mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>type: {r.type}</p>
                   {profileCount > 0 && (
-                    <p className={`text-[10px] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <p className={`text-[0.625rem] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {profileCount} profile{profileCount !== 1 ? 's' : ''}
                     </p>
                   )}
@@ -1589,7 +1589,7 @@ export default function BackupManagerDashboard() {
 
   const renderCloudSetup = () => (
     <div className={card}>
-      <p className={`text-[10px] font-mono mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
+      <p className={`text-[0.625rem] font-mono mb-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{remotesConfigPath || rcloneConfigPath}</p>
       <div className="space-y-4">
         <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
           Zero-CLI mode: enter Google OAuth app information and complete consent.
@@ -1641,21 +1641,21 @@ export default function BackupManagerDashboard() {
           <p className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
             {language === 'vi' ? 'Thiết lập thủ công qua PC' : 'Manual Setup via PC'}
           </p>
-          <p className={`text-[11px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+          <p className={`text-[0.6875rem] leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
             {language === 'vi'
               ? 'Nếu callback OAuth báo lỗi, bạn có thể chạy rclone authorize trên PC, sau đó dán token JSON vào đây để tạo remote trực tiếp.'
               : 'If OAuth callback fails, run rclone authorize on your PC and paste the token JSON here to create the remote directly.'}
           </p>
           <div className={`rounded-lg border px-3 py-2 ${isDark ? 'border-slate-800 bg-slate-900/70' : 'border-slate-200 bg-white'}`}>
             <div className="flex items-center justify-between gap-2 mb-2">
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+              <span className={`text-[0.625rem] font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 {language === 'vi' ? 'Mẫu lệnh PC' : 'PC Command'}
               </span>
               <button
                 type="button"
                 onClick={copyRcloneAuthorizeCommand}
                 disabled={copyCmdLoading}
-                className={`text-[10px] px-2 py-1 rounded-md border font-bold transition ${
+                className={`text-[0.625rem] px-2 py-1 rounded-md border font-bold transition ${
                   isDark
                     ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
                     : 'border-slate-300 text-slate-600 hover:bg-slate-100'
@@ -1666,7 +1666,7 @@ export default function BackupManagerDashboard() {
                   : (language === 'vi' ? 'Copy lệnh' : 'Copy command')}
               </button>
             </div>
-            <code className={`block text-[11px] font-mono break-all ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+            <code className={`block text-[0.6875rem] font-mono break-all ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
               {`rclone authorize "drive" "${oauthForm.client_id.trim() || 'YOUR_CLIENT_ID'}" "${oauthForm.client_secret.trim() || 'YOUR_CLIENT_SECRET'}"`}
             </code>
           </div>
@@ -1675,7 +1675,7 @@ export default function BackupManagerDashboard() {
             onChange={(e) => setManualTokenJson(e.target.value)}
             placeholder='{"access_token":"...","refresh_token":"...","token_type":"Bearer","expiry":"2026-05-06T10:00:00Z"}'
             rows={5}
-            className={`${input} font-mono text-[11px] resize-y`}
+            className={`${input} font-mono text-[0.6875rem] resize-y`}
           />
           <div className="flex justify-end">
             <button
@@ -1699,7 +1699,7 @@ export default function BackupManagerDashboard() {
             <button
               type="button"
               onClick={fetchOAuthStatusList}
-              className={`text-[10px] px-2 py-1 rounded-lg border font-bold transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
+              className={`text-[0.625rem] px-2 py-1 rounded-lg border font-bold transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
             >
               Refresh
             </button>
@@ -1741,7 +1741,7 @@ export default function BackupManagerDashboard() {
                         <td className="px-4 py-2">{formatDateTime(item.updated_at)}</td>
                         <td className={`px-4 py-2 ${expiryClass}`}>
                           {formatDateTime(item.expiry)}
-                          {expiryLabel ? <span className="ml-2 text-[10px]">({expiryLabel})</span> : null}
+                          {expiryLabel ? <span className="ml-2 text-[0.625rem]">({expiryLabel})</span> : null}
                         </td>
                       </tr>
                     );

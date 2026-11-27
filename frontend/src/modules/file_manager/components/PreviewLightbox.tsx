@@ -143,7 +143,7 @@ export default function PreviewLightbox({ fm }: { fm: FileManagerState }) {
       <div className="flex shrink-0 items-center gap-1 px-3 py-2 text-white">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{item.name}</p>
-          <p className="text-[10px] text-white/50">
+          <p className="text-[0.625rem] text-white/50">
             {formatSize(item.size)} · {index + 1}/{previewItems.length}
           </p>
         </div>
@@ -152,7 +152,7 @@ export default function PreviewLightbox({ fm }: { fm: FileManagerState }) {
             <button type="button" className={tool} title={`${tr.zoomOut} (-)`} onClick={() => zoomBy(0.8)}>
               <Icons.ZoomOut className="h-4 w-4" />
             </button>
-            <button type="button" className={cn(tool, 'w-auto px-2 text-[11px] font-mono')} title={zoom === 'fit' ? tr.actualSize : tr.fitToWindow} onClick={() => setZoom((z) => (z === 'fit' ? 1 : 'fit'))}>
+            <button type="button" className={cn(tool, 'w-auto px-2 text-[0.6875rem] font-mono')} title={zoom === 'fit' ? tr.actualSize : tr.fitToWindow} onClick={() => setZoom((z) => (z === 'fit' ? 1 : 'fit'))}>
               {zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}
             </button>
             <button type="button" className={tool} title={`${tr.zoomIn} (+)`} onClick={() => zoomBy(1.25)}>

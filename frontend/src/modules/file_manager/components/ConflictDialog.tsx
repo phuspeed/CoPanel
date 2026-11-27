@@ -17,7 +17,7 @@ export default function ConflictDialog({ fm }: { fm: FileManagerState }) {
     <WindowModal open onClose={() => resolveConflict(null)} title={tr.conflictTitle} maxWidth="md">
       <div className="space-y-3 p-4 text-xs" data-testid="fm-conflict">
         <p className={isDark ? 'text-slate-300' : 'text-slate-700'}>{tr.conflictBody(conflict.names.length, conflict.targetDir)}</p>
-        <ul className={cn('space-y-0.5 rounded-lg border px-3 py-2 font-mono text-[11px]', isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-100 bg-slate-50')}>
+        <ul className={cn('space-y-0.5 rounded-lg border px-3 py-2 font-mono text-[0.6875rem]', isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-100 bg-slate-50')}>
           {shown.map((n) => (
             <li key={n} className="truncate">
               {n}
@@ -38,7 +38,7 @@ export default function ConflictDialog({ fm }: { fm: FileManagerState }) {
             <Icons.Replace className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
             <span>
               <span className="block font-semibold">{tr.conflictOverwrite}</span>
-              <span className="block text-[10px] opacity-60">{tr.conflictFolderNote}</span>
+              <span className="block text-[0.625rem] opacity-60">{tr.conflictFolderNote}</span>
             </span>
           </button>
         </div>

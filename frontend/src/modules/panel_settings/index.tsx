@@ -14,6 +14,10 @@ import {
   normalizeBranding,
   notifyBrandingUpdated,
   readImageFileAsDataUrl,
+  applyFontSize,
+  FONT_SIZE_PRESETS,
+  DEFAULT_FONT_SIZE,
+  type FontSizeId,
   type WallpaperItem,
 } from '../../core/brandingTypes';
 
@@ -26,6 +30,7 @@ interface BrandingSettings {
   logo_data_url: string | null;
   wallpapers: WallpaperItem[];
   selected_wallpaper_id: string | null;
+  font_size?: FontSizeId;
 }
 
 interface Settings {
@@ -89,6 +94,7 @@ export default function PanelSettings() {
   const [totpSecret, setTotpSecret] = useState('');
   const [disablePass, setDisablePass] = useState('');
   const [siteTitle, setSiteTitle] = useState('CoPanel');
+  const [fontSize, setFontSize] = useState<FontSizeId>(DEFAULT_FONT_SIZE);
   const [siteSubtitle, setSiteSubtitle] = useState('Lightweight VPS Management');
   const [faviconDataUrl, setFaviconDataUrl] = useState<string | null>(null);
   const [faviconName, setFaviconName] = useState('');
@@ -175,7 +181,13 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Primary interface',
       netplanRename: 'Netplan file uses «{old}» — will write as «{name}» on apply',
-      brandingDesc: 'Customize browser tab title, favicon, logo, and desktop wallpaper.',
+      brandingDesc: 'Customize browser tab title, favicon, logo, desktop wallpaper, and font size.',
+      fontSize: 'Font size',
+      fontSizeHint: 'Applies to Classic and Desktop. Medium is a little larger than the original size, so Full HD screens are easier to read. Changes preview immediately; Save keeps them on this panel, on every browser.',
+      fontSizeSm: 'Small',
+      fontSizeMd: 'Medium',
+      fontSizeLg: 'Large',
+      fontSizeXl: 'Extra large',
       siteTitle: 'Site title',
       siteTitleHint: 'Shown in browser tab, login page, and sidebar header.',
       siteSubtitle: 'Site subtitle',
@@ -258,7 +270,13 @@ export default function PanelSettings() {
       backend: 'Backend',
       primaryIface: 'Card mạng chính',
       netplanRename: 'Netplan đang dùng «{old}» — khi áp dụng sẽ ghi thành «{name}»',
-      brandingDesc: 'Tùy chỉnh tiêu đề tab, favicon, logo và hình nền desktop.',
+      brandingDesc: 'Tùy chỉnh tiêu đề tab, favicon, logo, hình nền desktop và cỡ chữ.',
+      fontSize: 'Cỡ chữ',
+      fontSizeHint: 'Áp dụng cho cả Classic và Desktop. Cỡ Vừa lớn hơn một chút so với trước, dễ đọc hơn trên màn hình Full HD. Đổi là xem trước ngay; bấm Lưu để giữ trên panel này, mọi trình duyệt.',
+      fontSizeSm: 'Nhỏ',
+      fontSizeMd: 'Vừa',
+      fontSizeLg: 'Lớn',
+      fontSizeXl: 'Rất lớn',
       siteTitle: 'Tiêu đề site',
       siteTitleHint: 'Hiện ở tab trình duyệt, trang đăng nhập và tiêu đề sidebar.',
       siteSubtitle: 'Dòng phụ',
@@ -290,6 +308,7 @@ export default function PanelSettings() {
     const normalized = normalizeBranding(data.branding);
     setWallpapers(normalized.wallpapers);
     setSelectedWallpaperId(normalized.selected_wallpaper_id);
+    setFontSize(normalized.font_size);
     setFaviconName('');
     setLogoName('');
   }, []);
@@ -569,6 +588,7 @@ export default function PanelSettings() {
           logo_data_url: logoDataUrl,
           wallpapers,
           selected_wallpaper_id: selectedWallpaperId,
+          font_size: fontSize,
         },
       });
       const normalized = normalizeBranding(data);
@@ -578,6 +598,8 @@ export default function PanelSettings() {
       setLogoDataUrl(normalized.logo_data_url);
       setWallpapers(normalized.wallpapers);
       setSelectedWallpaperId(normalized.selected_wallpaper_id);
+      setFontSize(normalized.font_size);
+      applyFontSize(normalized.font_size, true);
       notifyBrandingUpdated(normalized);
       setFaviconName('');
       setLogoName('');
@@ -983,6 +1005,51 @@ export default function PanelSettings() {
       {tab === 'branding' && (
         <div className={card}>
           <p className={`text-sm mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.brandingDesc}</p>
+
+          <label className={label}>{t.fontSize}</label>
+          <div
+            data-testid="settings-font-size"
+            role="radiogroup"
+            aria-label={t.fontSize}
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
+            {(['sm', 'md', 'lg', 'xl'] as FontSizeId[]).map((id) => {
+              const preset = FONT_SIZE_PRESETS[id];
+              const names = { sm: t.fontSizeSm, md: t.fontSizeMd, lg: t.fontSizeLg, xl: t.fontSizeXl };
+              const active = fontSize === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  data-testid={`settings-font-size-${id}`}
+                  onClick={() => {
+                    setFontSize(id);
+                    applyFontSize(id, false);
+                  }}
+                  className={`flex flex-col items-center justify-center rounded-xl border px-2 py-2.5 text-center transition ${
+                    active
+                      ? isDark
+                        ? 'border-blue-500 bg-blue-950/40 ring-1 ring-blue-500/40'
+                        : 'border-blue-500 bg-blue-50 ring-1 ring-blue-200'
+                      : isDark
+                        ? 'border-slate-700 hover:bg-slate-800'
+                        : 'border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  <span
+                    className="font-semibold leading-tight text-slate-900 dark:text-slate-100"
+                    style={{ fontSize: `${16 * (preset.percent / 100)}px` }}
+                  >
+                    {names[id]}
+                  </span>
+                  <span className={`mt-0.5 text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{preset.percent}%</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className={`mt-1 mb-4 text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.fontSizeHint}</p>
 
           <label className={label}>{t.siteTitle}</label>
           <input

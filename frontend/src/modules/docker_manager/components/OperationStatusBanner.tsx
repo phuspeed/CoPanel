@@ -57,12 +57,12 @@ function JobRow({ job, isDark, label }: { job: Job; isDark: boolean; label: stri
           <Icons.Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
           <span className={cn('text-xs font-bold truncate', isDark ? 'text-slate-100' : 'text-slate-800')}>{job.title}</span>
         </div>
-        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-500 shrink-0">
+        <span className="text-[0.625rem] font-bold uppercase tracking-wider text-blue-500 shrink-0">
           {label} · {job.progress ?? 0}%
         </span>
       </div>
       {job.message && (
-        <p className={cn('text-[11px] truncate', isDark ? 'text-slate-400' : 'text-slate-600')}>{job.message}</p>
+        <p className={cn('text-[0.6875rem] truncate', isDark ? 'text-slate-400' : 'text-slate-600')}>{job.message}</p>
       )}
       <div className={cn('h-1.5 rounded-full overflow-hidden', isDark ? 'bg-slate-800' : 'bg-blue-100')}>
         <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${job.progress || 0}%` }} />

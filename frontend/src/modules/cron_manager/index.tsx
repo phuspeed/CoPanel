@@ -387,7 +387,7 @@ export default function CronManager() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
             <h1 className="text-lg font-semibold truncate">{t.title}</h1>
             <p className={`text-xs mt-0.5 line-clamp-2 ${muted}`}>{t.subtitle}</p>
           </div>
@@ -456,7 +456,7 @@ export default function CronManager() {
                 );
               })}
             </nav>
-            <p className={`shrink-0 p-2 text-[10px] font-mono ${muted}`}>{t.storePath}</p>
+            <p className={`shrink-0 p-2 text-[0.625rem] font-mono ${muted}`}>{t.storePath}</p>
           </aside>
           }
         >
@@ -602,12 +602,12 @@ export default function CronManager() {
                 )}
 
                 <div className={`rounded-xl border px-3 py-2 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
-                  <p className={`text-[11px] ${muted}`}>{t.schedulePreview}</p>
+                  <p className={`text-[0.6875rem] ${muted}`}>{t.schedulePreview}</p>
                   <p className="text-xs font-semibold">{scheduleSummary(draft)}</p>
-                  <p className={`text-[11px] font-mono mt-1 ${muted}`}>
+                  <p className={`text-[0.6875rem] font-mono mt-1 ${muted}`}>
                     {draft.minute} {draft.hour} {draft.day} {draft.month} {draft.weekday}
                   </p>
-                  <p className={`text-[11px] mt-1 ${muted}`}>
+                  <p className={`text-[0.6875rem] mt-1 ${muted}`}>
                     {t.nextRun}:{' '}
                     <span className="font-semibold">
                       {(() => {
@@ -652,7 +652,7 @@ export default function CronManager() {
                           <button
                             type="button"
                             onClick={() => setActive(j.id, !(j.is_active ?? true))}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold ${
+                            className={`px-2 py-1 rounded-lg text-[0.625rem] font-bold ${
                               (j.is_active ?? true)
                                 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
                                 : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
@@ -669,7 +669,7 @@ export default function CronManager() {
                           </button>
                         </div>
                       ) : (
-                        <span className={`text-[10px] uppercase ${muted}`}>{t.manual}</span>
+                        <span className={`text-[0.625rem] uppercase ${muted}`}>{t.manual}</span>
                       )}
                     </div>
                   ))

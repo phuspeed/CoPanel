@@ -8,6 +8,8 @@
 
 html {
   @apply scroll-smooth;
+  /* Default "Medium" (Vừa): one notch above the historic 16px root so Full HD text is easier to read. */
+  font-size: 112.5%;
 }
 
 body {

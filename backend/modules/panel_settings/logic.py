@@ -118,6 +118,7 @@ def _default_store() -> Dict[str, Any]:
             "logo_data_url": None,
             "wallpapers": [],
             "selected_wallpaper_id": None,
+            "font_size": "md",
         },
         "updated_at": time.time(),
     }
@@ -880,6 +881,7 @@ def get_public_branding() -> Dict[str, Any]:
         "logo_data_url": logo_data_url,
         "wallpapers": wallpapers,
         "selected_wallpaper_id": selected_wallpaper_id,
+        "font_size": _normalize_font_size(branding.get("font_size")),
     }
 
 
@@ -1018,6 +1020,23 @@ def _normalize_wallpapers_list(raw: Any) -> List[Dict[str, Any]]:
     return out[:MAX_WALLPAPERS]
 
 
+FONT_SIZE_PRESETS = ("sm", "md", "lg", "xl")
+DEFAULT_FONT_SIZE = "md"
+
+
+def _normalize_font_size(value: Any) -> str:
+    """Return a supported preset id; unknown or empty values become the default (md)."""
+    v = str(value or "").strip().lower()
+    return v if v in FONT_SIZE_PRESETS else DEFAULT_FONT_SIZE
+
+
+def _validate_font_size(value: Optional[str]) -> str:
+    v = str(value or "").strip().lower()
+    if v not in FONT_SIZE_PRESETS:
+        raise ValueError("Font size must be sm, md, lg or xl.")
+    return v
+
+
 def update_branding(
     site_title: str,
     site_subtitle: Optional[str],
@@ -1025,6 +1044,7 @@ def update_branding(
     logo_data_url: Optional[str],
     wallpapers: Optional[List[Dict[str, Any]]] = None,
     selected_wallpaper_id: Optional[str] = None,
+    font_size: Optional[str] = None,
 ) -> Dict[str, Any]:
     store = _load_store()
     branding = store.setdefault("branding", {})
@@ -1040,6 +1060,10 @@ def update_branding(
         if not any(w["id"] == sel for w in normalized):
             raise ValueError("Selected wallpaper was not found in the wallpaper list.")
     branding["selected_wallpaper_id"] = sel
+    if font_size is None or str(font_size).strip() == "":
+        branding["font_size"] = _normalize_font_size(branding.get("font_size"))
+    else:
+        branding["font_size"] = _validate_font_size(font_size)
     _save_store(store)
     return get_public_branding()
 

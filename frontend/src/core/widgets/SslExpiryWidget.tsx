@@ -48,7 +48,7 @@ export default function SslExpiryWidget() {
             <li key={r.domain} className="flex items-center justify-between text-xs">
               <span className="truncate text-slate-700 dark:text-slate-200">{r.domain}</span>
               <span
-                className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                className={`text-[0.625rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                   r.days_left < 0
                     ? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
                     : r.days_left <= 7

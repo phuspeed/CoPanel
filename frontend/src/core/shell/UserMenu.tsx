@@ -156,13 +156,13 @@ export default function UserMenu({
             <p className={cn('truncate text-sm font-bold', isDark ? 'text-white' : 'text-slate-900')}>
               {user?.username || 'Guest'}
             </p>
-            <p className={cn('text-[10px]', isDark ? 'text-slate-400' : 'text-slate-500')}>
+            <p className={cn('text-[0.625rem]', isDark ? 'text-slate-400' : 'text-slate-500')}>
               {tr.role}: {roleLabel}
             </p>
           </div>
         </div>
         {(serverHostname || lanIp) && (
-          <div className={cn('mt-3 space-y-0.5 text-[10px]', isDark ? 'text-slate-500' : 'text-slate-400')}>
+          <div className={cn('mt-3 space-y-0.5 text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>
             {serverHostname && (
               <p className="flex items-center gap-1.5 truncate">
                 <Icons.Server className="h-3 w-3 shrink-0" />

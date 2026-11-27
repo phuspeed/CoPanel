@@ -272,7 +272,7 @@ export default function SystemCleanerDashboard() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-teal-500 font-bold">{tr.category}</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-teal-500 font-bold">{tr.category}</p>
             <h1 className="text-lg font-semibold truncate flex items-center gap-2">
               <Icons.Trash2 className="w-5 h-5 text-teal-500 shrink-0" />
               {tr.title}
@@ -389,7 +389,7 @@ export default function SystemCleanerDashboard() {
                 </div>
 
                 {cleanLogs.length > 0 && (
-                  <div className={`mt-4 p-4 rounded-xl font-mono text-[11px] leading-loose ${isDark ? 'bg-slate-950 text-green-400' : 'bg-slate-900 text-green-400'}`}>
+                  <div className={`mt-4 p-4 rounded-xl font-mono text-[0.6875rem] leading-loose ${isDark ? 'bg-slate-950 text-green-400' : 'bg-slate-900 text-green-400'}`}>
                     {cleanLogs.map((log, i) => (
                       <div key={i}>&gt; {log}</div>
                     ))}
@@ -542,7 +542,7 @@ export default function SystemCleanerDashboard() {
                           <td className="py-2.5 px-2">
                             <div className="flex flex-col min-w-0">
                               <span className="font-semibold truncate max-w-sm">{item.name}</span>
-                              <span className={`text-[10px] font-mono truncate max-w-sm ${muted}`}>{item.path}</span>
+                              <span className={`text-[0.625rem] font-mono truncate max-w-sm ${muted}`}>{item.path}</span>
                             </div>
                           </td>
                           <td className="py-2.5 px-2">

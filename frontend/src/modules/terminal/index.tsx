@@ -306,7 +306,7 @@ export default function TerminalDashboard() {
   }, [language, isDark, tr.connected, tr.error, tr.closed]);
 
   const snippetBtn = (active: boolean) =>
-    `inline-flex items-center justify-center gap-1 rounded-lg text-[10px] font-bold px-2 py-1.5 transition min-h-[36px] ${
+    `inline-flex items-center justify-center gap-1 rounded-lg text-[0.625rem] font-bold px-2 py-1.5 transition min-h-[36px] ${
       active
         ? isDark
           ? 'bg-blue-600/40 text-blue-100 hover:bg-blue-600/55'
@@ -331,7 +331,7 @@ export default function TerminalDashboard() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">System</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-blue-500 font-bold">System</p>
             <h1 className="text-lg font-semibold truncate flex items-center gap-2">
               <Icons.Terminal className="w-5 h-5 text-blue-500 shrink-0" />
               {tr.title}
@@ -340,7 +340,7 @@ export default function TerminalDashboard() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span
-              className={`text-[10px] font-mono font-bold px-2 py-1 rounded-lg border ${
+              className={`text-[0.625rem] font-mono font-bold px-2 py-1 rounded-lg border ${
                 wsConnected
                   ? isDark
                     ? 'bg-emerald-950/50 text-emerald-300 border-emerald-800/50'
@@ -397,7 +397,7 @@ export default function TerminalDashboard() {
               <Icons.Bookmark className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
               {tr.snippets}
             </h2>
-            <p className={`text-[10px] mt-1 leading-snug ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.snippetsHint}</p>
+            <p className={`text-[0.625rem] mt-1 leading-snug ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.snippetsHint}</p>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-4 min-h-0">
@@ -415,7 +415,7 @@ export default function TerminalDashboard() {
             )}
 
             <section>
-              <h3 className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+              <h3 className={`text-[0.625rem] font-bold uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                 {tr.copanelBuiltin}
               </h3>
               <ul className="space-y-2">
@@ -425,7 +425,7 @@ export default function TerminalDashboard() {
                     className={`rounded-xl border p-2.5 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-100 bg-slate-50/80'}`}
                   >
                     <div className="text-xs font-semibold leading-tight">{builtinTitle(s)}</div>
-                    <div className={`text-[10px] font-mono mt-1 truncate ${isDark ? 'text-slate-500' : 'text-slate-600'}`} title={s.command}>
+                    <div className={`text-[0.625rem] font-mono mt-1 truncate ${isDark ? 'text-slate-500' : 'text-slate-600'}`} title={s.command}>
                       {s.command}
                     </div>
                     <div className="flex gap-1.5 mt-2">
@@ -460,11 +460,11 @@ export default function TerminalDashboard() {
             </section>
 
             <section>
-              <h3 className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+              <h3 className={`text-[0.625rem] font-bold uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                 {tr.mySnippets}
               </h3>
               <div className={`rounded-xl border p-3 space-y-2 mb-3 ${isDark ? 'border-slate-800 bg-slate-950/30' : 'border-slate-200 bg-white'}`}>
-                <label className={`text-[10px] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.titleLabel}</label>
+                <label className={`text-[0.625rem] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.titleLabel}</label>
                 <input
                   value={draftTitle}
                   onChange={(e) => setDraftTitle(e.target.value)}
@@ -472,7 +472,7 @@ export default function TerminalDashboard() {
                     isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-200'
                   }`}
                 />
-                <label className={`text-[10px] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.commandLabel}</label>
+                <label className={`text-[0.625rem] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.commandLabel}</label>
                 <textarea
                   value={draftCommand}
                   onChange={(e) => setDraftCommand(e.target.value)}
@@ -501,7 +501,7 @@ export default function TerminalDashboard() {
                     className={`rounded-xl border p-2.5 ${isDark ? 'border-slate-800 bg-slate-950/40' : 'border-slate-100 bg-slate-50/80'}`}
                   >
                     <div className="text-xs font-semibold leading-tight">{s.title}</div>
-                    <div className={`text-[10px] font-mono mt-1 truncate ${isDark ? 'text-slate-500' : 'text-slate-600'}`} title={s.command}>
+                    <div className={`text-[0.625rem] font-mono mt-1 truncate ${isDark ? 'text-slate-500' : 'text-slate-600'}`} title={s.command}>
                       {s.command}
                     </div>
                     <div className="flex flex-wrap gap-1.5 mt-2">
@@ -532,7 +532,7 @@ export default function TerminalDashboard() {
                       <button
                         type="button"
                         onClick={() => removeCustom(s.id)}
-                        className={`inline-flex items-center gap-1 rounded-lg text-[10px] font-bold px-2 py-1.5 min-h-[36px] ${
+                        className={`inline-flex items-center gap-1 rounded-lg text-[0.625rem] font-bold px-2 py-1.5 min-h-[36px] ${
                           isDark ? 'bg-red-950/40 text-red-300 hover:bg-red-900/50' : 'bg-red-50 text-red-700 hover:bg-red-100'
                         }`}
                       >
@@ -568,10 +568,10 @@ export default function TerminalDashboard() {
               )}
             </button>
             {!wsConnected && (
-              <p className={`text-[10px] mt-2 text-center ${isDark ? 'text-amber-400/90' : 'text-amber-700'}`}>{tr.notConnected}</p>
+              <p className={`text-[0.625rem] mt-2 text-center ${isDark ? 'text-amber-400/90' : 'text-amber-700'}`}>{tr.notConnected}</p>
             )}
-            {saveState === 'ok' && <p className="text-[10px] mt-2 text-center text-emerald-500">{tr.savedOk}</p>}
-            {saveState === 'err' && <p className="text-[10px] mt-2 text-center text-red-500">{tr.saveError}</p>}
+            {saveState === 'ok' && <p className="text-[0.625rem] mt-2 text-center text-emerald-500">{tr.savedOk}</p>}
+            {saveState === 'err' && <p className="text-[0.625rem] mt-2 text-center text-red-500">{tr.saveError}</p>}
           </div>
         </aside>
         </div>

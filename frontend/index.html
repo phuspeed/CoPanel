@@ -19,6 +19,17 @@
         } catch (e) {}
       })();
     </script>
+    <script>
+      (function () {
+        try {
+          var map = { sm: '100%', md: '112.5%', lg: '125%', xl: '137.5%' };
+          var v = localStorage.getItem('copanel_font_size');
+          var id = map[v] ? v : 'md';
+          document.documentElement.style.fontSize = map[id];
+          document.documentElement.setAttribute('data-cp-font', id);
+        } catch (e) {}
+      })();
+    </script>
     <title>CoPanel</title>
   </head>
   <body>

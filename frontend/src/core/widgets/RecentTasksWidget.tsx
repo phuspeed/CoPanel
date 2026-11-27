@@ -42,7 +42,7 @@ export default function RecentTasksWidget() {
             <li key={j.id} className="flex items-center justify-between text-xs gap-2">
               <span className="truncate text-slate-700 dark:text-slate-200">{j.title}</span>
               <span
-                className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                className={`text-[0.625rem] uppercase tracking-wider px-2 py-0.5 rounded-full ${
                   j.status === 'success'
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
                     : j.status === 'failed'

@@ -358,7 +358,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
             <div key={n} className="flex flex-1 items-center gap-1 min-w-0">
               <div
                 className={cn(
-                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.625rem] font-bold',
                   step >= n
                     ? 'bg-blue-600 text-white'
                     : isDark
@@ -368,7 +368,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
               >
                 {n}
               </div>
-              <span className={cn('truncate text-[10px] font-medium hidden sm:inline', step === n ? (isDark ? 'text-slate-200' : 'text-slate-800') : 'text-slate-500')}>
+              <span className={cn('truncate text-[0.625rem] font-medium hidden sm:inline', step === n ? (isDark ? 'text-slate-200' : 'text-slate-800') : 'text-slate-500')}>
                 {label}
               </span>
             </div>
@@ -421,7 +421,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                   )}
                 >
                   <div className="text-xs font-bold">{mode === 'managed' ? tr.managed : tr.custom}</div>
-                  <div className="text-[10px] mt-1 text-slate-500">{mode === 'managed' ? tr.managedHint : tr.customHint}</div>
+                  <div className="text-[0.625rem] mt-1 text-slate-500">{mode === 'managed' ? tr.managedHint : tr.customHint}</div>
                 </button>
               ))}
             </div>
@@ -481,7 +481,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                     if (inspect.compose_content) setComposeContent(inspect.compose_content);
                   }}
                   className={cn(
-                    'rounded-lg px-3 py-1.5 text-[11px] font-bold border transition',
+                    'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border transition',
                     configMode === 'existing' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600',
                   )}
                 >
@@ -492,7 +492,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                 type="button"
                 onClick={() => setConfigMode('template')}
                 className={cn(
-                  'rounded-lg px-3 py-1.5 text-[11px] font-bold border transition',
+                  'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border transition',
                   configMode === 'template' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600',
                 )}
               >
@@ -502,7 +502,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                 type="button"
                 onClick={() => setConfigMode('paste')}
                 className={cn(
-                  'rounded-lg px-3 py-1.5 text-[11px] font-bold border transition',
+                  'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border transition',
                   configMode === 'paste' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600',
                 )}
               >
@@ -517,7 +517,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                     type="button"
                     onClick={() => setTemplateSubMode('gallery')}
                     className={cn(
-                      'rounded-lg px-3 py-1.5 text-[11px] font-bold border',
+                      'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border',
                       templateSubMode === 'gallery' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200',
                     )}
                   >
@@ -527,7 +527,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                     type="button"
                     onClick={() => setTemplateSubMode('simple')}
                     className={cn(
-                      'rounded-lg px-3 py-1.5 text-[11px] font-bold border',
+                      'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border',
                       templateSubMode === 'simple' ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200',
                     )}
                   >
@@ -558,7 +558,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                           )}
                         >
                           <div className="text-xs font-bold">{language === 'vi' ? tpl.name_vi : tpl.name_en}</div>
-                          <div className="text-[10px] mt-1 text-slate-500 line-clamp-2">
+                          <div className="text-[0.625rem] mt-1 text-slate-500 line-clamp-2">
                             {language === 'vi' ? tpl.description_vi : tpl.description_en}
                           </div>
                         </button>
@@ -568,7 +568,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <label className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.image}</span>
+                      <span className="text-[0.625rem] font-bold uppercase text-slate-500">{tr.image}</span>
                       <input
                         value={template.image}
                         onChange={(e) => setTemplate((t) => ({ ...t, image: e.target.value }))}
@@ -576,7 +576,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                       />
                     </label>
                     <label className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.hostPort}</span>
+                      <span className="text-[0.625rem] font-bold uppercase text-slate-500">{tr.hostPort}</span>
                       <input
                         type="number"
                         value={template.host_port}
@@ -585,7 +585,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                       />
                     </label>
                     <label className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase text-slate-500">{tr.containerPort}</span>
+                      <span className="text-[0.625rem] font-bold uppercase text-slate-500">{tr.containerPort}</span>
                       <input
                         type="number"
                         value={template.container_port}
@@ -606,7 +606,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                     type="button"
                     onClick={validateYaml}
                     disabled={busy}
-                    className="text-[11px] font-bold text-blue-500 hover:text-blue-400 disabled:opacity-50"
+                    className="text-[0.6875rem] font-bold text-blue-500 hover:text-blue-400 disabled:opacity-50"
                   >
                     {tr.validate}
                   </button>
@@ -621,7 +621,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                   )}
                 />
                 {validateMsg && (
-                  <p className={cn('text-[11px]', validateMsg === tr.validateOk ? 'text-emerald-500' : 'text-amber-500')}>{validateMsg}</p>
+                  <p className={cn('text-[0.6875rem]', validateMsg === tr.validateOk ? 'text-emerald-500' : 'text-amber-500')}>{validateMsg}</p>
                 )}
               </div>
             )}
@@ -650,7 +650,7 @@ export default function CreateProjectModal({ open, onClose, onCreated, isDark, l
                 </div>
               ))}
             </dl>
-            <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.deployNote}</p>
+            <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.deployNote}</p>
           </div>
         )}
 

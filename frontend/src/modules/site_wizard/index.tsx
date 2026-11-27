@@ -349,7 +349,7 @@ export default function SiteWizard() {
                         <span
                           key={f}
                           className={cn(
-                            'text-[10px] px-1.5 py-0.5 rounded-md font-medium',
+                            'text-[0.625rem] px-1.5 py-0.5 rounded-md font-medium',
                             isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-600',
                           )}
                         >
@@ -742,7 +742,7 @@ function RunPanel({
       <div className={card}>
         <div className="flex items-center justify-between">
           <h2 className={cn('text-base font-bold', isDark ? 'text-slate-100' : 'text-slate-800')}>{job.title}</h2>
-          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-500">
+          <span className="text-[0.625rem] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-500">
             {job.status}
           </span>
         </div>
@@ -837,11 +837,11 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className={cn('text-[11px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
+      <span className={cn('text-[0.6875rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>
         {label}
       </span>
       {children}
-      {hint && <span className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{hint}</span>}
+      {hint && <span className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{hint}</span>}
     </label>
   );
 }

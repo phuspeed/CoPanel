@@ -169,7 +169,7 @@ export default function FileContextMenu({ fm, menu, onClose, onUploadPicker }: P
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-80">{row.icon}</span>
               <span className="flex-1">{row.label}</span>
-              {row.hint && <span className="hidden pl-4 font-mono text-[10px] opacity-50 sm:inline">{row.hint}</span>}
+              {row.hint && <span className="hidden pl-4 font-mono text-[0.625rem] opacity-50 sm:inline">{row.hint}</span>}
             </button>
           </div>
         ))}

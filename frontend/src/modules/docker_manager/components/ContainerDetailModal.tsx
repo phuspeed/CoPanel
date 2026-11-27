@@ -255,7 +255,7 @@ export default function ContainerDetailModal({
           isDark ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50',
         )}
       >
-        <div className={cn('flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+        <div className={cn('flex items-center gap-1.5 text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
           <Icon className="w-3 h-3" />
           {label}
         </div>
@@ -299,13 +299,13 @@ export default function ContainerDetailModal({
             {container.status}
           </span>
           {busy && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-500">
+            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold text-blue-500">
               <Icons.Loader2 className="w-3.5 h-3.5 animate-spin" />
               {language === 'vi' ? 'Đang xử lý' : 'Busy'}
             </span>
           )}
           {container.project && (
-            <span className={cn('text-[11px] font-medium px-2 py-0.5 rounded-lg border', isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600')}>
+            <span className={cn('text-[0.6875rem] font-medium px-2 py-0.5 rounded-lg border', isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600')}>
               {tr.project}: {container.project}
             </span>
           )}
@@ -351,10 +351,10 @@ export default function ContainerDetailModal({
 
                 <div className="space-y-2">
                   <div>
-                    <p className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                    <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
                       {tr.restartPolicy}
                     </p>
-                    <p className={cn('text-[10px] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.policyHint}</p>
+                    <p className={cn('text-[0.625rem] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.policyHint}</p>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                     <select
@@ -374,7 +374,7 @@ export default function ContainerDetailModal({
                     </select>
                     {policy === 'on-failure' && (
                       <label className="flex items-center gap-2 shrink-0">
-                        <span className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.retryCount}</span>
+                        <span className={cn('text-[0.625rem] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.retryCount}</span>
                         <input
                           type="number"
                           min={0}
@@ -400,7 +400,7 @@ export default function ContainerDetailModal({
                     </button>
                   </div>
                   {policyMsg && (
-                    <p className={cn('text-[11px] flex items-center gap-1.5', policyMsg.ok ? 'text-emerald-500' : 'text-red-400')}>
+                    <p className={cn('text-[0.6875rem] flex items-center gap-1.5', policyMsg.ok ? 'text-emerald-500' : 'text-red-400')}>
                       {policyMsg.ok ? <Icons.CheckCircle2 className="w-3.5 h-3.5" /> : <Icons.AlertCircle className="w-3.5 h-3.5" />}
                       {policyMsg.text}
                     </p>
@@ -451,7 +451,7 @@ function InfoRow({
 }) {
   return (
     <div className={className}>
-      <p className={cn('text-[10px] font-bold uppercase tracking-wider mb-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{label}</p>
+      <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider mb-0.5', isDark ? 'text-slate-500' : 'text-slate-400')}>{label}</p>
       <p className={cn('text-xs break-all', mono && 'font-mono', isDark ? 'text-slate-200' : 'text-slate-800')}>{value}</p>
     </div>
   );
