@@ -6,6 +6,16 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.18: File Manager explorer redesign (file_manager 1.0.17)**
+
+- **New layout.** Command bar (New ▾, Upload ▾, Cut / Copy / Paste, Rename, Download, Delete, More ▾, Sort ▾, View ▾), resizable sidebar with Places, a lazy folder tree (loads children on expand via `GET /api/file_manager/list`) and Bookmarks. On phones the sidebar is a drawer, taps open items and a long-press opens the item menu.
+- **Keyboard & selection.** Enter, F2, Delete, F5, Ctrl+A / C / X / V, Ctrl+Shift+N, Ctrl+L (edit path), Ctrl+F or `/` (filter), Alt+↑ / Backspace (parent), Alt+← / → (history), arrows / Home / End with Shift to extend, type-to-select, Esc. Shift-click selects a range; Ctrl-click toggles.
+- **Copy path** works on plain-HTTP panels (falls back when the browser clipboard API is unavailable).
+- **Uploads.** Queue with per-file progress, cancel and retry; upload whole folders (picker or drag-drop of folders from the OS); a conflict prompt (Keep both / Skip / Replace) instead of silently overwriting.
+- **Drag & drop** items onto folders, tree nodes or breadcrumb segments to move (hold Ctrl / Alt to copy), with the same conflict prompt.
+- **Preview** images (zoom, rotate, previous / next), video, audio and PDF in a lightbox; grid view shows image thumbnails. Text files open in the editor (Ctrl+S saves).
+- **API (backward compatible).** `POST /upload` accepts `on_conflict=overwrite|skip|rename|error` (default `overwrite`, unchanged) and `relative_path` for folder uploads; every path component is validated (no `..`, absolute paths, backslashes, NUL or symlinked folders) and restricted users still go through the symlink-safe writers. `/copy` and `/move-multiple` accept `on_conflict`; copying or moving a folder into itself is rejected, and moving an item into the folder it is already in is a no-op.
+
 **CoPanel 1.1.17: nginx can read Basic Auth htpasswd files after 1.1.16 lock-down**
 
 - **Regression fix.** 1.1.16 set `config/` to `0700 root:root`, so nginx workers (`www-data` on Debian/Ubuntu, `nginx` on RHEL) could not open `config/panel_access.htpasswd` or `config/web_auth/*.htpasswd`. A panel or site with Basic Auth enabled returned HTTP 500 after upgrade.
@@ -163,6 +173,15 @@ All notable changes to CoPanel are documented in this file.
 - Project list status uses a single `docker ps` instead of N× `compose ps`.
 
 ### Tiếng Việt (tóm tắt)
+
+- CoPanel 1.1.18 (Quản lý file 1.0.17):
+  - **Giao diện mới kiểu Explorer.** Thanh lệnh (Mới, Tải lên, Cắt / Chép / Dán, Đổi tên, Tải về, Xoá, Thêm, Sắp xếp, Kiểu xem), thanh bên kéo giãn được với Vị trí, cây thư mục tải dần khi mở và Đánh dấu. Trên điện thoại thanh bên là ngăn kéo, chạm để mở, nhấn giữ để hiện menu.
+  - **Phím tắt & chọn nhiều.** Enter, F2, Del, F5, Ctrl+A / C / X / V, Ctrl+Shift+N, Ctrl+L, Ctrl+F, Alt+↑, Alt+← / →, phím mũi tên (Shift để chọn thêm), gõ tên để chọn, Esc. Shift-click chọn một dải, Ctrl-click bật/tắt từng mục.
+  - **Sao chép đường dẫn** chạy được cả khi panel dùng HTTP thường.
+  - **Tải lên.** Hàng đợi có tiến độ từng file, huỷ và thử lại; tải lên cả thư mục; hỏi khi trùng tên (Giữ cả hai / Bỏ qua / Thay thế) thay vì ghi đè âm thầm.
+  - **Kéo thả** vào thư mục, cây thư mục hoặc thanh đường dẫn để di chuyển (giữ Ctrl / Alt để sao chép).
+  - **Xem trước** ảnh (phóng to, xoay, trước / sau), video, âm thanh và PDF; chế độ lưới có ảnh thu nhỏ.
+  - **API tương thích ngược.** `/upload` thêm `on_conflict` và `relative_path` (kiểm tra từng thành phần đường dẫn, chặn `..`, đường dẫn tuyệt đối, symlink); `/copy` và `/move-multiple` thêm `on_conflict`, chặn chép/di chuyển thư mục vào chính nó.
 
 - CoPanel 1.1.17 (bảo mật):
   - **Sửa hồi quy Basic Auth sau 1.1.16.** Bản 1.1.16 khoá `config/` ở `0700 root:root`, nên worker nginx (`www-data` / `nginx` trên RHEL) không đọc được `panel_access.htpasswd` và `config/web_auth/*.htpasswd`. Panel hoặc website đang bật Basic Auth sẽ trả HTTP 500 sau khi nâng cấp.

@@ -127,6 +127,56 @@ def safe_join(target_dir: str, name: str, user: Dict[str, Any]) -> str:
     return check_safe_path(candidate, user)
 
 
+CONFLICT_POLICIES = ("overwrite", "skip", "rename", "error")
+
+
+def _conflict_policy(value: Optional[str], default: str) -> str:
+    """Normalize an ``on_conflict`` value; unknown values are rejected with 400."""
+    if value is None or value == "":
+        return default
+    v = str(value).strip().lower()
+    if v not in CONFLICT_POLICIES:
+        raise HTTPException(status_code=400, detail="on_conflict must be overwrite, skip, rename or error.")
+    return v
+
+
+def _relative_parts(rel: Optional[str]) -> List[str]:
+    """Split a client relative path (``site/css/a.css``) into safe components.
+
+    Absolute paths, ``.``/``..``, empty components (``a//b``), backslashes and
+    NUL are rejected with 400, so the result can only point below the target.
+    """
+    if rel is None or rel == "":
+        return []
+    if "\x00" in rel or "\\" in rel or rel.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid relative path.")
+    parts = rel.split("/")
+    if len(parts) > 64:
+        raise HTTPException(status_code=400, detail="Relative path is too deep.")
+    for part in parts:
+        if not part or part in (".", "..") or len(part) > 255:
+            raise HTTPException(status_code=400, detail="Invalid relative path.")
+    return parts
+
+
+def _free_name(target_dir: str, name: str) -> str:
+    """First ``name (n).ext`` that does not exist in ``target_dir``."""
+    stem, ext = os.path.splitext(name)
+    if stem == "":  # dotfile such as ".env"
+        stem, ext = name, ""
+    for n in range(1, 1000):
+        candidate = f"{stem} ({n}){ext}"
+        if not os.path.lexists(os.path.join(target_dir, candidate)):
+            return candidate
+    raise HTTPException(status_code=409, detail="Could not find a free name.")
+
+
+def _is_same_or_inside(path: str, ancestor: str) -> bool:
+    p = os.path.realpath(path)
+    a = os.path.realpath(ancestor)
+    return p == a or p.startswith(a.rstrip(os.sep) + os.sep)
+
+
 def _restricted(user: Dict[str, Any]) -> bool:
     """Sandboxed user: every filesystem call goes through ``core.safe_fs``."""
     if user.get("role") == "superadmin":
@@ -556,10 +606,14 @@ async def move_item(req: MoveRequest, user: Dict[str, Any] = Depends(get_current
 class CopyRequest(BaseModel):
     source_paths: List[str]
     target_dir: str
+    # None keeps the old behaviour (a clash is copied as ``copy_of_<name>``).
+    on_conflict: Optional[str] = None
 
 class MoveMultipleRequest(BaseModel):
     source_paths: List[str]
     target_dir: str
+    # None keeps the old behaviour (a clash is overwritten).
+    on_conflict: Optional[str] = None
 
 class DeleteMultipleRequest(BaseModel):
     paths: List[str]
@@ -583,26 +637,45 @@ async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_curren
 
     Symbolic links inside a copied tree are copied as links (never followed),
     so a copy can never pull in content from outside the source tree.
+
+    ``on_conflict``: ``rename`` (``name (1).ext``), ``skip``, ``overwrite`` or
+    ``error`` (409). Omitted keeps the legacy ``copy_of_<name>`` behaviour.
     """
     try:
+        policy = _conflict_policy(req.on_conflict, "legacy") if req.on_conflict else "legacy"
         target_dir = check_safe_path(req.target_dir, user)
         if not os.path.exists(target_dir):
             raise HTTPException(status_code=404, detail="Target directory does not exist.")
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Target path is not a directory.")
         restricted = _restricted(user)
+        copied: List[str] = []
+        skipped: List[str] = []
 
         for p in req.source_paths:
             source_path = check_safe_path(p, user)
             if not os.path.lexists(source_path):
                 raise HTTPException(status_code=404, detail=f"Source path not found: {p}")
+            if os.path.isdir(source_path) and not os.path.islink(source_path) and _is_same_or_inside(target_dir, source_path):
+                raise HTTPException(status_code=400, detail="Cannot copy a folder into itself.")
 
             base_name = safe_child_name(os.path.basename(source_path))
             dest = safe_join(target_dir, base_name, user)
             if os.path.lexists(dest):
-                dest = safe_join(target_dir, f"copy_of_{base_name}", user)
-                if os.path.lexists(dest):
-                    raise HTTPException(status_code=400, detail=f"Target already exists: {dest}")
+                same = os.path.realpath(dest) == os.path.realpath(source_path)
+                if policy == "legacy":
+                    dest = safe_join(target_dir, f"copy_of_{base_name}", user)
+                    if os.path.lexists(dest):
+                        raise HTTPException(status_code=400, detail=f"Target already exists: {dest}")
+                elif policy == "skip":
+                    skipped.append(dest)
+                    continue
+                elif policy == "error":
+                    raise HTTPException(status_code=409, detail=f"Target already exists: {dest}")
+                elif policy == "rename" or same:
+                    dest = safe_join(target_dir, _free_name(target_dir, base_name), user)
+                else:  # overwrite
+                    _delete_path(dest, user)
 
             if restricted:
                 safe_fs.copy(source_path, dest, owner_for(dest, user))
@@ -610,38 +683,63 @@ async def copy_items(req: CopyRequest, user: Dict[str, Any] = Depends(get_curren
                 shutil.copytree(source_path, dest, symlinks=True)
             else:
                 shutil.copy2(source_path, dest, follow_symlinks=False)
+            copied.append(dest)
 
-        return {"status": "success", "message": "Items copied successfully."}
+        return {"status": "success", "message": "Items copied successfully.", "copied": copied, "skipped": skipped}
     except Exception as e:
         raise _fs_error(e)
 
 
 @router.post("/move-multiple")
 async def move_multiple_items(req: MoveMultipleRequest, user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Move multiple files or directories to target directory."""
+    """Move multiple files or directories to target directory.
+
+    ``on_conflict``: ``overwrite`` (default, legacy), ``skip``, ``rename`` or
+    ``error`` (409). Moving an item onto itself is a no-op; moving a folder
+    into itself or one of its sub-folders is refused (400).
+    """
     try:
+        policy = _conflict_policy(req.on_conflict, "overwrite")
         target_dir = check_safe_path(req.target_dir, user)
         if not os.path.exists(target_dir):
             raise HTTPException(status_code=404, detail="Target directory does not exist.")
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Target path is not a directory.")
+        moved: List[str] = []
+        skipped: List[str] = []
 
         for p in req.source_paths:
             source_path = check_safe_path(p, user)
             if not os.path.lexists(source_path):
                 continue
+            if os.path.isdir(source_path) and not os.path.islink(source_path) and _is_same_or_inside(target_dir, source_path):
+                raise HTTPException(status_code=400, detail="Cannot move a folder into itself.")
 
             base_name = safe_child_name(os.path.basename(source_path))
             # Validate the final destination (rejects a symlink pointing outside
             # the sandbox) but keep operating on the in-directory name.
             safe_join(target_dir, base_name, user)
             dest = os.path.join(target_dir, base_name)
+            if os.path.abspath(os.path.dirname(source_path)) == os.path.abspath(target_dir):
+                skipped.append(dest)  # already there
+                continue
             if os.path.lexists(dest):
-                _delete_path(dest, user)
+                if policy == "skip":
+                    skipped.append(dest)
+                    continue
+                if policy == "error":
+                    raise HTTPException(status_code=409, detail=f"Target already exists: {dest}")
+                if policy == "rename":
+                    new_name = _free_name(target_dir, base_name)
+                    safe_join(target_dir, new_name, user)
+                    dest = os.path.join(target_dir, new_name)
+                else:
+                    _delete_path(dest, user)
 
             _move_path(source_path, dest, user)
+            moved.append(dest)
 
-        return {"status": "success", "message": "Items moved successfully."}
+        return {"status": "success", "message": "Items moved successfully.", "moved": moved, "skipped": skipped}
     except Exception as e:
         raise _fs_error(e)
 
@@ -916,22 +1014,71 @@ async def download_file(path: str, user: Dict[str, Any] = Depends(get_current_us
 async def upload_file(
     path: str = Query(...),
     file: UploadFile = File(...),
+    on_conflict: Optional[str] = None,
+    relative_path: Optional[str] = None,
     user: Dict[str, Any] = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """Upload a file to the target directory."""
+    """Upload a file to the target directory.
+
+    ``relative_path`` (folder upload, e.g. ``site/css/a.css``) places the file
+    in sub-folders of ``path``, creating them as needed. Every component is
+    validated (no ``..``, absolute paths, backslashes or NUL) and the final
+    folder is re-checked with ``check_safe_path``.
+
+    ``on_conflict`` when the file exists: ``overwrite`` (default, legacy),
+    ``skip``, ``rename`` (``name (1).ext``) or ``error`` (409).
+    """
     try:
+        policy = _conflict_policy(on_conflict, "overwrite")
         target_dir = check_safe_path(path, user)
         if not os.path.isdir(target_dir):
             raise HTTPException(status_code=400, detail="Path is not a directory.")
+        restricted = _restricted(user)
 
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="Missing filename.")
-        filename = safe_child_name(file.filename)
-        file_path = safe_join(target_dir, filename, user)
-        if os.path.isdir(file_path):
-            raise HTTPException(status_code=400, detail="A directory with that name already exists.")
+        parts = _relative_parts(relative_path)
+        if parts:
+            filename = parts[-1]
+            if "\x00" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename.")
+            sub_dirs = parts[:-1]
+        else:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="Missing filename.")
+            filename = safe_child_name(file.filename)
+            sub_dirs = []
 
-        if _restricted(user):
+        dest_dir = target_dir
+        created: List[str] = []
+        for comp in sub_dirs:
+            nxt = safe_join(dest_dir, comp, user)
+            if os.path.lexists(nxt):
+                if os.path.islink(nxt) or not os.path.isdir(nxt):
+                    raise HTTPException(status_code=400, detail=f"Not a folder: {comp}")
+            else:
+                if restricted:
+                    safe_fs.mkdir(nxt, owner_for(nxt, user))
+                else:
+                    os.mkdir(nxt)
+                created.append(nxt)
+            dest_dir = nxt
+
+        file_path = safe_join(dest_dir, filename, user)
+        if os.path.lexists(file_path):
+            if os.path.isdir(file_path) and not os.path.islink(file_path):
+                if policy == "skip":
+                    return {"status": "skipped", "path": file_path, "message": f"'{filename}' exists; skipped."}
+                if policy != "rename":
+                    raise HTTPException(status_code=409 if policy == "error" else 400,
+                                        detail="A directory with that name already exists.")
+            if policy == "skip":
+                return {"status": "skipped", "path": file_path, "message": f"'{filename}' exists; skipped."}
+            if policy == "error":
+                raise HTTPException(status_code=409, detail=f"'{filename}' already exists.")
+            if policy == "rename":
+                filename = _free_name(dest_dir, filename)
+                file_path = safe_join(dest_dir, filename, user)
+
+        if restricted:
             safe_fs.write_stream(file_path, file.file, owner_for(file_path, user))
         else:
             with open(file_path, "wb") as buffer:
@@ -939,6 +1086,7 @@ async def upload_file(
 
         return {
             "status": "success",
+            "path": file_path,
             "message": f"File '{filename}' uploaded successfully."
         }
     except Exception as e:

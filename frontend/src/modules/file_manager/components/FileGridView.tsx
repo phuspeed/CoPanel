@@ -1,90 +1,45 @@
-import type { MouseEvent } from 'react';
-import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { fileIconKind, formatDate, formatSize } from '../utils';
-import type { FileItem } from '../types';
-import type { FileManagerTranslations } from '../i18n';
+import { formatSize } from '../utils';
+import type { FileManagerState } from '../hooks/useFileManager';
+import type { ItemInteractions } from '../hooks/useItemInteractions';
+import { FileThumb } from './FileIcon';
 
-interface Props {
-  isDark: boolean;
-  tr: FileManagerTranslations;
-  files: FileItem[];
-  selectedPaths: string[];
-  onOpen: (item: FileItem) => void;
-  onToggleSelect: (path: string, multi?: boolean) => void;
-  onItemContextMenu: (e: MouseEvent, item: FileItem) => void;
-  onBlankContextMenu: (e: MouseEvent) => void;
-}
-
-function GridIcon({ kind, isDark }: { kind: ReturnType<typeof fileIconKind>; isDark: boolean }) {
-  if (kind === 'folder') return <Icons.Folder className={cn('h-10 w-10', isDark ? 'text-sky-400 fill-sky-500/15' : 'text-sky-600 fill-sky-100')} />;
-  if (kind === 'archive') return <Icons.Archive className={cn('h-10 w-10', isDark ? 'text-amber-400' : 'text-amber-600')} />;
-  if (kind === 'image') return <Icons.Image className={cn('h-10 w-10', isDark ? 'text-pink-400' : 'text-pink-600')} />;
-  if (kind === 'code') return <Icons.FileCode className={cn('h-10 w-10', isDark ? 'text-violet-400' : 'text-violet-600')} />;
-  return <Icons.File className={cn('h-10 w-10', isDark ? 'text-slate-400' : 'text-slate-500')} />;
-}
-
-export default function FileGridView({
-  isDark,
-  tr,
-  files,
-  selectedPaths,
-  onOpen,
-  onToggleSelect,
-  onItemContextMenu,
-  onBlankContextMenu,
-}: Props) {
-  if (files.length === 0) {
-    return (
-      <div
-        className={cn('flex h-full min-h-[200px] items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}
-        onContextMenu={onBlankContextMenu}
-      >
-        {tr.noFiles}
-      </div>
-    );
-  }
-
+export default function FileGridView({ fm, ix }: { fm: FileManagerState; ix: ItemInteractions }) {
+  const { isDark, files, selectedPaths, focusPath } = fm;
   return (
-    <div
-      className="min-h-full"
-      onContextMenu={(e) => {
-        if (!(e.target as HTMLElement).closest('[data-fm-item]')) onBlankContextMenu(e);
-      }}
-    >
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2 p-3">
-        {files.map((item) => {
-          const selected = selectedPaths.includes(item.path);
-          return (
-            <button
-              key={item.path}
-              type="button"
-              data-fm-item
-              onClick={(e) => onToggleSelect(item.path, e.ctrlKey || e.metaKey)}
-              onDoubleClick={() => onOpen(item)}
-              onContextMenu={(e) => onItemContextMenu(e, item)}
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-1.5 p-2" data-testid="fm-grid">
+      {files.map((item) => {
+        const selected = selectedPaths.includes(item.path);
+        const focused = focusPath === item.path;
+        const drop = ix.dropTarget === item.path;
+        return (
+          <div
+            key={item.path}
+            {...ix.bind(item)}
+            aria-selected={selected}
+            title={item.name}
             className={cn(
-              'flex flex-col items-center gap-2 rounded-xl border p-3 text-center transition select-none',
+              'flex cursor-default flex-col items-center gap-1.5 rounded-xl border p-2 text-center transition-colors',
               selected
                 ? isDark
-                  ? 'border-blue-500/60 bg-blue-950/30 ring-1 ring-blue-500/40'
-                  : 'border-blue-400 bg-blue-50 ring-1 ring-blue-200'
+                  ? 'border-sky-500/50 bg-sky-500/15'
+                  : 'border-blue-300 bg-blue-50'
                 : isDark
-                  ? 'border-transparent hover:border-slate-700 hover:bg-slate-800/40'
-                  : 'border-transparent hover:border-slate-200 hover:bg-slate-50',
+                  ? 'border-transparent hover:bg-slate-800/50'
+                  : 'border-transparent hover:bg-slate-100/80',
+              focused && !selected && (isDark ? 'border-sky-500/40' : 'border-blue-300'),
+              drop && (isDark ? 'border-sky-400 bg-sky-500/25' : 'border-blue-500 bg-blue-100'),
+              ix.isCut(item.path) && 'opacity-50',
             )}
           >
-            <GridIcon kind={fileIconKind(item.name, item.is_dir)} isDark={isDark} />
-            <span className={cn('w-full truncate text-[11px] font-medium leading-tight', isDark ? 'text-slate-200' : 'text-slate-800')}>
+            <FileThumb item={item} iconClass="h-10 w-10" />
+            <span className={cn('line-clamp-2 w-full break-all text-[11px] font-medium leading-tight', isDark ? 'text-slate-200' : 'text-slate-800')}>
               {item.name}
             </span>
-            {!item.is_dir && (
-              <span className={cn('text-[9px] font-mono', isDark ? 'text-slate-500' : 'text-slate-400')}>{formatSize(item.size)}</span>
-            )}
-          </button>
+            {!item.is_dir && <span className={cn('text-[9px] font-mono', isDark ? 'text-slate-500' : 'text-slate-400')}>{formatSize(item.size)}</span>}
+          </div>
         );
       })}
-      </div>
     </div>
   );
 }
