@@ -14,7 +14,7 @@ function SortHeader({ label, k, fm, className }: { label: string; k: SortKey; fm
         type="button"
         onClick={() => fm.handleSort(k)}
         className={cn(
-          'inline-flex items-center gap-1 text-[11px]',
+          'inline-flex items-center gap-1 text-[0.6875rem]',
           active ? (fm.isDark ? 'text-sky-300' : 'text-blue-600') : fm.isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800',
         )}
       >

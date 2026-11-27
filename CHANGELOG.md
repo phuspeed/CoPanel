@@ -6,12 +6,14 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
-**CoPanel 1.1.20: EventSource no longer trips nginx Basic Auth after an idle tab**
+**CoPanel 1.1.20: EventSource Basic Auth fix, and a font size setting in Branding**
 
 - Root cause: `location /api/platform/events` is more specific than `location /api/`, so it does not inherit `auth_basic off`. With the panel htpasswd gate enabled, `EventSource` (which cannot set `Authorization` and may drop cached Basic credentials after the tab is hidden) got nginx `401` with `WWW-Authenticate: Basic`. The retry loop spammed the console, and those 401s made the browser forget the gate login — F5 then re-prompted for Basic Auth even though the JWT was still valid and the rest of the UI kept working.
 - `config/nginx.conf` and `scripts/install.sh` now set `auth_basic off` on the events (and `/health`) locations. The installer also writes the SSE location (buffering off, 86400s timeouts, empty `Connection`) that was previously only in the reference config.
 - On startup and when the nginx gate is applied, the backend rewrites a live vhost: inject `auth_basic off` into an existing events location, or insert the block before `location /api/` if it is missing. Panel Update therefore picks this up without a manual nginx edit. Exemption injection looks only inside each location block, so a nearby tag can no longer skip `/api/` or events.
 - Client: EventSource sends same-origin credentials (`withCredentials: true`) so an unpatched vhost still works until the rewrite runs; every reconnect (including coming back to a hidden tab) fetches a fresh stream ticket; a 401 on `/api/auth/stream-ticket` or other authenticated `apiFetch` calls stops the SSE retry loop and signs out.
+- File Manager 1.0.19 converts leftover `text-[Npx]` labels to rem so explorer chrome follows the panel font size.
+- **Font size (Settings → Branding).** Presets Small / Medium / Large / Extra large (100% / 112.5% / 125% / 137.5%) scale the whole Classic and Desktop UI via the root font size, so Tailwind `rem` sizes and converted `text-[Npx]` chrome labels (taskbar, launcher, window chrome, navigation) grow together. The default is Medium — one notch above the original 16px root — to make Full HD screens easier to read. The choice is stored with branding on the server (follows the admin across browsers) and cached in `localStorage` so it applies before first paint. Changing a preset previews immediately; Save keeps it.
 
 **CoPanel 1.1.19: File Manager bookmarks stay above the folder tree (file_manager 1.0.18)**
 
@@ -189,6 +191,8 @@ All notable changes to CoPanel are documented in this file.
   - Sửa lỗi `GET /api/platform/events` trả 401 sau khi để tab idle: `location /api/platform/events` cụ thể hơn `/api/` nên không kế thừa `auth_basic off`. EventSource bị nginx Basic Auth chặn, vòng reconnect spam 401, trình duyệt quên mật khẩu cổng htpasswd, F5 hiện lại hộp đăng nhập dù JWT vẫn còn hạn.
   - `config/nginx.conf` và `scripts/install.sh` đặt `auth_basic off` cho events (và `/health`). Installer ghi luôn location SSE (tắt buffer, timeout 86400s). Khi backend khởi động hoặc bật cổng nginx, vhost đang chạy được sửa: thêm `auth_basic off` vào location events, hoặc chèn khối này nếu chưa có.
   - Client: EventSource gửi credentials cùng origin; mỗi lần reconnect (kể cả khi tab hiện lại) lấy ticket mới; 401 thì dừng retry và đăng xuất.
+  - Quản lý file 1.0.19: nhãn cỡ `px` cố định đổi sang rem để theo cỡ chữ panel.
+  - **Cỡ chữ (Cài đặt → Nhận diện).** Các mức Nhỏ / Vừa / Lớn / Rất lớn (100% / 112.5% / 125% / 137.5%) phóng toàn bộ giao diện Classic và Desktop qua cỡ chữ gốc. Mặc định là Vừa — lớn hơn một chút so với 16px cũ — để dễ đọc trên màn hình Full HD. Lưu trên máy chủ theo nhận diện (theo admin sang mọi trình duyệt) và cache `localStorage` để áp dụng trước khi vẽ trang. Đổi là xem trước ngay; bấm Lưu để giữ.
 
 - CoPanel 1.1.19 (Quản lý file 1.0.18):
   - **Đánh dấu đứng trên cây thư mục.** Thanh bên giờ là Vị trí, rồi Đánh dấu, rồi cây thư mục. Mở ở `/` không còn đẩy bookmark xuống dưới. Cây thư mục cuộn riêng, nên Vị trí và Đánh dấu vẫn hiện (kể cả ngăn kéo trên điện thoại).

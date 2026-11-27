@@ -262,7 +262,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
       <section className="space-y-3">
         <div>
           <h3 className={cn('text-sm font-bold', isDark ? 'text-slate-200' : 'text-slate-800')}>{tr.managedTitle}</h3>
-          <p className={cn('text-[11px] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-500')}>{tr.managedDesc}</p>
+          <p className={cn('text-[0.6875rem] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-500')}>{tr.managedDesc}</p>
         </div>
         <div className={card}>
           {loading && projects.length === 0 ? (
@@ -274,7 +274,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className={cn('text-[10px] uppercase tracking-wider', isDark ? 'bg-slate-950/60 text-slate-400' : 'bg-slate-50 text-slate-500')}>
+                <thead className={cn('text-[0.625rem] uppercase tracking-wider', isDark ? 'bg-slate-950/60 text-slate-400' : 'bg-slate-50 text-slate-500')}>
                   <tr className={cn('border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
                     <th className="p-3 font-bold">{tr.colName}</th>
                     <th className="p-3 font-bold">{tr.colPath}</th>
@@ -288,16 +288,16 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
                     return (
                       <tr key={p.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/80'}>
                         <td className="p-3 font-bold">{p.name}</td>
-                        <td className={cn('p-3 font-mono text-[11px] max-w-[14rem] truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={p.path}>
+                        <td className={cn('p-3 font-mono text-[0.6875rem] max-w-[14rem] truncate', isDark ? 'text-slate-400' : 'text-slate-500')} title={p.path}>
                           {p.path}
                         </td>
                         <td className="p-3">
                           <div className="flex flex-col gap-1">
-                            <span className={cn('px-2 py-0.5 rounded-full border text-[10px] font-semibold w-fit', statusClass(p.status))}>
+                            <span className={cn('px-2 py-0.5 rounded-full border text-[0.625rem] font-semibold w-fit', statusClass(p.status))}>
                               {statusLabel(p.status)}
                             </span>
                             {busy && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                              <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold text-blue-500">
                                 <Icons.Loader2 className="w-3 h-3 animate-spin" />
                                 {tr.actionBusy}
                               </span>
@@ -330,7 +330,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
               <Icons.Search className="w-4 h-4" />
               {tr.discoveredTitle} ({composeFiles.length})
             </h3>
-            <p className={cn('text-[11px] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-500')}>{tr.discoveredDesc}</p>
+            <p className={cn('text-[0.6875rem] mt-0.5', isDark ? 'text-slate-500' : 'text-slate-500')}>{tr.discoveredDesc}</p>
           </div>
           <div className={cn('flex items-center gap-2 p-1.5 rounded-xl border', isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200')}>
             <input
@@ -342,7 +342,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
             <button
               onClick={() => fetchComposeFiles(customPath)}
               disabled={scanLoading}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl shrink-0 disabled:opacity-50"
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-[0.6875rem] font-bold px-3 py-1.5 rounded-xl shrink-0 disabled:opacity-50"
             >
               {tr.scanBtn}
             </button>
@@ -354,7 +354,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
           ) : (
             <div className="max-h-56 overflow-auto">
               <table className="w-full text-left text-xs">
-                <thead className={cn('sticky top-0 text-[10px] uppercase', isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500')}>
+                <thead className={cn('sticky top-0 text-[0.625rem] uppercase', isDark ? 'bg-slate-900/95 text-slate-400' : 'bg-slate-50 text-slate-500')}>
                   <tr className={cn('border-b', isDark ? 'border-slate-800' : 'border-slate-100')}>
                     <th className="px-3 py-2">{tr.composeColFile}</th>
                     <th className="px-3 py-2">{tr.composeColPath}</th>
@@ -367,11 +367,11 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
                     return (
                       <tr key={`${file.path}-${idx}`}>
                         <td className="px-3 py-2 font-bold">{file.filename}</td>
-                        <td className={cn('px-3 py-2 font-mono text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{file.path}</td>
+                        <td className={cn('px-3 py-2 font-mono text-[0.6875rem]', isDark ? 'text-slate-400' : 'text-slate-500')}>{file.path}</td>
                         <td className="px-3 py-2 text-right space-x-1">
                           <button
                             onClick={() => setEditProject({ id: file.filename, name: file.filename, path: file.path })}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-bold"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[0.625rem] font-bold"
                           >
                             <Icons.Pencil className="w-3 h-3" />
                             {tr.edit}
@@ -379,7 +379,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
                           <button
                             onClick={() => runComposeAction(file.path, 'deploy')}
                             disabled={busy}
-                            className="inline-flex items-center gap-1 bg-indigo-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-40"
+                            className="inline-flex items-center gap-1 bg-indigo-600 text-white px-2 py-1 rounded-lg text-[0.625rem] font-bold disabled:opacity-40"
                           >
                             {busy ? <Icons.Loader2 className="w-3 h-3 animate-spin" /> : <Icons.Play className="w-3 h-3" />}
                             {tr.buildDeploy}
@@ -434,7 +434,7 @@ export default function ProjectManagerPanel({ isDark, language, onRefreshContain
       >
         <div className="p-4 space-y-3 max-h-[70vh] flex flex-col">
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <label className={cn('text-[10px] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
+            <label className={cn('text-[0.625rem] font-bold uppercase', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.logTail}</label>
             <select
               value={logsTail}
               onChange={(e) => {

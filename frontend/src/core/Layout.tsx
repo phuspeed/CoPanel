@@ -601,7 +601,7 @@ export default function Layout({
               )}
             </p>
             {user?.role === 'superadmin' && panelUpdate.info?.fetch_error && (
-              <p className={`mt-1 text-[10px] ${isDark ? 'text-amber-500/90' : 'text-amber-700'}`}>
+              <p className={`mt-1 text-[0.625rem] ${isDark ? 'text-amber-500/90' : 'text-amber-700'}`}>
                 {panelUpdate.info.fetch_error_kind === 'rate_limit' ? tr.checkUpdateRateLimited : tr.checkUpdateFailed}
               </p>
             )}
@@ -646,7 +646,7 @@ export default function Layout({
                 <button
                   type="button"
                   onClick={toggleMobileDesktopSite}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border font-bold text-[11px] transition duration-150 ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border font-bold text-[0.6875rem] transition duration-150 ${
                     isMobileDesktopSiteEnabled()
                       ? isDark
                         ? 'bg-sky-900/50 border-sky-700 text-sky-300'
@@ -707,7 +707,7 @@ export default function Layout({
               </span>
               <button
                 onClick={() => { setChangePwdOpen(!changePwdOpen); setPwdMsg(''); }}
-                className="text-[10px] text-blue-400 hover:text-blue-300 underline text-right"
+                className="text-[0.625rem] text-blue-400 hover:text-blue-300 underline text-right"
               >
                 {tr.changePassword}
               </button>
@@ -740,7 +740,7 @@ export default function Layout({
                 </button>
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">{tr.oldPassword}</label>
+                <label className="text-[0.625rem] text-slate-400 font-bold tracking-wider uppercase block">{tr.oldPassword}</label>
                 <input
                   type="password"
                   value={oldPwdInput}
@@ -753,7 +753,7 @@ export default function Layout({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block">{tr.newPassword}</label>
+                <label className="text-[0.625rem] text-slate-400 font-bold tracking-wider uppercase block">{tr.newPassword}</label>
                 <input
                   type="password"
                   value={newPwdInput}
@@ -766,7 +766,7 @@ export default function Layout({
                 />
               </div>
               {pwdMsg && (
-                <div className="text-[11px] font-bold text-indigo-400 bg-indigo-950/30 p-2 rounded-xl border border-indigo-900/40">
+                <div className="text-[0.6875rem] font-bold text-indigo-400 bg-indigo-950/30 p-2 rounded-xl border border-indigo-900/40">
                   {pwdMsg}
                 </div>
               )}
@@ -848,7 +848,7 @@ export default function Layout({
             )}
           >
             <Icons.Home className="w-5 h-5" />
-            <span className="text-[10px] truncate">{tr.dashboard}</span>
+            <span className="text-[0.625rem] truncate">{tr.dashboard}</span>
           </Link>
           <Link
             to="/web-manager"
@@ -860,7 +860,7 @@ export default function Layout({
             )}
           >
             <Icons.Globe className="w-5 h-5" />
-            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['web_manager']}</span>
+            <span className="text-[0.625rem] truncate">{(tr as any).modulesNames?.['web_manager']}</span>
           </Link>
           <Link
             to="/file-manager"
@@ -872,7 +872,7 @@ export default function Layout({
             )}
           >
             <Icons.Folder className="w-5 h-5" />
-            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['file_manager']}</span>
+            <span className="text-[0.625rem] truncate">{(tr as any).modulesNames?.['file_manager']}</span>
           </Link>
           <Link
             to="/terminal"
@@ -884,7 +884,7 @@ export default function Layout({
             )}
           >
             <Icons.Terminal className="w-5 h-5" />
-            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['terminal']}</span>
+            <span className="text-[0.625rem] truncate">{(tr as any).modulesNames?.['terminal']}</span>
           </Link>
           <Link
             to="/system-monitor"
@@ -896,7 +896,7 @@ export default function Layout({
             )}
           >
             <Icons.Activity className="w-5 h-5" />
-            <span className="text-[10px] truncate">{(tr as any).modulesNames?.['system_monitor']}</span>
+            <span className="text-[0.625rem] truncate">{(tr as any).modulesNames?.['system_monitor']}</span>
           </Link>
         </div>
         )}
@@ -1006,7 +1006,7 @@ function ShellIconButton({ icon, onClick, title, isDark, badge, badgeTone = 'blu
       {icon}
       {badge !== undefined && badge > 0 && (
         <span
-          className={`absolute -top-1 -right-1 ${tone} text-white text-[9px] font-bold rounded-full min-w-[16px] h-[16px] px-1 flex items-center justify-center`}
+          className={`absolute -top-1 -right-1 ${tone} text-white text-[0.5625rem] font-bold rounded-full min-w-[1rem] h-[1rem] px-1 flex items-center justify-center`}
         >
           {badge > 99 ? '99+' : badge}
         </span>

@@ -331,12 +331,12 @@ export default function DatabaseManager() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
             <h1 className="text-lg font-semibold truncate">{t.title}</h1>
             <p className={`text-xs mt-0.5 line-clamp-2 ${muted}`}>{t.subtitle}</p>
           </div>
           {activeOverview && (
-            <div className={`shrink-0 flex gap-2 text-[10px] font-bold ${muted}`}>
+            <div className={`shrink-0 flex gap-2 text-[0.625rem] font-bold ${muted}`}>
               <span className={`px-2 py-1 rounded-lg border ${panel}`}>
                 {t.installed}: {activeOverview.installed ? t.yes : t.no}
               </span>
@@ -439,7 +439,7 @@ export default function DatabaseManager() {
                     <li key={d.name} className="py-2 flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-mono text-sm truncate">{d.name}</p>
-                        <p className={`text-[11px] ${muted}`}>{d.size || 'N/A'}</p>
+                        <p className={`text-[0.6875rem] ${muted}`}>{d.size || 'N/A'}</p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {engine === 'mysql' && (
@@ -516,7 +516,7 @@ export default function DatabaseManager() {
                     <li key={`${u.user}:${u.host || 'localhost'}`} className="py-2 flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-mono text-sm truncate">{u.user}</p>
-                        <p className={`text-[11px] ${muted}`}>
+                        <p className={`text-[0.6875rem] ${muted}`}>
                           {u.host || 'localhost'}
                           {u.db ? ` • ${u.db}` : ''}
                         </p>

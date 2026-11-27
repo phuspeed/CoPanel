@@ -43,7 +43,7 @@ export default function BuildProgressModal({
       <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4">
         <span
           className={cn(
-            'inline-block rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase',
+            'inline-block rounded-full border px-2.5 py-1 font-mono text-[0.625rem] font-bold uppercase',
             buildStatus === 'success'
               ? 'border-green-500/20 bg-green-500/10 text-green-400'
               : buildStatus === 'failed'
@@ -68,7 +68,7 @@ export default function BuildProgressModal({
               style={{ width: `${Math.max(5, Math.min(100, buildProgress || 5))}%` }}
             />
           </div>
-          <button type="button" onClick={onToggleLogs} className="mt-2 text-[11px] font-semibold text-blue-500">
+          <button type="button" onClick={onToggleLogs} className="mt-2 text-[0.6875rem] font-semibold text-blue-500">
             {showBuildLogs ? (language === 'vi' ? 'Ẩn log' : 'Hide logs') : language === 'vi' ? 'Hiện log' : 'Show logs'}
           </button>
         </div>
@@ -91,8 +91,8 @@ export default function BuildProgressModal({
         {buildStatus === 'success' && restartRequired && (
           <div className={cn('space-y-3 rounded-xl border p-4', isDark ? 'border-amber-500/30 bg-amber-950/30' : 'border-amber-200 bg-amber-50')}>
             <p className={cn('text-xs font-bold', isDark ? 'text-amber-200' : 'text-amber-900')}>{tr.restartRequiredTitle}</p>
-            <p className={cn('text-[11px]', isDark ? 'text-amber-100/80' : 'text-amber-800')}>{tr.restartRequiredBody}</p>
-            {restartReason && <p className="font-mono text-[10px] opacity-60">{restartReason}</p>}
+            <p className={cn('text-[0.6875rem]', isDark ? 'text-amber-100/80' : 'text-amber-800')}>{tr.restartRequiredBody}</p>
+            {restartReason && <p className="font-mono text-[0.625rem] opacity-60">{restartReason}</p>}
             <button
               type="button"
               disabled={restartUi !== 'idle'}
@@ -110,7 +110,7 @@ export default function BuildProgressModal({
         {buildStatus === 'success' && !restartRequired && restartUi === 'waiting' && (
           <div className={cn('space-y-2 rounded-xl border p-4', isDark ? 'border-blue-500/30 bg-blue-950/30' : 'border-blue-200 bg-blue-50')}>
             <p className={cn('text-xs font-bold', isDark ? 'text-blue-200' : 'text-blue-900')}>{tr.restartWaitingForService}</p>
-            <p className={cn('text-[11px]', isDark ? 'text-blue-100/80' : 'text-blue-800')}>{tr.restartAutoBody}</p>
+            <p className={cn('text-[0.6875rem]', isDark ? 'text-blue-100/80' : 'text-blue-800')}>{tr.restartAutoBody}</p>
             <div className="flex justify-center py-1">
               <Icons.Loader2 className="h-5 w-5 animate-spin text-blue-500" />
             </div>

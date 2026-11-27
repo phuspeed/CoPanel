@@ -83,7 +83,7 @@ export function chromeSidebarTitle(isDark: boolean) {
 }
 
 export function chromeSidebarSubtitle(isDark: boolean) {
-  return cn('line-clamp-2 text-[11px] leading-snug', isDark ? 'text-slate-500' : 'text-slate-500');
+  return cn('line-clamp-2 text-[0.6875rem] leading-snug', isDark ? 'text-slate-500' : 'text-slate-500');
 }
 
 export function chromeSidebarNav() {
@@ -112,7 +112,7 @@ export function chromeNavIcon(isDark: boolean, active: boolean, accent: ChromeAc
 export function chromeNavBadge(isDark: boolean, active: boolean, accent: ChromeAccent = 'blue') {
   const a = ACCENT[accent];
   return cn(
-    'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+    'rounded-full px-1.5 py-0.5 text-[0.625rem] font-bold tabular-nums',
     active
       ? isDark
         ? a.badgeActive.dark

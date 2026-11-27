@@ -166,7 +166,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
               type="button"
               onClick={() => setTab(t)}
               className={cn(
-                'rounded-lg px-3 py-1.5 text-[11px] font-bold border transition',
+                'rounded-lg px-3 py-1.5 text-[0.6875rem] font-bold border transition',
                 tab === t ? 'bg-blue-600 text-white border-blue-600' : isDark ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600',
               )}
             >
@@ -194,7 +194,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
         ) : tab === 'compose' ? (
           <div className="space-y-2 flex-1 min-h-0 flex flex-col">
             <div className="flex justify-end">
-              <button type="button" onClick={validateCompose} disabled={saving} className="text-[11px] font-bold text-blue-500">
+              <button type="button" onClick={validateCompose} disabled={saving} className="text-[0.6875rem] font-bold text-blue-500">
                 {tr.validate}
               </button>
             </div>
@@ -209,7 +209,7 @@ export default function ProjectEditorModal({ open, project, onClose, onSaved, is
           </div>
         ) : (
           <div className="space-y-2 flex-1 min-h-0 flex flex-col">
-            <p className={cn('text-[11px]', isDark ? 'text-slate-500' : 'text-slate-400')}>
+            <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>
               {tr.envHint}
               {!envExists && ' (.env.example loaded as starting point)'}
             </p>

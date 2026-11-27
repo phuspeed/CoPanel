@@ -33,10 +33,10 @@ export default function FileGridView({ fm, ix }: { fm: FileManagerState; ix: Ite
             )}
           >
             <FileThumb item={item} iconClass="h-10 w-10" />
-            <span className={cn('line-clamp-2 w-full break-all text-[11px] font-medium leading-tight', isDark ? 'text-slate-200' : 'text-slate-800')}>
+            <span className={cn('line-clamp-2 w-full break-all text-[0.6875rem] font-medium leading-tight', isDark ? 'text-slate-200' : 'text-slate-800')}>
               {item.name}
             </span>
-            {!item.is_dir && <span className={cn('text-[9px] font-mono', isDark ? 'text-slate-500' : 'text-slate-400')}>{formatSize(item.size)}</span>}
+            {!item.is_dir && <span className={cn('text-[0.5625rem] font-mono', isDark ? 'text-slate-500' : 'text-slate-400')}>{formatSize(item.size)}</span>}
           </div>
         );
       })}

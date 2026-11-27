@@ -237,7 +237,7 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
   };
 
   const chipBtn = (selected: boolean) =>
-    `px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors ${
+    `px-2.5 py-1 text-[0.6875rem] font-medium rounded-lg border transition-colors ${
       selected
         ? 'bg-blue-600 border-blue-500 text-white'
         : isDark
@@ -285,11 +285,11 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className={label}>{tr.permittedModules}</label>
-                <button type="button" className="text-[11px] text-blue-500" onClick={toggleSelectAllModules}>
+                <button type="button" className="text-[0.6875rem] text-blue-500" onClick={toggleSelectAllModules}>
                   {selectedModules.length === availableModules.length ? tr.deselectAll : tr.selectAll}
                 </button>
               </div>
-              <p className={`text-[11px] mb-2 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+              <p className={`text-[0.6875rem] mb-2 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                 {tr.availableModules}: {availableModules.length}
               </p>
               <div className={`flex flex-wrap gap-1.5 p-3 border rounded-lg min-h-[72px] ${isDark ? 'border-slate-700 bg-slate-950/40' : 'border-slate-200 bg-slate-50'}`}>
@@ -308,7 +308,7 @@ export default function UsersPanel({ isDark, language, card, input, label }: Pro
           <div>
             <label className={label}>{tr.isolatedDirs}</label>
             <input className={input} value={folderInput} onChange={(e) => setFolderInput(e.target.value)} />
-            <p className={`text-[11px] mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.dirTip}</p>
+            <p className={`text-[0.6875rem] mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.dirTip}</p>
           </div>
 
           <button

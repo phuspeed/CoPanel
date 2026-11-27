@@ -372,7 +372,7 @@ function RingGauge({
         </div>
       </div>
       <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
-      {sub && <p className="max-w-[11rem] truncate text-center text-[10px] opacity-70">{sub}</p>}
+      {sub && <p className="max-w-[11rem] truncate text-center text-[0.625rem] opacity-70">{sub}</p>}
     </div>
   );
 }
@@ -694,7 +694,7 @@ export default function SystemMonitorDashboard() {
             <p className={cn('text-xs truncate', textMuted)}>{tr.heroSubtitle}</p>
           </div>
           <div className={cn('shrink-0 rounded-lg border px-3 py-1.5 text-right', isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white')}>
-            <span className={cn('text-[10px] font-semibold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
+            <span className={cn('text-[0.625rem] font-semibold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
               {tr.hostname}
             </span>
             <p className={cn('text-sm font-mono font-bold truncate max-w-[10rem]', isDark ? 'text-slate-100' : 'text-slate-900')}>
@@ -744,7 +744,7 @@ export default function SystemMonitorDashboard() {
               </div>
               <div className="min-w-0 flex-1 space-y-1.5 text-sm">
                 <div>
-                  <p className={cn('text-[10px] font-bold uppercase tracking-wider', textMuted)}>{tr.model}</p>
+                  <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider', textMuted)}>{tr.model}</p>
                   <p className={cn('font-semibold truncate', textHeading)}>{stats.system.hostname}</p>
                 </div>
                 <div className="grid grid-cols-1 gap-1 text-xs">
@@ -778,7 +778,7 @@ export default function SystemMonitorDashboard() {
                 <Icons.CheckCircle2 className="h-9 w-9" />
               </div>
               <div className="min-w-0 space-y-1">
-                <p className={cn('text-[10px] font-bold uppercase tracking-wider', textMuted)}>{tr.systemStatus}</p>
+                <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider', textMuted)}>{tr.systemStatus}</p>
                 <p className={cn('text-xl font-bold', isDark ? 'text-emerald-400' : 'text-emerald-600')}>{tr.healthy}</p>
                 <p className={cn('text-xs', textMuted)}>
                   {tr.uptime}: {formatUptime(stats.system.uptime_seconds)}
@@ -835,7 +835,7 @@ export default function SystemMonitorDashboard() {
                 <div className={cn('w-full rounded-full h-1.5 overflow-hidden mb-2', isDark ? 'bg-slate-800' : 'bg-slate-200')}>
                   <div className="h-1.5 rounded-full bg-amber-500 transition-all" style={{ width: `${Math.min(100, diskPercent)}%` }} />
                 </div>
-                <p className={cn('text-[11px] leading-snug', textMuted)}>
+                <p className={cn('text-[0.6875rem] leading-snug', textMuted)}>
                   {trf('diskUsedFreeOf', {
                     used: formatBytes(diskAgg.used),
                     free: formatBytes(diskAgg.free),
@@ -878,7 +878,7 @@ export default function SystemMonitorDashboard() {
               <div className="space-y-3">
                 {diskData.slice(0, 5).map((partition) => (
                   <div key={`${partition.device}-${partition.mountpoint}`}>
-                    <div className="flex justify-between text-[10px] sm:text-xs mb-1 gap-2">
+                    <div className="flex justify-between text-[0.625rem] sm:text-xs mb-1 gap-2">
                       <span className={cn('truncate', isDark ? 'text-slate-300' : 'text-slate-700')}>{partition.mountpoint}</span>
                       <span className={textMuted}>{partition.percent.toFixed(1)}%</span>
                     </div>
@@ -910,7 +910,7 @@ export default function SystemMonitorDashboard() {
             />
           </div>
           {!isSuperadmin && (
-            <p className={cn('text-[10px] sm:text-xs', textMuted)}>{tr.adminPidHint}</p>
+            <p className={cn('text-[0.625rem] sm:text-xs', textMuted)}>{tr.adminPidHint}</p>
           )}
           {filteredProcesses.length > 0 ? (
             <div className={cn('overflow-x-auto rounded-xl border', isDark ? 'border-slate-800/60' : 'border-slate-200')}>
@@ -918,7 +918,7 @@ export default function SystemMonitorDashboard() {
                 <thead>
                   <tr
                     className={cn(
-                      'text-[10px] font-bold uppercase tracking-widest border-b',
+                      'text-[0.625rem] font-bold uppercase tracking-widest border-b',
                       isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
                     )}
                   >
@@ -932,7 +932,7 @@ export default function SystemMonitorDashboard() {
                     <th className="p-2 sm:p-3 text-right">{tr.actions}</th>
                   </tr>
                 </thead>
-                <tbody className={cn('text-[10px] sm:text-xs divide-y font-mono', isDark ? 'divide-slate-800/50 text-slate-200' : 'divide-slate-100 text-slate-800')}>
+                <tbody className={cn('text-[0.625rem] sm:text-xs divide-y font-mono', isDark ? 'divide-slate-800/50 text-slate-200' : 'divide-slate-100 text-slate-800')}>
                   {filteredProcesses.map((proc) => (
                     <tr key={proc.pid} className={isDark ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50'}>
                       <td
@@ -958,7 +958,7 @@ export default function SystemMonitorDashboard() {
                               setDetailPid(proc.pid);
                             }}
                             className={cn(
-                              'px-2 py-1 rounded-lg text-[10px] font-bold border',
+                              'px-2 py-1 rounded-lg text-[0.625rem] font-bold border',
                               isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-100 border-slate-200 text-slate-800'
                             )}
                           >
@@ -970,7 +970,7 @@ export default function SystemMonitorDashboard() {
                                 type="button"
                                 onClick={() => setSignalModal({ pid: proc.pid, name: proc.name, signal: 'term' })}
                                 className={cn(
-                                  'px-2 py-1 rounded-lg text-[10px] font-bold border',
+                                  'px-2 py-1 rounded-lg text-[0.625rem] font-bold border',
                                   isDark ? 'bg-amber-950/40 border-amber-800/50 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-800'
                                 )}
                               >
@@ -980,7 +980,7 @@ export default function SystemMonitorDashboard() {
                                 type="button"
                                 onClick={() => setSignalModal({ pid: proc.pid, name: proc.name, signal: 'kill' })}
                                 className={cn(
-                                  'px-2 py-1 rounded-lg text-[10px] font-bold border',
+                                  'px-2 py-1 rounded-lg text-[0.625rem] font-bold border',
                                   isDark ? 'bg-red-950/50 border-red-800/50 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
                                 )}
                               >
@@ -1006,7 +1006,7 @@ export default function SystemMonitorDashboard() {
           <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-between gap-3">
             <div>
               <h3 className={cn('text-xs sm:text-sm font-bold uppercase tracking-wider', textHeading)}>{tr.pm2AppProcesses}</h3>
-              <p className={cn('text-[10px] sm:text-xs', textMuted)}>{tr.pm2Subtitle}</p>
+              <p className={cn('text-[0.625rem] sm:text-xs', textMuted)}>{tr.pm2Subtitle}</p>
             </div>
             <button
               type="button"
@@ -1026,7 +1026,7 @@ export default function SystemMonitorDashboard() {
                 <thead>
                   <tr
                     className={cn(
-                      'text-[10px] font-bold uppercase tracking-widest border-b',
+                      'text-[0.625rem] font-bold uppercase tracking-widest border-b',
                       isDark ? 'bg-slate-950/60 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
                     )}
                   >
@@ -1049,7 +1049,7 @@ export default function SystemMonitorDashboard() {
                         <td className="p-3">
                           <span
                             className={cn(
-                              'px-2 py-0.5 rounded border text-[10px]',
+                              'px-2 py-0.5 rounded border text-[0.625rem]',
                               isRunning
                                 ? isDark
                                   ? 'bg-green-500/10 text-green-400 border-green-500/20'
@@ -1073,7 +1073,7 @@ export default function SystemMonitorDashboard() {
                                 onClick={() => handlePm2Action('stop', app.name)}
                                 disabled={actionLoading !== null}
                                 className={cn(
-                                  'px-2 py-1 text-[10px] font-bold rounded-lg border',
+                                  'px-2 py-1 text-[0.625rem] font-bold rounded-lg border',
                                   isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-100 border-slate-200'
                                 )}
                               >
@@ -1085,7 +1085,7 @@ export default function SystemMonitorDashboard() {
                                 onClick={() => handlePm2Action('start', app.name)}
                                 disabled={actionLoading !== null}
                                 className={cn(
-                                  'px-2 py-1 text-[10px] font-bold rounded-lg border',
+                                  'px-2 py-1 text-[0.625rem] font-bold rounded-lg border',
                                   isDark
                                     ? 'border-green-800/50 bg-green-950/40 text-green-400'
                                     : 'border-green-200 bg-green-50 text-green-800'
@@ -1099,7 +1099,7 @@ export default function SystemMonitorDashboard() {
                               onClick={() => handlePm2Action('restart', app.name)}
                               disabled={actionLoading !== null}
                               className={cn(
-                                'px-2 py-1 text-[10px] font-bold rounded-lg border',
+                                'px-2 py-1 text-[0.625rem] font-bold rounded-lg border',
                                 isDark ? 'bg-indigo-950/40 border-indigo-800 text-indigo-400' : 'bg-indigo-50 border-indigo-200 text-indigo-800'
                               )}
                             >
@@ -1110,7 +1110,7 @@ export default function SystemMonitorDashboard() {
                               onClick={() => handlePm2Action('delete', app.name)}
                               disabled={actionLoading !== null}
                               className={cn(
-                                'px-2 py-1 text-[10px] font-bold rounded-lg border',
+                                'px-2 py-1 text-[0.625rem] font-bold rounded-lg border',
                                 isDark ? 'bg-red-950/40 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
                               )}
                             >
@@ -1181,7 +1181,7 @@ export default function SystemMonitorDashboard() {
               <div className="flex flex-col items-center gap-2 py-6">
                 <Icons.Loader className="w-8 h-8 animate-spin text-blue-500" />
                 {detailPreview && (
-                  <p className={cn('text-center text-[11px]', textMuted)}>
+                  <p className={cn('text-center text-[0.6875rem]', textMuted)}>
                     PID {detailPreview.pid} · {detailPreview.name}
                   </p>
                 )}
@@ -1194,7 +1194,7 @@ export default function SystemMonitorDashboard() {
                   <button
                     type="button"
                     onClick={() => navigator.clipboard.writeText(String(detailData.pid))}
-                    className={cn('text-[10px] font-bold underline', isDark ? 'text-blue-400' : 'text-blue-600')}
+                    className={cn('text-[0.625rem] font-bold underline', isDark ? 'text-blue-400' : 'text-blue-600')}
                   >
                     {tr.copyPid}
                   </button>
@@ -1202,55 +1202,55 @@ export default function SystemMonitorDashboard() {
                 <p className={cn('font-semibold', isDark ? 'text-slate-100' : 'text-slate-900')}>{detailData.name}</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.cpuPercent}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.cpuPercent}</span>
                     <span className={cn('font-mono', isDark ? 'text-slate-200' : 'text-slate-800')}>{(detailData.cpu_percent || 0).toFixed(1)}%</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.memPercent}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.memPercent}</span>
                     <span className={cn('font-mono', isDark ? 'text-slate-200' : 'text-slate-800')}>{(detailData.memory_percent || 0).toFixed(1)}%</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.rss}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.rss}</span>
                     <span className="font-mono">{formatBytes(detailData.rss || 0)}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">VMS</span>
+                    <span className="block text-[0.625rem] uppercase">VMS</span>
                     <span className="font-mono">{formatBytes(detailData.vms || 0)}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.status}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.status}</span>
                     <span>{detailData.status || tr.na}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.threads}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.threads}</span>
                     <span>{detailData.num_threads ?? tr.na}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">{tr.ppid}</span>
+                    <span className="block text-[0.625rem] uppercase">{tr.ppid}</span>
                     <span>{detailData.ppid ?? tr.na}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] uppercase">TCP/UDP</span>
+                    <span className="block text-[0.625rem] uppercase">TCP/UDP</span>
                     <span>{detailData.connections_tcp_udp ?? tr.na}</span>
                   </div>
                 </div>
                 {detailData.exe && (
                   <div>
-                    <span className="block text-[10px] uppercase mb-1">Exe</span>
-                    <p className={cn('break-all font-mono text-[10px]', isDark ? 'text-slate-300' : 'text-slate-700')}>{detailData.exe}</p>
+                    <span className="block text-[0.625rem] uppercase mb-1">Exe</span>
+                    <p className={cn('break-all font-mono text-[0.625rem]', isDark ? 'text-slate-300' : 'text-slate-700')}>{detailData.exe}</p>
                   </div>
                 )}
                 {detailData.cwd && (
                   <div>
-                    <span className="block text-[10px] uppercase mb-1">CWD</span>
-                    <p className={cn('break-all font-mono text-[10px]', isDark ? 'text-slate-300' : 'text-slate-700')}>{detailData.cwd}</p>
+                    <span className="block text-[0.625rem] uppercase mb-1">CWD</span>
+                    <p className={cn('break-all font-mono text-[0.625rem]', isDark ? 'text-slate-300' : 'text-slate-700')}>{detailData.cwd}</p>
                   </div>
                 )}
                 <div>
-                  <span className="block text-[10px] uppercase mb-1">{tr.cmdline}</span>
+                  <span className="block text-[0.625rem] uppercase mb-1">{tr.cmdline}</span>
                   <pre
                     className={cn(
-                      'whitespace-pre-wrap break-all rounded-lg p-2 text-[10px] font-mono max-h-40 overflow-y-auto',
+                      'whitespace-pre-wrap break-all rounded-lg p-2 text-[0.625rem] font-mono max-h-40 overflow-y-auto',
                       isDark ? 'bg-slate-950 border border-slate-800 text-slate-300' : 'bg-slate-50 border border-slate-200 text-slate-800'
                     )}
                   >
@@ -1265,7 +1265,7 @@ export default function SystemMonitorDashboard() {
                         setDetailPid(null);
                         setSignalModal({ pid: detailData.pid, name: detailData.name, signal: 'term' });
                       }}
-                      className="flex-1 min-w-[120px] px-3 py-2 rounded-xl text-[10px] font-bold bg-amber-600 text-white"
+                      className="flex-1 min-w-[120px] px-3 py-2 rounded-xl text-[0.625rem] font-bold bg-amber-600 text-white"
                     >
                       {tr.gracefulEnd}
                     </button>
@@ -1275,7 +1275,7 @@ export default function SystemMonitorDashboard() {
                         setDetailPid(null);
                         setSignalModal({ pid: detailData.pid, name: detailData.name, signal: 'kill' });
                       }}
-                      className="flex-1 min-w-[120px] px-3 py-2 rounded-xl text-[10px] font-bold bg-red-600 text-white"
+                      className="flex-1 min-w-[120px] px-3 py-2 rounded-xl text-[0.625rem] font-bold bg-red-600 text-white"
                     >
                       {tr.forceKill}
                     </button>
@@ -1289,16 +1289,16 @@ export default function SystemMonitorDashboard() {
                 {detailPreview && (
                   <div
                     className={cn(
-                      'rounded-xl border p-3 space-y-2 text-[11px]',
+                      'rounded-xl border p-3 space-y-2 text-[0.6875rem]',
                       isDark ? 'border-slate-700 bg-slate-950/50' : 'border-slate-200 bg-slate-50'
                     )}
                   >
-                    <p className={cn('font-bold uppercase tracking-wide text-[10px]', textMuted)}>{tr.detailFromList}</p>
+                    <p className={cn('font-bold uppercase tracking-wide text-[0.625rem]', textMuted)}>{tr.detailFromList}</p>
                     <p className={cn('font-mono font-bold', isDark ? 'text-indigo-400' : 'text-indigo-600')}>
                       PID {detailPreview.pid}
                     </p>
                     <p className={cn('font-semibold', isDark ? 'text-slate-100' : 'text-slate-900')}>{detailPreview.name}</p>
-                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="grid grid-cols-2 gap-2 text-[0.625rem]">
                       <div>
                         <span className={cn('block uppercase', textMuted)}>{tr.cpuPercent}</span>
                         <span className="font-mono">{(detailPreview.cpu_percent ?? 0).toFixed(1)}%</span>

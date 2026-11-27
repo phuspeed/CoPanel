@@ -983,7 +983,7 @@ export default function WebManagerDashboard() {
                       <tr key={idx} className={`transition-all ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/60'}`}>
                         <td className="p-4">{item.filename}</td>
                         <td className="p-4">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                          <span className={`text-[0.625rem] font-bold px-2 py-0.5 rounded-lg border ${
                             item.engine === 'apache'
                               ? (isDark ? 'border-amber-700/50 text-amber-400 bg-amber-950/30' : 'border-amber-200 text-amber-800 bg-amber-50')
                               : (isDark ? 'border-cyan-800/50 text-cyan-400 bg-cyan-950/20' : 'border-cyan-200 text-cyan-800 bg-cyan-50')
@@ -994,7 +994,7 @@ export default function WebManagerDashboard() {
                         <td className="p-4 font-bold text-blue-500 dark:text-blue-400 truncate max-w-[200px]" title={item.domain}>
                           {item.domain}
                           {item.engine === 'nginx' && item.is_proxy && item.auth_enabled && (
-                            <span className={`ml-2 inline-flex items-center rounded-lg border px-1.5 py-0.5 text-[10px] font-bold ${
+                            <span className={`ml-2 inline-flex items-center rounded-lg border px-1.5 py-0.5 text-[0.625rem] font-bold ${
                               isDark ? 'border-violet-700/50 bg-violet-950/30 text-violet-300' : 'border-violet-200 bg-violet-50 text-violet-700'
                             }`}>
                               {tr.authBadge}
@@ -1005,7 +1005,7 @@ export default function WebManagerDashboard() {
                         <td className="p-4">
                           <button
                             onClick={() => handleToggleStatus(item)}
-                            className={`px-3 py-1 rounded-xl text-[10px] font-bold tracking-wider uppercase transition border flex items-center gap-1.5 ${
+                            className={`px-3 py-1 rounded-xl text-[0.625rem] font-bold tracking-wider uppercase transition border flex items-center gap-1.5 ${
                               item.active
                                 ? 'bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20'
                                 : 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20'
@@ -1058,7 +1058,7 @@ export default function WebManagerDashboard() {
                         </span>
                         <button
                           onClick={() => handleToggleStatus(item)}
-                          className={`px-2.5 py-1 rounded-xl text-[10px] font-bold tracking-wider uppercase transition border flex items-center gap-1.5 ${
+                          className={`px-2.5 py-1 rounded-xl text-[0.625rem] font-bold tracking-wider uppercase transition border flex items-center gap-1.5 ${
                             item.active
                               ? 'bg-green-500/10 text-green-500 border-green-500/20'
                               : 'bg-red-500/10 text-red-500 border-red-500/20'
@@ -1069,18 +1069,18 @@ export default function WebManagerDashboard() {
                         </button>
                       </div>
                       <div className="flex flex-col gap-1 text-xs">
-                        <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                        <span className={`font-mono text-[0.6875rem] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                           <strong>{tr.colEngine}:</strong> {item.engine === 'apache' ? tr.engineApache : tr.engineNginx}
                         </span>
-                        <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                        <span className={`font-mono text-[0.6875rem] truncate ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                           <strong>{tr.colFilename}:</strong> {item.filename}
                         </span>
                         {item.engine === 'nginx' && item.is_proxy && item.auth_enabled && (
-                          <span className={`font-mono text-[11px] truncate ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
+                          <span className={`font-mono text-[0.6875rem] truncate ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
                             <strong>{tr.authBadge}:</strong> {item.auth_username || 'on'}
                           </span>
                         )}
-                        <span className={`font-mono text-[11px] truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        <span className={`font-mono text-[0.6875rem] truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                           <strong>{tr.colRoot}:</strong> {item.root || '—'}
                         </span>
                       </div>
@@ -1142,7 +1142,7 @@ export default function WebManagerDashboard() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className={`rounded-xl border p-4 space-y-2 ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white'}`}>
-                  <span className={`text-[11px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>PHP-FPM</span>
+                  <span className={`text-[0.6875rem] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>PHP-FPM</span>
                   {stackOverview.php_fpm.length === 0 ? (
                     <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{language === 'vi' ? 'Chưa phát hiện pool PHP-FPM.' : 'No PHP-FPM pools detected.'}</p>
                   ) : (
@@ -1157,12 +1157,12 @@ export default function WebManagerDashboard() {
                   )}
                 </div>
                 <div className={`rounded-xl border p-4 space-y-2 ${isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white'}`}>
-                  <span className={`text-[11px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Database</span>
+                  <span className={`text-[0.6875rem] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Database</span>
                   <ul className="space-y-1.5 text-xs">
                     {stackOverview.database_services.map((db) => (
                       <li key={db.id} className={`flex justify-between gap-2 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                         <span>{db.name}</span>
-                        <span className="font-mono text-[10px]">{db.installed ? db.status : '—'}</span>
+                        <span className="font-mono text-[0.625rem]">{db.installed ? db.status : '—'}</span>
                       </li>
                     ))}
                   </ul>
@@ -1170,7 +1170,7 @@ export default function WebManagerDashboard() {
               </div>
               <div className={`border-t pt-4 space-y-3 dark:border-slate-800`}>
                 <p className={`text-xs font-bold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{tr.bootstrapTitle}</p>
-                <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.bootstrapDesc}</p>
+                <p className={`text-[0.6875rem] ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{tr.bootstrapDesc}</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={bootstrapPhpVer}
@@ -1193,7 +1193,7 @@ export default function WebManagerDashboard() {
                       type="button"
                       disabled={bootstrapping !== null}
                       onClick={() => handleStackBootstrap(b.id)}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition disabled:opacity-50 ${
+                      className={`px-3 py-1.5 rounded-lg text-[0.6875rem] font-bold text-white transition disabled:opacity-50 ${
                         isDark ? 'bg-teal-700 hover:bg-teal-600' : 'bg-teal-600 hover:bg-teal-500'
                       }`}
                     >
@@ -1222,7 +1222,7 @@ export default function WebManagerDashboard() {
                         <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
                           {ws.name}
                         </span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                        <span className={`text-[0.625rem] px-2 py-0.5 rounded-full border font-semibold ${
                           ws.status === 'running' ? (isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200')
                           : ws.status === 'stopped' ? (isDark ? 'bg-red-500/15 text-red-400 border-red-500/30' : 'bg-red-100 text-red-700 border-red-200')
                           : (isDark ? 'bg-slate-500/15 text-slate-400 border-slate-500/30' : 'bg-slate-100 text-slate-500 border-slate-200')
@@ -1230,9 +1230,9 @@ export default function WebManagerDashboard() {
                           {ws.installed ? ws.status : 'not installed'}
                         </span>
                       </div>
-                      <p className={`text-[11px] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{ws.description}</p>
+                      <p className={`text-[0.6875rem] mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{ws.description}</p>
                       {ws.conflicts_with?.length > 0 && (
-                        <div className={`flex items-center gap-1.5 text-[10px] font-semibold mt-1 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
+                        <div className={`flex items-center gap-1.5 text-[0.625rem] font-semibold mt-1 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
                           <Icons.AlertTriangle className="w-3 h-3 shrink-0" />
                           {tr.wsConflict}: {ws.conflicts_with.join(', ')}
                         </div>
@@ -1278,7 +1278,7 @@ export default function WebManagerDashboard() {
                     {tr.wsInstallStack}
                   </button>
                 </div>
-                <div className={`text-[11px] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${isDark ? 'bg-amber-950/20 border-amber-800/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                <div className={`text-[0.6875rem] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${isDark ? 'bg-amber-950/20 border-amber-800/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
                   <Icons.Info className="w-3.5 h-3.5 shrink-0" />
                   {language === 'vi' ? 'Nginx nghe cổng 80/443, Apache2 tự động cấu hình sang cổng 8080.' : 'Nginx listens on 80/443; Apache2 is auto-configured to port 8080.'}
                 </div>
@@ -1336,7 +1336,7 @@ export default function WebManagerDashboard() {
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
                           <span className={`text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{engine.name}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                          <span className={`text-[0.625rem] px-2 py-0.5 rounded-full border font-semibold ${
                             engine.status === 'running' ? (isDark ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-green-100 text-green-700 border-green-200')
                             : engine.status === 'stopped' ? (isDark ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-200')
                             : engine.status === 'available' ? (isDark ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-emerald-100 text-emerald-700 border-emerald-200')
@@ -1345,13 +1345,13 @@ export default function WebManagerDashboard() {
                             {engine.status === 'not_installed' ? (language === 'vi' ? 'Chưa cài' : 'Not installed') : engine.status}
                           </span>
                         </div>
-                        {engine.version && <p className={`text-[11px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{engine.version}</p>}
+                        {engine.version && <p className={`text-[0.6875rem] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{engine.version}</p>}
                         <div className="flex items-center gap-1.5">
                           <Icons.ExternalLink className={`w-3 h-3 ${iconColorMap[engine.id] || 'text-blue-500'}`} />
-                          <span className={`text-[11px] font-semibold ${iconColorMap[engine.id] || 'text-blue-500'}`}>{engine.admin_name}</span>
+                          <span className={`text-[0.6875rem] font-semibold ${iconColorMap[engine.id] || 'text-blue-500'}`}>{engine.admin_name}</span>
                           {engine.admin_installed
-                            ? <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700'}`}>✓</span>
-                            : <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{language === 'vi' ? 'Chưa cài' : 'Not installed'}</span>
+                            ? <span className={`text-[0.625rem] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-700'}`}>✓</span>
+                            : <span className={`text-[0.625rem] px-1.5 py-0.5 rounded-full ${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>{language === 'vi' ? 'Chưa cài' : 'Not installed'}</span>
                           }
                         </div>
                       </div>
@@ -1667,7 +1667,7 @@ export default function WebManagerDashboard() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <h4 className={`text-xs font-bold ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>{tr.authTitle}</h4>
-                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.authHint}</p>
+                    <p className={`text-[0.6875rem] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.authHint}</p>
                   </div>
                   <button
                     type="button"
@@ -1683,7 +1683,7 @@ export default function WebManagerDashboard() {
                     />
                   </button>
                 </div>
-                <label className={`flex items-center gap-2 text-[11px] font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                <label className={`flex items-center gap-2 text-[0.6875rem] font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                   <input
                     type="checkbox"
                     checked={authEnabled}
@@ -1695,7 +1695,7 @@ export default function WebManagerDashboard() {
                 {authEnabled && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <label className={`mb-1 block text-[0.625rem] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                         {tr.authUser}
                       </label>
                       <input
@@ -1707,7 +1707,7 @@ export default function WebManagerDashboard() {
                       />
                     </div>
                     <div>
-                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <label className={`mb-1 block text-[0.625rem] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                         {tr.authPass}
                       </label>
                       <input
@@ -1718,7 +1718,7 @@ export default function WebManagerDashboard() {
                           isDark ? 'border-slate-800 bg-slate-950 text-slate-100' : 'border-slate-200 bg-white text-slate-800'
                         }`}
                       />
-                      <p className={`mt-1 text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.authPassKeep}</p>
+                      <p className={`mt-1 text-[0.6875rem] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{tr.authPassKeep}</p>
                     </div>
                   </div>
                 )}
@@ -1736,7 +1736,7 @@ export default function WebManagerDashboard() {
             </div>
 
             <div className="flex items-center justify-between gap-3 border-t pt-4 dark:border-slate-800 flex-shrink-0">
-              <span className={`text-[11px] max-w-sm hidden md:inline ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+              <span className={`text-[0.6875rem] max-w-sm hidden md:inline ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                 {tr.saveTip}
               </span>
               <div className="flex items-center gap-2 w-full md:w-auto">
@@ -1771,13 +1771,13 @@ export default function WebManagerDashboard() {
           <div className="flex min-h-0 flex-1 flex-col p-4 select-none">
             <div className="space-y-4 flex-1 overflow-auto pr-1">
               <div>
-                <label className={`text-[10px] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                <label className={`text-[0.625rem] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                   {tr.serviceType}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setSiteType('static')}
-                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[0.6875rem] flex flex-col items-center justify-center gap-1 transition ${
                       siteType === 'static'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
@@ -1787,7 +1787,7 @@ export default function WebManagerDashboard() {
                   </button>
                   <button
                     onClick={() => setSiteType('php')}
-                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[0.6875rem] flex flex-col items-center justify-center gap-1 transition ${
                       siteType === 'php'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
@@ -1797,7 +1797,7 @@ export default function WebManagerDashboard() {
                   </button>
                   <button
                     onClick={() => setSiteType('proxy')}
-                    className={`p-2.5 rounded-xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[0.6875rem] flex flex-col items-center justify-center gap-1 transition ${
                       siteType === 'proxy'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
@@ -1809,14 +1809,14 @@ export default function WebManagerDashboard() {
               </div>
 
               <div>
-                <label className={`text-[10px] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                <label className={`text-[0.625rem] font-bold mb-2 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                   {tr.siteBackend}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setSiteEngine('nginx')}
-                    className={`p-2.5 rounded-xl border font-bold text-[11px] transition ${
+                    className={`p-2.5 rounded-xl border font-bold text-[0.6875rem] transition ${
                       siteEngine === 'nginx'
                         ? 'bg-blue-600/10 border-blue-500 text-blue-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'
@@ -1833,7 +1833,7 @@ export default function WebManagerDashboard() {
                         ? (language === 'vi' ? 'Cài Apache (tab Dịch vụ Web) trước' : 'Install Apache from Web Services tab first')
                         : undefined
                     }
-                    className={`p-2.5 rounded-xl border font-bold text-[11px] transition disabled:opacity-40 ${
+                    className={`p-2.5 rounded-xl border font-bold text-[0.6875rem] transition disabled:opacity-40 ${
                       siteEngine === 'apache'
                         ? 'bg-amber-600/10 border-amber-500 text-amber-500'
                         : isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'
@@ -1845,7 +1845,7 @@ export default function WebManagerDashboard() {
               </div>
 
               <div>
-                <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                   {tr.domainLabel}
                 </label>
                 <input
@@ -1874,7 +1874,7 @@ export default function WebManagerDashboard() {
               {siteType === 'php' && (
                 <div className="space-y-3 p-3.5 border rounded-xl bg-slate-50/50 dark:bg-slate-950/20 dark:border-slate-800/80">
                   <div>
-                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {tr.phpVersionLabel}
                     </label>
                     <select
@@ -1890,12 +1890,12 @@ export default function WebManagerDashboard() {
                     </select>
                   </div>
                   <div>
-                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {tr.phpModulesLabel}
                     </label>
                     <div className="grid grid-cols-3 gap-1.5 max-h-32 overflow-auto p-1">
                       {availablePhpModules.map((mod) => (
-                        <label key={mod} className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[10px] cursor-pointer transition select-none ${
+                        <label key={mod} className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[0.625rem] cursor-pointer transition select-none ${
                           phpModules.includes(mod)
                             ? 'bg-blue-600/10 border-blue-500/40 text-blue-400 font-bold'
                             : isDark ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-white border-slate-100 text-slate-600'
@@ -1917,7 +1917,7 @@ export default function WebManagerDashboard() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                     {tr.portLabel}
                   </label>
                   <input
@@ -1931,7 +1931,7 @@ export default function WebManagerDashboard() {
                 </div>
                 {siteType !== 'proxy' ? (
                   <div>
-                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {tr.rootLabel}
                     </label>
                     <input
@@ -1945,7 +1945,7 @@ export default function WebManagerDashboard() {
                   </div>
                 ) : (
                   <div>
-                    <label className={`text-[10px] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <label className={`text-[0.625rem] font-bold mb-1 block uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                       {tr.proxyPortLabel}
                     </label>
                     <input
@@ -1969,7 +1969,7 @@ export default function WebManagerDashboard() {
                       <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
                         <Icons.Lock className="w-3.5 h-3.5" /> {tr.sslEnable}
                       </h4>
-                      <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.sslHint}</p>
+                      <p className={`text-[0.6875rem] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{tr.sslHint}</p>
                     </div>
                     <button
                       type="button"
@@ -1988,7 +1988,7 @@ export default function WebManagerDashboard() {
                   </div>
                   {issueSsl && (
                     <div>
-                      <label className={`mb-1 block text-[10px] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <label className={`mb-1 block text-[0.625rem] font-bold uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                         {tr.sslEmail}
                       </label>
                       <input

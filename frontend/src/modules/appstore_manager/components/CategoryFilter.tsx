@@ -34,10 +34,10 @@ export default function CategoryFilter({ active, onChange, expanded, onToggle, i
   return (
     <div className={cn('mx-4 mt-3 rounded-2xl border p-3', isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-slate-50')}>
       <div className="mb-2 flex items-center justify-between">
-        <span className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+        <span className={cn('text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
           {tr.expandCategories}
         </span>
-        <button type="button" onClick={onToggle} className={cn('text-[10px] font-semibold', isDark ? 'text-slate-400' : 'text-slate-500')}>
+        <button type="button" onClick={onToggle} className={cn('text-[0.625rem] font-semibold', isDark ? 'text-slate-400' : 'text-slate-500')}>
           {tr.collapseCategories}
         </button>
       </div>
@@ -71,7 +71,7 @@ function Chip({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors',
+        'rounded-lg px-2.5 py-1 text-[0.6875rem] font-semibold transition-colors',
         active
           ? 'bg-blue-600 text-white'
           : isDark

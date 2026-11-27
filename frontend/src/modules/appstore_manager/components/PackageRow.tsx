@@ -69,7 +69,7 @@ export default function PackageRow({
         {pkg.description}
       </p>
 
-      <p className={cn('font-mono text-[10px]', isDark ? 'text-slate-500' : 'text-slate-500')}>
+      <p className={cn('font-mono text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-500')}>
         {tr.versionOnServer(pkg.remote_version || pkg.version)}
         {pkg.installed && pkg.local_version && (
           <span className={isDark ? 'text-sky-400' : 'text-sky-600'}> · {tr.versionInstalled(pkg.local_version)}</span>
@@ -77,7 +77,7 @@ export default function PackageRow({
       </p>
 
       {showChangelog && (
-        <details className={cn('text-[11px]', isDark ? 'text-slate-400' : 'text-slate-600')}>
+        <details className={cn('text-[0.6875rem]', isDark ? 'text-slate-400' : 'text-slate-600')}>
           <summary className="cursor-pointer font-semibold">{tr.changelogReleaseNotes}</summary>
           <p className="mt-1 line-clamp-4 whitespace-pre-wrap italic">
             {language === 'vi' ? pkg.changelog_vi || pkg.changelog_en : pkg.changelog_en || pkg.changelog_vi}
@@ -138,7 +138,7 @@ function Badge({ children, isDark, tone }: { children: React.ReactNode; isDark: 
       : isDark
         ? 'bg-cyan-950/40 text-cyan-400 ring-cyan-900/50'
         : 'bg-cyan-50 text-cyan-800 ring-cyan-200';
-  return <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-semibold ring-1', cls)}>{children}</span>;
+  return <span className={cn('rounded-md px-1.5 py-0.5 text-[0.625rem] font-semibold ring-1', cls)}>{children}</span>;
 }
 
 function StatusBadge({ pkg, isDark, tr }: { pkg: Package; isDark: boolean; tr: AppStoreTranslations }) {

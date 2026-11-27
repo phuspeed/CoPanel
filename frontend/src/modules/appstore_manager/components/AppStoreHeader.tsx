@@ -112,7 +112,7 @@ export default function AppStoreHeader({
         </label>
 
         {version && (
-          <span className={cn('font-mono text-[10px]', isDark ? 'text-slate-500' : 'text-slate-400')}>v{version}</span>
+          <span className={cn('font-mono text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>v{version}</span>
         )}
       </div>
     </header>

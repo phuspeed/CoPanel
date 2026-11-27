@@ -277,13 +277,13 @@ export default function SystemHealthWidget() {
             <Icon className="w-3.5 h-3.5" />
           </span>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+            <p className="text-[0.6875rem] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
             {subtitle && !errorHint && (
-              <p className="text-[10px] text-slate-500 dark:text-slate-500 truncate" title={subtitle}>
+              <p className="text-[0.625rem] text-slate-500 dark:text-slate-500 truncate" title={subtitle}>
                 {subtitle}
               </p>
             )}
-            {errorHint && <p className="text-[10px] text-red-500">{errorHint}</p>}
+            {errorHint && <p className="text-[0.625rem] text-red-500">{errorHint}</p>}
           </div>
         </div>
         <p className="text-lg font-extrabold tabular-nums text-slate-800 dark:text-slate-100 shrink-0">
@@ -341,7 +341,7 @@ export default function SystemHealthWidget() {
             <button
               type="button"
               onClick={() => navigate(STORAGE_MANAGER_PATH)}
-              className="w-full text-left text-[10px] font-semibold px-2 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition"
+              className="w-full text-left text-[0.625rem] font-semibold px-2 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition"
             >
               {storageFootnote}
             </button>

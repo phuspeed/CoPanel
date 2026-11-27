@@ -9,7 +9,7 @@ import Layout from './Layout';
 import Dashboard from './Dashboard';
 import Login from './Login';
 import ExtensionErrorBoundary from './ExtensionErrorBoundary';
-import { DEFAULT_BRANDING, BRANDING_UPDATED_EVENT, fetchPublicBranding, normalizeBranding, type BrandingSettings } from './brandingTypes';
+import { DEFAULT_BRANDING, BRANDING_UPDATED_EVENT, fetchPublicBranding, normalizeBranding, applyFontSize, type BrandingSettings } from './brandingTypes';
 import { SESSION_EXPIRED_EVENT } from './authHeaders';
 
 const DEFAULT_FAVICON =
@@ -18,6 +18,7 @@ const DEFAULT_FAVICON =
 function applyBranding(branding: BrandingSettings) {
   const siteTitle = branding.site_title?.trim() || DEFAULT_BRANDING.site_title;
   document.title = siteTitle;
+  applyFontSize(branding.font_size, true);
   const faviconHref = branding.favicon_data_url || DEFAULT_FAVICON;
   let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   if (!link) {

@@ -131,7 +131,7 @@ export default function StartMenu({
         )}
         <div className="min-w-0 flex-1">
           <p className={cn('truncate text-sm font-bold', isDark ? 'text-white' : 'text-slate-900')}>{siteTitle}</p>
-          <p className={cn('text-[10px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.start}</p>
+          <p className={cn('text-[0.625rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{tr.start}</p>
         </div>
         <button
           type="button"
@@ -169,7 +169,7 @@ export default function StartMenu({
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {pinned.length > 0 && (
           <section className="mb-3">
-            <p className={cn('mb-2 px-1 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+            <p className={cn('mb-2 px-1 text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
               {tr.pinned}
             </p>
             <div className="grid grid-cols-4 gap-1 sm:grid-cols-5">
@@ -187,7 +187,7 @@ export default function StartMenu({
         )}
 
         <section>
-          <p className={cn('mb-2 px-1 text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+          <p className={cn('mb-2 px-1 text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
             {tr.allApps}
           </p>
           {rest.length === 0 && pinned.length === 0 ? (
@@ -246,7 +246,7 @@ function AppTile({
       </div>
       <span
         className={cn(
-          'max-w-full truncate text-center text-[9px] font-semibold leading-tight',
+          'max-w-full truncate text-center text-[0.5625rem] font-semibold leading-tight',
           isDark ? 'text-slate-300' : 'text-slate-600',
         )}
       >

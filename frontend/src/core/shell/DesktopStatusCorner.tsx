@@ -101,13 +101,13 @@ export default function DesktopStatusCorner({ isDark, language }: Props) {
 
   const MiniBar = ({ label, pct }: { label: string; pct: number }) => (
     <div className="flex items-center gap-2">
-      <span className={cn('w-7 text-[9px] font-bold uppercase', isDark ? 'text-slate-400' : 'text-slate-500')}>
+      <span className={cn('w-7 text-[0.5625rem] font-bold uppercase', isDark ? 'text-slate-400' : 'text-slate-500')}>
         {label}
       </span>
       <div className={cn('h-1.5 flex-1 overflow-hidden rounded-full', isDark ? 'bg-slate-700/80' : 'bg-slate-200')}>
         <div className={cn('h-full transition-all duration-500', barTone(pct))} style={{ width: `${pct}%` }} />
       </div>
-      <span className={cn('w-8 text-right text-[10px] font-bold tabular-nums', isDark ? 'text-slate-200' : 'text-slate-700')}>
+      <span className={cn('w-8 text-right text-[0.625rem] font-bold tabular-nums', isDark ? 'text-slate-200' : 'text-slate-700')}>
         {pct.toFixed(0)}%
       </span>
     </div>
@@ -137,7 +137,7 @@ export default function DesktopStatusCorner({ isDark, language }: Props) {
             peak > 85 ? 'bg-red-500' : peak > 65 ? 'bg-amber-500' : 'bg-emerald-500',
           )}
         />
-        <span className="text-[10px] font-bold tabular-nums">
+        <span className="text-[0.625rem] font-bold tabular-nums">
           {error ? '—' : `${cpu.toFixed(0)}% · ${ram.toFixed(0)}%`}
         </span>
         <Icons.ChevronDown
@@ -153,7 +153,7 @@ export default function DesktopStatusCorner({ isDark, language }: Props) {
           )}
         >
           {error ? (
-            <p className="text-[10px] text-red-400">{tr.loadError}</p>
+            <p className="text-[0.625rem] text-red-400">{tr.loadError}</p>
           ) : (
             <>
               <MiniBar label={tr.cpu} pct={cpu} />
@@ -165,7 +165,7 @@ export default function DesktopStatusCorner({ isDark, language }: Props) {
             type="button"
             onClick={() => openModuleWindow('/system-monitor')}
             className={cn(
-              'flex w-full items-center justify-center gap-1.5 rounded-xl py-1.5 text-[10px] font-bold',
+              'flex w-full items-center justify-center gap-1.5 rounded-xl py-1.5 text-[0.625rem] font-bold',
               isDark ? 'bg-blue-600/30 text-blue-300 hover:bg-blue-600/40' : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
             )}
           >

@@ -372,7 +372,7 @@ export default function SSLManagerDashboard() {
                 <tr key={cert.domain} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}>
                   <td className="p-3 font-bold text-teal-500">{cert.domain}</td>
                   <td className="p-3">
-                    <span className={cn('px-2 py-0.5 rounded border text-[10px] font-bold uppercase', cert.active ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/10' : 'border-red-500/30 text-red-500 bg-red-500/10')}>
+                    <span className={cn('px-2 py-0.5 rounded border text-[0.625rem] font-bold uppercase', cert.active ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/10' : 'border-red-500/30 text-red-500 bg-red-500/10')}>
                       {cert.active ? tr.secured : tr.noSsl}
                     </span>
                   </td>
@@ -387,7 +387,7 @@ export default function SSLManagerDashboard() {
                     <button
                       type="button"
                       onClick={() => openAction(cert)}
-                      className={cn('px-3 py-1.5 rounded-lg text-[11px] font-bold border transition', isDark ? 'border-teal-800 bg-teal-950/40 text-teal-400 hover:bg-teal-900/40' : 'border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100')}
+                      className={cn('px-3 py-1.5 rounded-lg text-[0.6875rem] font-bold border transition', isDark ? 'border-teal-800 bg-teal-950/40 text-teal-400 hover:bg-teal-900/40' : 'border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100')}
                     >
                       {cert.active && cert.type === "Let's Encrypt" ? tr.renewBtn : tr.issueBtn}
                     </button>
@@ -597,7 +597,7 @@ export default function SSLManagerDashboard() {
 function Field({ label, children, isDark }: { label: string; children: React.ReactNode; isDark: boolean }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className={cn('text-[11px] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>{label}</span>
+      <span className={cn('text-[0.6875rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-400' : 'text-slate-500')}>{label}</span>
       {children}
     </label>
   );

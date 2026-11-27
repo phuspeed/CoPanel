@@ -35,14 +35,14 @@ export default function Widget({ title, icon = 'Activity', status, loading, acti
         </div>
         <div className="flex items-center gap-2">
           {status && (
-            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
+            <span className={`text-[0.625rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
               {status}
             </span>
           )}
           {action && (
             <button
               onClick={action.onClick}
-              className="text-[11px] font-bold text-blue-500 hover:text-blue-400"
+              className="text-[0.6875rem] font-bold text-blue-500 hover:text-blue-400"
             >
               {action.label}
             </button>

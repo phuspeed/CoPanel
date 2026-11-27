@@ -6,6 +6,39 @@ export interface WallpaperItem {
   data_url: string;
 }
 
+export type FontSizeId = 'sm' | 'md' | 'lg' | 'xl';
+
+/** Presets for Settings > Branding. ``md`` (112.5%) is the default — a notch above the historic 16px root. */
+export const FONT_SIZE_PRESETS: Record<FontSizeId, { id: FontSizeId; percent: number; css: string }> = {
+  sm: { id: 'sm', percent: 100, css: '100%' },
+  md: { id: 'md', percent: 112.5, css: '112.5%' },
+  lg: { id: 'lg', percent: 125, css: '125%' },
+  xl: { id: 'xl', percent: 137.5, css: '137.5%' },
+};
+
+export const DEFAULT_FONT_SIZE: FontSizeId = 'md';
+export const FONT_SIZE_STORAGE_KEY = 'copanel_font_size';
+
+export function normalizeFontSize(raw: unknown): FontSizeId {
+  const v = String(raw ?? '').trim().toLowerCase();
+  return v in FONT_SIZE_PRESETS ? (v as FontSizeId) : DEFAULT_FONT_SIZE;
+}
+
+/** Apply the UI scale to <html>. Persist to localStorage only after a confirmed value (saved or loaded from the server). */
+export function applyFontSize(id: FontSizeId, persist = false): void {
+  if (typeof document === 'undefined') return;
+  const preset = FONT_SIZE_PRESETS[id] || FONT_SIZE_PRESETS[DEFAULT_FONT_SIZE];
+  document.documentElement.style.fontSize = preset.css;
+  document.documentElement.setAttribute('data-cp-font', preset.id);
+  if (persist) {
+    try {
+      localStorage.setItem(FONT_SIZE_STORAGE_KEY, preset.id);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+}
+
 export interface BrandingSettings {
   site_title: string;
   site_subtitle: string;
@@ -13,6 +46,7 @@ export interface BrandingSettings {
   logo_data_url: string | null;
   wallpapers: WallpaperItem[];
   selected_wallpaper_id: string | null;
+  font_size: FontSizeId;
 }
 
 export const DEFAULT_BRANDING: BrandingSettings = {
@@ -22,6 +56,7 @@ export const DEFAULT_BRANDING: BrandingSettings = {
   logo_data_url: null,
   wallpapers: [],
   selected_wallpaper_id: null,
+  font_size: DEFAULT_FONT_SIZE,
 };
 
 export const MAX_WALLPAPERS = 12;
@@ -62,6 +97,7 @@ export function normalizeBranding(raw: Partial<BrandingSettings> | null | undefi
     logo_data_url: raw?.logo_data_url || null,
     wallpapers,
     selected_wallpaper_id: selected,
+    font_size: normalizeFontSize(raw?.font_size),
   };
 }
 

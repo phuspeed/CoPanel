@@ -81,7 +81,7 @@ export default function Dashboard() {
     <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
+          <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
             {tr.badge}
           </p>
           <h1 className={cn('truncate text-xl font-bold md:text-2xl', isDark ? 'text-slate-100' : 'text-slate-900')}>
@@ -90,7 +90,7 @@ export default function Dashboard() {
           <p className={cn('mt-0.5 text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>{tr.subtitle}</p>
         </div>
         <div className={cn(chromePanel(isDark), 'shrink-0 px-4 py-2.5 text-right min-w-[160px]')}>
-          <p className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
+          <p className={cn('text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-sky-400' : 'text-sky-600')}>
             {tr.serverTime}
           </p>
           <p className={cn('mt-0.5 font-mono text-lg font-bold', isDark ? 'text-slate-100' : 'text-slate-800')}>
@@ -101,7 +101,7 @@ export default function Dashboard() {
               hour12: language === 'en',
             }).format(now)}
           </p>
-          <p className={cn('text-[11px]', isDark ? 'text-slate-400' : 'text-slate-500')}>
+          <p className={cn('text-[0.6875rem]', isDark ? 'text-slate-400' : 'text-slate-500')}>
             {new Intl.DateTimeFormat(locale, {
               weekday: 'short',
               year: 'numeric',
@@ -143,7 +143,7 @@ export default function Dashboard() {
                   <Icon className="h-4 w-4" />
                 </span>
                 <p className={cn('text-xs font-bold', isDark ? 'text-slate-100' : 'text-slate-800')}>{actionText.label}</p>
-                <p className={cn('line-clamp-1 text-[10px]', isDark ? 'text-slate-400' : 'text-slate-500')}>{actionText.desc}</p>
+                <p className={cn('line-clamp-1 text-[0.625rem]', isDark ? 'text-slate-400' : 'text-slate-500')}>{actionText.desc}</p>
               </Link>
             );
           })}
@@ -153,7 +153,7 @@ export default function Dashboard() {
       <section>
         <div className="mb-2.5 flex items-center justify-between">
           <h2 className={cn('text-sm font-bold', isDark ? 'text-slate-200' : 'text-slate-800')}>{tr.allApps}</h2>
-          <span className={cn('text-[10px] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
+          <span className={cn('text-[0.625rem] font-bold uppercase tracking-wider', isDark ? 'text-slate-500' : 'text-slate-400')}>
             {modules.length} {tr.modules}
           </span>
         </div>

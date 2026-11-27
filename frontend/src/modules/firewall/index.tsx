@@ -325,7 +325,7 @@ export default function FirewallDashboard() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] uppercase tracking-widest text-indigo-500 font-bold">{tr.category}</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-indigo-500 font-bold">{tr.category}</p>
             <h1 className="text-lg font-semibold truncate flex items-center gap-2">
               <Icons.ShieldAlert className="w-5 h-5 text-indigo-500 shrink-0" />
               {tr.title}
@@ -564,7 +564,7 @@ export default function FirewallDashboard() {
                             <Icons.ShieldAlert className="w-4 h-4 text-indigo-500" />
                             <h3 className="font-bold text-sm uppercase">{jail.name}</h3>
                           </div>
-                          <span className="px-2 py-0.5 bg-red-500/10 text-red-500 text-[10px] font-bold rounded-full">
+                          <span className="px-2 py-0.5 bg-red-500/10 text-red-500 text-[0.625rem] font-bold rounded-full">
                             {jail.total_banned} {tr.totalBanned}
                           </span>
                         </div>

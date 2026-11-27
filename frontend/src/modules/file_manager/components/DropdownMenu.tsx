@@ -117,7 +117,7 @@ export default function DropdownMenu({ isDark, label, icon, items, compactLabel,
                   {it.checked ? <Icons.Check className="h-3.5 w-3.5" /> : it.icon}
                 </span>
                 <span className="flex-1">{it.label}</span>
-                {it.hint && <span className="text-[10px] font-mono opacity-50">{it.hint}</span>}
+                {it.hint && <span className="text-[0.625rem] font-mono opacity-50">{it.hint}</span>}
               </button>
             </div>
           ))}

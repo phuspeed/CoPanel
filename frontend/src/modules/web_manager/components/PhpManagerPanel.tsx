@@ -412,7 +412,7 @@ export default function PhpManagerPanel({ isDark, language, authHeaders }: Props
                         PHP {version}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`px-2.5 py-0.5 rounded border text-[10px] uppercase font-bold ${statusBadge(status)}`}>
+                        <span className={`px-2.5 py-0.5 rounded border text-[0.625rem] uppercase font-bold ${statusBadge(status)}`}>
                           {status === 'active' ? tr.active : status === 'installed' ? tr.installed : tr.available}
                         </span>
                       </td>
@@ -466,7 +466,7 @@ export default function PhpManagerPanel({ isDark, language, authHeaders }: Props
                           {status === 'active' && (
                             <div className="flex items-center gap-2 justify-end flex-wrap">
                               <span
-                                className={`text-[10px] font-semibold flex items-center gap-1 ${
+                                className={`text-[0.625rem] font-semibold flex items-center gap-1 ${
                                   isDark ? 'text-green-400' : 'text-green-600'
                                 }`}
                               >

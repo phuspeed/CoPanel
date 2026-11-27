@@ -179,7 +179,7 @@ export default function Dock({
               <Icons.Server className="h-3.5 w-3.5 text-white" />
             </div>
           )}
-          <span className="hidden text-[11px] font-bold lg:inline">{siteTitle}</span>
+          <span className="hidden text-[0.6875rem] font-bold lg:inline">{siteTitle}</span>
         </button>
 
         {pinnedModules.map((mod) => {
@@ -227,7 +227,7 @@ export default function Dock({
               <Icon className="h-4 w-4 shrink-0" />
               <span
                 className={cn(
-                  'hidden max-w-[100px] truncate text-[10px] font-semibold sm:inline',
+                  'hidden max-w-[100px] truncate text-[0.625rem] font-semibold sm:inline',
                   activity?.playbackState === 'playing' && 'text-emerald-500',
                 )}
               >
@@ -250,7 +250,7 @@ export default function Dock({
           {isDark ? <Icons.Sun className="h-4 w-4" /> : <Icons.Moon className="h-4 w-4" />}
         </DockButton>
         <DockButton isDark={isDark} title="Language" onClick={onToggleLanguage}>
-          <span className="text-[10px] font-bold">{language === 'en' ? 'EN' : 'VI'}</span>
+          <span className="text-[0.625rem] font-bold">{language === 'en' ? 'EN' : 'VI'}</span>
         </DockButton>
         {panelVersion && (
           <button
@@ -265,7 +265,7 @@ export default function Dock({
                 : `CoPanel v${panelVersion}`
             }
             className={cn(
-              'relative hidden items-center gap-1 rounded-lg px-1.5 py-1 font-mono text-[10px] transition-colors sm:flex disabled:cursor-default',
+              'relative hidden items-center gap-1 rounded-lg px-1.5 py-1 font-mono text-[0.625rem] transition-colors sm:flex disabled:cursor-default',
               updateVersion
                 ? isDark
                   ? 'text-amber-400 hover:bg-slate-800'
@@ -280,8 +280,8 @@ export default function Dock({
           </button>
         )}
         <div className={cn('hidden text-right leading-tight md:block md:px-1', isDark ? 'text-slate-300' : 'text-slate-700')}>
-          <p className="text-[11px] font-bold tabular-nums">{timeStr}</p>
-          <p className={cn('text-[9px]', isDark ? 'text-slate-500' : 'text-slate-400')}>{dateStr}</p>
+          <p className="text-[0.6875rem] font-bold tabular-nums">{timeStr}</p>
+          <p className={cn('text-[0.5625rem]', isDark ? 'text-slate-500' : 'text-slate-400')}>{dateStr}</p>
         </div>
         <button
           type="button"
@@ -300,13 +300,13 @@ export default function Dock({
         >
           <span
             className={cn(
-              'flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold text-white',
+              'flex h-7 w-7 items-center justify-center rounded-full text-[0.6875rem] font-bold text-white',
               isDark ? 'bg-blue-600' : 'bg-blue-500',
             )}
           >
             {userInitial}
           </span>
-          <span className={cn('hidden max-w-[72px] truncate text-[10px] font-bold lg:inline', isDark ? 'text-slate-300' : 'text-slate-600')}>
+          <span className={cn('hidden max-w-[72px] truncate text-[0.625rem] font-bold lg:inline', isDark ? 'text-slate-300' : 'text-slate-600')}>
             {username}
           </span>
         </button>
@@ -360,7 +360,7 @@ function DockButton({
     >
       {children}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-500 px-1 text-[8px] font-bold text-white">
+        <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full bg-blue-500 px-1 text-[0.5rem] font-bold text-white">
           {badge > 99 ? '99+' : badge}
         </span>
       )}

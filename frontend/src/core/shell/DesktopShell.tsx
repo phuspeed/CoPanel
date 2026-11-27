@@ -113,7 +113,7 @@ export default function DesktopShell({
         )}
         <p
           className={cn(
-            'text-[11px] font-semibold uppercase tracking-[0.2em]',
+            'text-[0.6875rem] font-semibold uppercase tracking-[0.2em]',
             isDark ? 'text-slate-500' : 'text-slate-500/80',
           )}
         >
@@ -134,7 +134,7 @@ export default function DesktopShell({
           {timeStr}
         </p>
         <p className={cn('mt-2 text-sm capitalize', isDark ? 'text-slate-400' : 'text-slate-500')}>{dateStr}</p>
-        <p className={cn('mt-10 text-[11px]', isDark ? 'text-slate-600' : 'text-slate-400')}>{tr.hint}</p>
+        <p className={cn('mt-10 text-[0.6875rem]', isDark ? 'text-slate-600' : 'text-slate-400')}>{tr.hint}</p>
       </div>
     </div>
   );

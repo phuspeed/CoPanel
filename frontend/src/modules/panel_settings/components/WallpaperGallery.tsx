@@ -100,10 +100,10 @@ export default function WallpaperGallery({
           <div className="absolute inset-0 bg-gradient-to-r from-[#e8d5d8] via-[#e8eef5] to-[#c8e4e8] dark:from-slate-950 dark:via-slate-900 dark:to-cyan-950/40" />
           <div className="absolute inset-0 bg-gradient-to-br from-slate-900/10 to-slate-900/25" />
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2">
-            <p className="text-[11px] font-semibold text-white">{tr.defaultGradient}</p>
+            <p className="text-[0.6875rem] font-semibold text-white">{tr.defaultGradient}</p>
           </div>
           {defaultActive && (
-            <span className="absolute right-2 top-2 rounded-full bg-sky-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            <span className="absolute right-2 top-2 rounded-full bg-sky-500 px-1.5 py-0.5 text-[0.625rem] font-bold text-white">
               {tr.selected}
             </span>
           )}
@@ -127,10 +127,10 @@ export default function WallpaperGallery({
               >
                 <img src={wp.data_url} alt={wp.label || 'Wallpaper'} className="h-full w-full object-cover" />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-                  <p className="truncate text-[11px] font-medium text-white">{wp.label || wp.id}</p>
+                  <p className="truncate text-[0.6875rem] font-medium text-white">{wp.label || wp.id}</p>
                 </div>
                 {active && (
-                  <span className="absolute right-2 top-2 rounded-full bg-sky-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  <span className="absolute right-2 top-2 rounded-full bg-sky-500 px-1.5 py-0.5 text-[0.625rem] font-bold text-white">
                     {tr.selected}
                   </span>
                 )}

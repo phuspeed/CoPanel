@@ -311,7 +311,7 @@ export default function PackageManagerDashboard() {
         >
           <div className="min-w-0 flex-1">
             {!isWindowed && (
-              <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">{tr.category}</p>
+              <p className="text-[0.625rem] uppercase tracking-widest text-blue-500 font-bold">{tr.category}</p>
             )}
             <h1 className={cn('font-semibold truncate', isWindowed ? 'text-base' : 'text-lg')}>{tr.title}</h1>
             <p className={cn('text-xs mt-0.5 line-clamp-1 sm:line-clamp-2', muted)}>{tr.subtitle}</p>
@@ -333,13 +333,13 @@ export default function PackageManagerDashboard() {
                 isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-white',
               )}
             >
-              <span className={cn('text-[10px] font-bold uppercase tracking-widest', isDark ? 'text-blue-400' : 'text-blue-600')}>
+              <span className={cn('text-[0.625rem] font-bold uppercase tracking-widest', isDark ? 'text-blue-400' : 'text-blue-600')}>
                 {tr.engine}
               </span>
               <p className={cn('font-mono font-bold leading-tight', isWindowed ? 'text-sm' : 'text-lg', isDark ? 'text-slate-100' : 'text-slate-800')}>
                 {runningCount}/{packages.length || 0}
               </p>
-              {!isWindowed && <span className={cn('text-[10px]', muted)}>{tr.activeServices}</span>}
+              {!isWindowed && <span className={cn('text-[0.625rem]', muted)}>{tr.activeServices}</span>}
             </div>
           </div>
         </header>
@@ -404,7 +404,7 @@ export default function PackageManagerDashboard() {
                         setStatusFilter('all');
                       }}
                       className={cn(
-                        'w-full text-left px-3 py-2.5 min-h-[40px] text-[11px] font-bold uppercase tracking-wider rounded-lg transition',
+                        'w-full text-left px-3 py-2.5 min-h-[40px] text-[0.6875rem] font-bold uppercase tracking-wider rounded-lg transition',
                         isActive
                           ? isDark
                             ? 'bg-blue-600/25 text-blue-300'
@@ -442,7 +442,7 @@ export default function PackageManagerDashboard() {
                         type="button"
                         onClick={() => setStatusFilter(chip.id)}
                         className={cn(
-                          'shrink-0 min-h-[32px] px-2.5 rounded-lg text-[11px] font-semibold border transition-colors',
+                          'shrink-0 min-h-[32px] px-2.5 rounded-lg text-[0.6875rem] font-semibold border transition-colors',
                           active
                             ? isDark
                               ? 'bg-blue-600/30 text-blue-200 border-blue-500/40'
@@ -507,7 +507,7 @@ export default function PackageManagerDashboard() {
                               </h4>
                               <span
                                 className={cn(
-                                  'text-[10px] px-1.5 py-0.5 rounded border inline-block mt-0.5',
+                                  'text-[0.625rem] px-1.5 py-0.5 rounded border inline-block mt-0.5',
                                   isDark ? 'text-slate-400 bg-slate-800/60 border-slate-700/60' : 'text-slate-500 bg-slate-100 border-slate-200',
                                 )}
                               >
@@ -517,7 +517,7 @@ export default function PackageManagerDashboard() {
                           </div>
                           <span
                             className={cn(
-                              'shrink-0 text-[10px] sm:text-[11px] px-2 py-1 rounded-full border flex items-center gap-1.5 font-medium',
+                              'shrink-0 text-[0.625rem] sm:text-[0.6875rem] px-2 py-1 rounded-full border flex items-center gap-1.5 font-medium',
                               pkg.status === 'running'
                                 ? 'bg-green-500/10 text-green-500 border-green-500/20'
                                 : pkg.status === 'stopped'
@@ -548,7 +548,7 @@ export default function PackageManagerDashboard() {
                         {pkg.id === 'pm2' && (
                           <p
                             className={cn(
-                              'text-[11px] rounded-lg border px-2.5 py-2',
+                              'text-[0.6875rem] rounded-lg border px-2.5 py-2',
                               !nodeInstalled && pkg.status === 'not_installed'
                                 ? isDark
                                   ? 'border-amber-800/50 bg-amber-950/30 text-amber-300'
@@ -565,7 +565,7 @@ export default function PackageManagerDashboard() {
                         {pkg.id === 'phpmyadmin' && pkg.status !== 'not_installed' && (
                           <div
                             className={cn(
-                              'text-[11px] border rounded-xl px-2.5 py-2',
+                              'text-[0.6875rem] border rounded-xl px-2.5 py-2',
                               isDark ? 'border-slate-700 bg-slate-800/40 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700',
                             )}
                           >

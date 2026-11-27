@@ -51,6 +51,7 @@ def set_branding(req: BrandingSettingsRequest, user: Dict[str, Any] = Depends(re
             req.logo_data_url,
             [w.model_dump() for w in req.wallpapers],
             req.selected_wallpaper_id,
+            req.font_size,
         )
     except ValueError as exc:
         raise ApiError("VALIDATION_ERROR", str(exc), http_status=400)

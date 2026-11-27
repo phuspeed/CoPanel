@@ -182,7 +182,7 @@ export default function FileTree({ isDark, title, currentPath, fsVersion, onNavi
 
   return (
     <section data-testid="fm-tree" role="tree" aria-label={title}>
-      <p className={cn('mb-1.5 px-2 text-[10px] font-bold uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400')}>{title}</p>
+      <p className={cn('mb-1.5 px-2 text-[0.625rem] font-bold uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400')}>{title}</p>
       {root ? renderNode(root, 0) : <Icons.Loader className="mx-2 h-3.5 w-3.5 animate-spin opacity-60" />}
     </section>
   );

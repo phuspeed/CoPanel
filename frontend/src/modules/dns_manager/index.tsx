@@ -202,7 +202,7 @@ export default function DnsManager() {
           className={`shrink-0 px-4 py-3 border-b flex items-center justify-between gap-4 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}
         >
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
+            <p className="text-[0.625rem] uppercase tracking-widest text-blue-500 font-bold">{t.category}</p>
             <h1 className="text-lg font-semibold truncate">{t.title}</h1>
             <p className={`text-xs mt-0.5 line-clamp-2 ${muted}`}>{t.subtitle}</p>
           </div>
@@ -234,7 +234,7 @@ export default function DnsManager() {
             className={`h-full w-52 shrink-0 border-r flex flex-col ${isDark ? 'border-slate-700 bg-slate-900/50' : 'border-slate-200 bg-slate-50'}`}
           >
             <div className="shrink-0 p-3 border-b border-inherit space-y-2">
-              <p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>{t.zones}</p>
+              <p className={`text-[0.625rem] font-bold uppercase tracking-wider ${muted}`}>{t.zones}</p>
               <div className="flex gap-1.5">
                 <input
                   value={newZone}
@@ -270,7 +270,7 @@ export default function DnsManager() {
                       }`}
                     >
                       <span className="block font-semibold truncate">{z.domain}</span>
-                      <span className="text-[10px] uppercase tracking-wider opacity-70">{z.backend}</span>
+                      <span className="text-[0.625rem] uppercase tracking-wider opacity-70">{z.backend}</span>
                     </button>
                     <button
                       type="button"
@@ -300,7 +300,7 @@ export default function DnsManager() {
                     <h2 className="text-base font-bold">{active.domain}</h2>
                     <p className={`text-xs ${muted}`}>{t.records}</p>
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                  <span className="text-[0.625rem] uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                     {active.backend}
                   </span>
                 </header>
@@ -348,13 +348,13 @@ export default function DnsManager() {
                   {active.records.map((r) => (
                     <li key={r.id} className="flex items-center justify-between py-2 text-sm gap-2">
                       <div className="flex-1 min-w-0">
-                        <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 mr-2">
+                        <span className="text-[0.625rem] uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 mr-2">
                           {r.type}
                         </span>
                         <span className="font-mono text-slate-700 dark:text-slate-200">{r.name}</span>
                         <span className="text-slate-400 mx-1">/</span>
                         <span className="font-mono break-all">{r.value}</span>
-                        <span className={`text-[11px] ml-2 ${muted}`}>
+                        <span className={`text-[0.6875rem] ml-2 ${muted}`}>
                           {t.ttl} {r.ttl}
                         </span>
                       </div>
