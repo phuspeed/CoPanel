@@ -38,6 +38,13 @@ function checkMainBundleExtensionLoader(html) {
   if (!bundle.includes('extensions/index.json')) {
     errors.push('main bundle missing runtime extension loader (extensions/index.json fetch)');
   }
+  const compact = bundle.replace(/\s+/g, '');
+  if (compact.includes('topics:"jobs,notifications",access_token:')) {
+    errors.push('main bundle still puts the login JWT in /api/platform/events?access_token=');
+  }
+  if (!bundle.includes('/api/auth/stream-ticket') || !compact.includes('topics:"jobs,notifications",ticket:')) {
+    errors.push('main bundle missing stream-ticket EventSource client for /api/platform/events');
+  }
 }
 
 function loadImportMap() {

@@ -322,7 +322,9 @@ export default function Layout({
     if (!sessionKey) return;
     jobsApi.refresh().catch(() => {});
     notificationsApi.refresh().catch(() => {});
-    reconnectPlatformEvents();
+    // Force: a previous SSE give-up (401 / repeated failures) must not stick
+    // after a fresh login. Visibility changes do not pass force.
+    reconnectPlatformEvents({ force: true });
   }, [sessionKey]);
 
   useEffect(() => {

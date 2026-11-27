@@ -1,10 +1,14 @@
 /**
- * EventSource-based subscription to the backend ``/api/platform/events``
+ * EventSource/fetch subscription to the backend ``/api/platform/events``
  * stream. Re-emits ``jobs`` and ``notifications`` topics into a tiny pub/sub
  * so multiple UI surfaces (Task Center, Notification Center, Dashboard
  * widgets) can listen without each opening their own SSE connection.
+ *
+ * Uses ``fetch()`` rather than ``EventSource`` so an HTTP 401 is visible:
+ * EventSource does not expose the status, auto-reconnects on the same URL,
+ * and can flood the console when the backend rejects the query token.
  */
-import { fetchStreamTicket, getAuthToken, SESSION_EXPIRED_EVENT } from '../authHeaders';
+import { apiFetch, fetchStreamTicket, getAuthToken, SESSION_EXPIRED_EVENT } from '../authHeaders';
 
 type Handler = (payload: any) => void;
 
@@ -14,14 +18,87 @@ const MIN_RETRY_MS = 2000;
 const MAX_RETRY_MS = 60000;
 const POLL_FALLBACK_AFTER_FAILURES = 3;
 
+async function readSseStream(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onEvent: (event: string, data: string) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let eventName = 'message';
+  let dataLines: string[] = [];
+
+  const flush = () => {
+    if (dataLines.length) {
+      onEvent(eventName, dataLines.join('\n'));
+    }
+    eventName = 'message';
+    dataLines = [];
+  };
+
+  try {
+    while (true) {
+      if (signal.aborted) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* already closed */
+        }
+        return;
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        buf += decoder.decode();
+        if (buf) {
+          // trailing line without a terminator
+          const line = buf;
+          buf = '';
+          if (line === '') flush();
+          else if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+        }
+        flush();
+        return;
+      }
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line === '') {
+          flush();
+          continue;
+        }
+        if (line.startsWith(':')) continue;
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).replace(/^ /, ''));
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released */
+    }
+  }
+}
+
 class EventHub {
-  private source: EventSource | null = null;
+  private abort: AbortController | null = null;
   private handlers = new Map<string, Set<Handler>>();
   private retryDelay = MIN_RETRY_MS;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private failureCount = 0;
   private connecting = false;
+  private streamOpen = false;
   private authFailed = false;
+  /** After repeated stream failures (or an auth 401), stop SSE and let polling take over. */
+  private gaveUp = false;
 
   on(topic: string, handler: Handler): () => void {
     let set = this.handlers.get(topic);
@@ -65,14 +142,15 @@ class EventHub {
   }
 
   private ensureConnected() {
-    if (this.authFailed || this.source || this.connecting) return;
+    if (this.authFailed || this.gaveUp || this.streamOpen || this.connecting) return;
     if (typeof document !== 'undefined' && document.hidden) return;
     if (!getAuthToken()) return;
     this.connecting = true;
     void this.buildUrl()
       .then((url) => {
         this.connecting = false;
-        if (this.source || this.handlers.size === 0) return;
+        if (this.streamOpen || this.handlers.size === 0) return;
+        if (this.authFailed || this.gaveUp) return;
         if (!url) {
           // Ticket request 401s clear the JWT; do not hammer the events URL.
           if (!getAuthToken()) {
@@ -80,10 +158,14 @@ class EventHub {
             return;
           }
           this.failureCount += 1;
+          if (this.shouldGiveUp()) {
+            this.stopForDegraded();
+            return;
+          }
           this.scheduleRetry();
           return;
         }
-        this.openSource(url);
+        void this.openSource(url);
       })
       .catch(() => {
         this.connecting = false;
@@ -91,42 +173,87 @@ class EventHub {
       });
   }
 
-  private openSource(url: string) {
+  private async openSource(url: string) {
+    if (this.authFailed || this.gaveUp || this.streamOpen) return;
+    const ac = new AbortController();
+    this.abort = ac;
+    this.streamOpen = true;
     try {
       // Same-origin: include cached nginx Basic Auth if a live vhost still
       // requires it on this location (legacy site before startup rewrite).
-      this.source = new EventSource(url, { withCredentials: true });
-    } catch {
-      this.scheduleRetry();
-      return;
-    }
-
-    this.source.addEventListener('open', () => {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+        credentials: 'include',
+        cache: 'no-store',
+        signal: ac.signal,
+      });
+      if (res.status === 401) {
+        this.streamOpen = false;
+        this.abort = null;
+        await this.handleStreamUnauthorized();
+        return;
+      }
+      if (!res.ok || !res.body) {
+        this.streamOpen = false;
+        this.abort = null;
+        this.failureCount += 1;
+        if (this.shouldGiveUp()) {
+          this.stopForDegraded();
+          return;
+        }
+        this.scheduleRetry();
+        return;
+      }
       this.failureCount = 0;
       this.retryDelay = MIN_RETRY_MS;
-    });
-
-    this.source.addEventListener('jobs', (e: MessageEvent) => {
-      this.onStreamMessage();
-      this.parseAndEmit('jobs', e.data);
-    });
-    this.source.addEventListener('notifications', (e: MessageEvent) => {
-      this.onStreamMessage();
-      this.parseAndEmit('notifications', e.data);
-    });
-    this.source.addEventListener('message', () => {
-      this.onStreamMessage();
-    });
-
-    this.source.onerror = () => {
+      await readSseStream(res.body, ac.signal, (eventName, data) => {
+        this.onStreamMessage();
+        if (eventName === 'jobs' || eventName === 'notifications') {
+          this.parseAndEmit(eventName, data);
+        }
+      });
+      this.streamOpen = false;
+      this.abort = null;
+      if (ac.signal.aborted || this.authFailed || this.gaveUp) return;
+      if (this.handlers.size === 0) return;
+      this.scheduleRetry();
+    } catch {
+      this.streamOpen = false;
+      this.abort = null;
+      if (ac.signal.aborted || this.authFailed || this.gaveUp) return;
       this.failureCount += 1;
-      this.source?.close();
-      this.source = null;
-      if (this.failureCount >= POLL_FALLBACK_AFTER_FAILURES) {
-        window.dispatchEvent(new CustomEvent(PLATFORM_SSE_DEGRADED_EVENT));
+      if (this.shouldGiveUp()) {
+        this.stopForDegraded();
+        return;
       }
       this.scheduleRetry();
-    };
+    }
+  }
+
+  private async handleStreamUnauthorized() {
+    // A 401 on the stream is not always a dead session: a stale UI that still
+    // sends ``?access_token=<JWT>`` is rejected even while Bearer auth works.
+    // Only sign out when the session JWT itself is gone; otherwise stop SSE
+    // and let Task Center / notifications fall back to polling.
+    if (!getAuthToken()) {
+      this.stopForAuthFailure();
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/auth/me');
+      if (res.status === 401 || !getAuthToken()) {
+        this.stopForAuthFailure();
+        return;
+      }
+    } catch {
+      /* network error: still treat the stream 401 as terminal for SSE */
+    }
+    this.stopForDegraded();
+  }
+
+  private shouldGiveUp(): boolean {
+    return this.failureCount >= POLL_FALLBACK_AFTER_FAILURES;
   }
 
   private onStreamMessage() {
@@ -144,6 +271,7 @@ class EventHub {
   }
 
   private scheduleRetry() {
+    if (this.authFailed || this.gaveUp) return;
     if (this.retryTimer) return;
     if (this.handlers.size === 0) return;
     const delay = this.retryDelay;
@@ -154,29 +282,45 @@ class EventHub {
     }, delay);
   }
 
+  private closeStream() {
+    if (this.abort) {
+      this.abort.abort();
+      this.abort = null;
+    }
+    this.streamOpen = false;
+    this.connecting = false;
+  }
+
   private teardownIfIdle() {
     if (this.handlers.size > 0) return;
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
-    if (this.source) {
-      this.source.close();
-      this.source = null;
-    }
+    this.closeStream();
     this.failureCount = 0;
     this.retryDelay = MIN_RETRY_MS;
   }
 
   private stopForAuthFailure() {
     this.authFailed = true;
+    this.gaveUp = true;
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
-    if (this.source) {
-      this.source.close();
-      this.source = null;
+    this.closeStream();
+  }
+
+  private stopForDegraded() {
+    this.gaveUp = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.closeStream();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(PLATFORM_SSE_DEGRADED_EVENT));
     }
   }
 
@@ -185,13 +329,18 @@ class EventHub {
     this.stopForAuthFailure();
   }
 
-  /** Drop the SSE connection and open a new one if handlers exist and a token is present. */
-  reconnect() {
+  /**
+   * Drop the SSE connection and open a new one if handlers exist and a token
+   * is present. Pass ``force`` after a fresh login so a previous give-up or
+   * auth failure does not stick. Visibility changes do not force a retry
+   * once the stream has been given up (polling stays in charge).
+   */
+  reconnect(options?: { force?: boolean }) {
+    const force = options?.force === true;
+    if ((this.authFailed || this.gaveUp) && !force) return;
     this.authFailed = false;
-    if (this.source) {
-      this.source.close();
-      this.source = null;
-    }
+    this.gaveUp = false;
+    this.closeStream();
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -206,15 +355,16 @@ class EventHub {
 
 export const events = new EventHub();
 
-/** Call after login so EventSource connects (first subscribe may have run before token existed). */
-export function reconnectPlatformEvents() {
-  events.reconnect();
+/** Call after login so the stream connects (first subscribe may have run before token existed). */
+export function reconnectPlatformEvents(options?: { force?: boolean }) {
+  events.reconnect(options);
 }
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      // Always mint a fresh stream ticket; the previous one was single-use.
+      // Mint a fresh stream ticket when still in SSE mode; the previous one
+      // was single-use. If we already gave up, leave polling in charge.
       reconnectPlatformEvents();
     }
   });
