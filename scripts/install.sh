@@ -2634,6 +2634,25 @@ PY
     fi
 }
 
+copanel_dist_has_stream_tickets() {
+    # The 1.1.11+ client mints ?ticket= for /api/platform/events. A leftover
+    # pre-1.1.11 bundle still puts the login JWT in ?access_token= and will
+    # 401 in a tight EventSource loop against a current backend.
+    local dist="${1:-dist}"
+    local html="$dist/index.html"
+    [[ -f "$html" ]] || return 1
+    local rel
+    rel="$(sed -n 's/.*src="\(\/assets\/index-[^"]*\.js\)".*/\1/p' "$html" | head -1)"
+    local js="$dist$rel"
+    [[ -n "$rel" && -f "$js" ]] || return 1
+    if grep -q 'topics:"jobs,notifications",access_token:' "$js" \
+        || grep -q 'topics:"jobs,notifications",access_token:' <<<"$(tr -d '[:space:]' < "$js")"; then
+        return 1
+    fi
+    grep -q '/api/auth/stream-ticket' "$js" || return 1
+    tr -d '[:space:]' < "$js" | grep -q 'topics:"jobs,notifications",ticket:'
+}
+
 copanel_use_prebuilt_frontend() {
     # CPUs without AVX segfault inside esbuild, both the native Go binary and
     # the WASM build running under Node. The panel that worked before the
@@ -2684,6 +2703,10 @@ copanel_use_prebuilt_frontend() {
         return 1
     fi
     copanel_verify_prebuilt_panel_dist "$(pwd)/dist" || true
+    if ! copanel_dist_has_stream_tickets "$(pwd)/dist"; then
+        log_error "Prebuilt frontend dist is missing the stream-ticket EventSource client."
+        return 1
+    fi
     log_success "Prebuilt frontend ready"
 }
 
@@ -3087,7 +3110,24 @@ copanel_should_use_prebuilt_frontend() {
 
 setup_frontend() {
     log_info "Setting up React frontend..."
-    
+
+    if [[ ! -f "$CoPanel_HOME/frontend/package.json" ]]; then
+        if [[ -f "$CoPanel_HOME/frontend/prebuilt/dist.tar.gz" ]]; then
+            log_warning "frontend/package.json is missing; installing the prebuilt frontend."
+            cd "$CoPanel_HOME/frontend"
+            COPANEL_PREBUILT_REASON="package.json missing"
+            if copanel_use_prebuilt_frontend; then
+                copanel_noavx_register_extensions
+                copanel_noavx_merge_prebuilt_with_extra_modules
+                cd - >/dev/null || true
+                return 0
+            fi
+            cd - >/dev/null || true
+        fi
+        log_error "frontend/package.json is missing and the prebuilt archive could not be installed."
+        return 1
+    fi
+
     if [[ -f "$CoPanel_HOME/frontend/package.json" ]]; then
         cd "$CoPanel_HOME/frontend"
 
@@ -3134,12 +3174,33 @@ setup_frontend() {
             fi
         else
             if ! copanel_run_standard_frontend_build; then
+                if [[ -f prebuilt/dist.tar.gz ]] || [[ -f "${CoPanel_HOME}/frontend/prebuilt/dist.tar.gz" ]]; then
+                    log_warning "Frontend build failed; falling back to the prebuilt frontend archive."
+                    COPANEL_PREBUILT_REASON="Vite build failed"
+                    if copanel_use_prebuilt_frontend; then
+                        copanel_noavx_register_extensions
+                        copanel_noavx_merge_prebuilt_with_extra_modules
+                        cd - >/dev/null || true
+                        return 0
+                    fi
+                fi
                 log_error "Frontend build failed. On a 1 GB VPS, confirm swap is active (swapon --show) and re-run install.sh."
                 cd - >/dev/null || true
                 return 1
             fi
         fi
         
+        if ! copanel_dist_has_stream_tickets "$CoPanel_HOME/frontend/dist"; then
+            log_warning "Built frontend dist is missing the stream-ticket EventSource client; trying the prebuilt archive."
+            COPANEL_PREBUILT_REASON="built dist missing stream-ticket client"
+            if ! copanel_use_prebuilt_frontend; then
+                log_error "Frontend dist is missing the stream-ticket EventSource client."
+                cd - >/dev/null || true
+                return 1
+            fi
+            copanel_noavx_register_extensions
+            copanel_noavx_merge_prebuilt_with_extra_modules
+        fi
         log_success "Frontend built and ready"
         cd - >/dev/null
     fi

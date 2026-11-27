@@ -6,6 +6,12 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.21: stop EventSource 401 storms from a stale frontend dist**
+
+- Root cause: the sidebar/dock version badge reads `GET /health` (backend `VERSION`). Panel Update can check out 1.1.20+ while leaving `frontend/dist` untouched (rsync/git-clean exclude that tree; a failed Vite step keeps the previous dist). The live UI then still runs the pre-1.1.11 EventSource client, which puts the login JWT in `/api/platform/events?topics=jobs,notifications&access_token=...`. The backend correctly rejects query-string JWTs, so Task Center / notification live updates 401 in a tight loop. The rest of the panel keeps working because REST calls use the Bearer header, and after a few failures the jobs/notifications lists already fall back to polling.
+- Client: the events stream is opened with `fetch()` so an HTTP 401 is visible (EventSource hides the status and auto-reconnects on the same URL). A stream 401 stops SSE immediately: if `/api/auth/me` is also 401 the session is cleared, otherwise Task Center and notifications switch to polling and the retry loop does not resume on tab-focus. Other failures use 2s–60s backoff and give up after three tries, then poll only. A fresh login forces one new attempt.
+- Startup / Panel Update: if the live main bundle still has the legacy `?access_token=` client (or is missing stream tickets) and `frontend/prebuilt/dist.tar.gz` is present, the backend extracts it on boot and keeps `dist/extensions`. `scripts/install.sh` falls back to that archive when Vite fails or `package.json` is missing, and refuses a dist that still lacks the ticket client.
+
 **CoPanel 1.1.20: EventSource Basic Auth fix, and a font size setting in Branding**
 
 - Root cause: `location /api/platform/events` is more specific than `location /api/`, so it does not inherit `auth_basic off`. With the panel htpasswd gate enabled, `EventSource` (which cannot set `Authorization` and may drop cached Basic credentials after the tab is hidden) got nginx `401` with `WWW-Authenticate: Basic`. The retry loop spammed the console, and those 401s made the browser forget the gate login — F5 then re-prompted for Basic Auth even though the JWT was still valid and the rest of the UI kept working.
@@ -186,6 +192,11 @@ All notable changes to CoPanel are documented in this file.
 - Project list status uses a single `docker ps` instead of N× `compose ps`.
 
 ### Tiếng Việt (tóm tắt)
+
+- CoPanel 1.1.21:
+  - Nguyên nhân: số phiên bản ở chân trang / dock lấy từ `GET /health` (backend), nên panel có thể hiện 1.1.20 trong khi `frontend/dist` vẫn là bản cũ (trước 1.1.11). Client cũ gắn JWT vào `/api/platform/events?access_token=...`, backend từ chối đúng cách, Task Center / thông báo spam 401 liên tục. Các API còn lại vẫn chạy vì dùng header Bearer; danh sách việc/thông báo vẫn cập nhật nhờ polling.
+  - Client: mở stream bằng `fetch()` để thấy HTTP 401 (EventSource không lộ status và tự reconnect cùng URL). Gặp 401 thì dừng SSE ngay: nếu `/api/auth/me` cũng 401 thì đăng xuất, không thì chuyển Task Center / thông báo sang polling và không mở lại khi tab hiện ra. Lỗi khác backoff 2s–60s, sau ba lần thì chỉ còn polling. Đăng nhập lại mới thử SSE một lần.
+  - Khi khởi động / Panel Update: nếu bundle đang chạy còn `?access_token=` (hoặc thiếu stream ticket) thì backend giải nén `frontend/prebuilt/dist.tar.gz`, giữ `dist/extensions`. `install.sh` dùng archive này khi Vite lỗi hoặc thiếu `package.json`, và từ chối dist chưa có ticket client.
 
 - CoPanel 1.1.20:
   - Sửa lỗi `GET /api/platform/events` trả 401 sau khi để tab idle: `location /api/platform/events` cụ thể hơn `/api/` nên không kế thừa `auth_basic off`. EventSource bị nginx Basic Auth chặn, vòng reconnect spam 401, trình duyệt quên mật khẩu cổng htpasswd, F5 hiện lại hộp đăng nhập dù JWT vẫn còn hạn.

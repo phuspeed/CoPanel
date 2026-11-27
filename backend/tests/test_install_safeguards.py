@@ -217,3 +217,16 @@ def test_wasm_render_failure_detection():
     assert nb.is_wasm_render_failure(139, "")
     assert nb.is_wasm_render_failure(0, "fatal error: too many writes on closed pipe")
     assert not nb.is_wasm_render_failure(0, "build complete")
+
+
+def test_setup_frontend_verifies_stream_ticket_client():
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    assert "copanel_dist_has_stream_tickets()" in text
+    assert "/api/auth/stream-ticket" in text
+    assert 'topics:"jobs,notifications",ticket:' in text
+    assert 'topics:"jobs,notifications",access_token:' in text
+    assert "falling back to the prebuilt frontend archive" in text
+    fn_start = text.index("copanel_use_prebuilt_frontend()")
+    fn_end = text.index("copanel_frontend_npm_install_wasm()", fn_start)
+    block = text[fn_start:fn_end]
+    assert "copanel_dist_has_stream_tickets" in block

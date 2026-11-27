@@ -83,6 +83,16 @@ async def lifespan(app: FastAPI):
     # systemd TimeoutStartSec and leave the API in a 502 crash loop.
     def _nginx_gate_repair_bg() -> None:
         try:
+            # Panel Update can refresh VERSION/backend while leaving an old
+            # frontend/dist (rsync excludes it). A pre-1.1.11 UI then spams
+            # GET /api/platform/events?access_token=<JWT> 401s. Extract the
+            # committed prebuilt archive when the live bundle is still legacy.
+            from core.frontend_dist import maybe_heal_stale_frontend_dist
+
+            maybe_heal_stale_frontend_dist()
+        except Exception as exc:
+            logger.warning("stale frontend dist repair: %s", exc)
+        try:
             # Rewrite a leftover HTTPS site, and a loopback :8687 tunnel
             # server, back to plain HTTP before the access gate so basic
             # auth lands in the remaining location /.
