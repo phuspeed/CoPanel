@@ -6,6 +6,10 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.19: File Manager bookmarks stay above the folder tree (file_manager 1.0.18)**
+
+- The sidebar is now Places, then Bookmarks, then the folder tree. Opening at `/` no longer buries bookmarks under a long tree. The tree scrolls on its own, so Places and Bookmarks stay visible (including in the mobile drawer). A long bookmark list has its own short scroll.
+
 **CoPanel 1.1.18: File Manager explorer redesign (file_manager 1.0.17)**
 
 - **New layout.** Command bar (New ▾, Upload ▾, Cut / Copy / Paste, Rename, Download, Delete, More ▾, Sort ▾, View ▾), resizable sidebar with Places, a lazy folder tree (loads children on expand via `GET /api/file_manager/list`) and Bookmarks. On phones the sidebar is a drawer, taps open items and a long-press opens the item menu.
@@ -173,6 +177,9 @@ All notable changes to CoPanel are documented in this file.
 - Project list status uses a single `docker ps` instead of N× `compose ps`.
 
 ### Tiếng Việt (tóm tắt)
+
+- CoPanel 1.1.19 (Quản lý file 1.0.18):
+  - **Đánh dấu đứng trên cây thư mục.** Thanh bên giờ là Vị trí, rồi Đánh dấu, rồi cây thư mục. Mở ở `/` không còn đẩy bookmark xuống dưới. Cây thư mục cuộn riêng, nên Vị trí và Đánh dấu vẫn hiện (kể cả ngăn kéo trên điện thoại).
 
 - CoPanel 1.1.18 (Quản lý file 1.0.17):
   - **Giao diện mới kiểu Explorer.** Thanh lệnh (Mới, Tải lên, Cắt / Chép / Dán, Đổi tên, Tải về, Xoá, Thêm, Sắp xếp, Kiểu xem), thanh bên kéo giãn được với Vị trí, cây thư mục tải dần khi mở và Đánh dấu. Trên điện thoại thanh bên là ngăn kéo, chạm để mở, nhấn giữ để hiện menu.
