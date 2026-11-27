@@ -1147,20 +1147,109 @@ def _strip_server_context_auth_basic(content: str) -> str:
     return "".join(out)
 
 
+def _location_block_span(content: str, start: int) -> Optional[Tuple[int, int, int]]:
+    """Return (start, body_start, end) for the location block at ``start``.
+
+    ``start`` should point at the ``location`` directive (or its marker).
+    ``body_start`` is the index just after the opening-brace newline; ``end``
+    is exclusive of the closing brace. Used so we only inspect *this* block
+    and do not skip an exemption because a nearby location already has the tag.
+    """
+    brace = content.find("{", start)
+    if brace == -1:
+        return None
+    nl = content.find("\n", brace)
+    if nl == -1:
+        return None
+    depth = 0
+    i = brace
+    while i < len(content):
+        ch = content[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return start, nl + 1, i + 1
+        i += 1
+    return None
+
+
+def _block_has_auth_basic_off(body: str) -> bool:
+    if NGINX_EXEMPT_TAG in body:
+        return True
+    return re.search(r"(?m)^[ \t]*auth_basic\s+off\s*;", body) is not None
+
+
+_EVENTS_LOCATION_RE = re.compile(
+    r"(?m)^[ \t]*location\s+(?:\^~\s+)?/api/platform/events\s*\{"
+)
+
+# Inserted when a live vhost has no events location (older install.sh templates).
+EVENTS_SSE_LOCATION = (
+    "    location /api/platform/events {\n"
+    "        auth_basic off;\n"
+    "        proxy_pass http://copanel_backend;\n"
+    "        proxy_http_version 1.1;\n"
+    "        proxy_set_header Host $host;\n"
+    "        proxy_set_header X-Real-IP $remote_addr;\n"
+    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+    "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+    "        proxy_set_header Connection \"\";\n"
+    "        gzip off;\n"
+    "        proxy_buffering off;\n"
+    "        proxy_request_buffering off;\n"
+    "        proxy_cache off;\n"
+    "        proxy_send_timeout 86400s;\n"
+    "        proxy_read_timeout 86400s;\n"
+    "        chunked_transfer_encoding on;\n"
+    "        add_header Cache-Control \"no-cache, no-transform\" always;\n"
+    "        add_header X-Accel-Buffering \"no\" always;\n"
+    "    }\n\n"
+)
+
+
+def ensure_events_sse_location(content: str) -> str:
+    """Guarantee ``/api/platform/events`` exists and has ``auth_basic off``.
+
+    This location is more specific than ``location /api/``, so it does not
+    inherit that block's Basic Auth exemption. Existing customized blocks are
+    kept; only the exemption is added. When the location is missing it is
+    inserted just before ``location /api/``.
+    """
+    match = _EVENTS_LOCATION_RE.search(content)
+    if match:
+        span = _location_block_span(content, match.start())
+        if not span:
+            return content
+        _, body_start, block_end = span
+        body = content[body_start:block_end]
+        if _block_has_auth_basic_off(body):
+            return content
+        snippet = f"        auth_basic off;  {NGINX_EXEMPT_TAG}\n"
+        return content[:body_start] + snippet + content[body_start:]
+
+    api = re.search(r"(?m)^[ \t]*location\s+/api/\s*\{", content)
+    if not api:
+        return content
+    return content[: api.start()] + EVENTS_SSE_LOCATION + content[api.start():]
+
+
 def _inject_auth_exemptions(content: str) -> str:
     snippet = f"        auth_basic off;  {NGINX_EXEMPT_TAG}\n"
     for marker in NGINX_EXEMPT_LOCATION_MARKERS:
+        # Re-find after prior insertions; only inspect this location's body.
         idx = content.find(marker)
         if idx == -1:
             continue
-        brace = content.find("{", idx)
-        nl = content.find("\n", brace)
-        if nl == -1:
+        span = _location_block_span(content, idx)
+        if not span:
             continue
-        window = content[idx : idx + 900]
-        if NGINX_EXEMPT_TAG in window:
+        _, body_start, block_end = span
+        body = content[body_start:block_end]
+        if _block_has_auth_basic_off(body):
             continue
-        content = content[: nl + 1] + snippet + content[nl + 1 :]
+        content = content[:body_start] + snippet + content[body_start:]
     return content
 
 
@@ -1173,6 +1262,7 @@ def _remove_nginx_gate_block(content: str) -> str:
 def _apply_nginx_gate(content: str, htpasswd_path: str) -> str:
     content = _remove_nginx_gate_block(content)
     content = _inject_nginx_gate_block(content, htpasswd_path)
+    content = ensure_events_sse_location(content)
     return _inject_auth_exemptions(content)
 
 
@@ -1315,6 +1405,48 @@ def maybe_auto_repair_nginx_gate() -> Optional[Dict[str, Any]]:
         return result
     except Exception as exc:
         logger.warning("Nginx gate auto-repair failed (edit nginx manually or use Settings): %s", exc)
+        return None
+
+
+def maybe_repair_events_sse_location() -> Optional[Dict[str, Any]]:
+    """Startup / upgrade hook: events location must exist and skip Basic Auth.
+
+    Panel Update does not always rewrite the nginx site, so a live vhost may
+    still have ``location /api/platform/events`` without ``auth_basic off``,
+    or no events location at all (older installer templates). Runs even when
+    the access gate does not need repair.
+    """
+    if IS_WINDOWS:
+        return None
+    site = _nginx_site_path()
+    if not site.is_file():
+        return None
+    try:
+        original = site.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not read nginx site for SSE location repair: %s", exc)
+        return None
+    updated = ensure_events_sse_location(original)
+    if updated == original:
+        return None
+    try:
+        _write_file_privileged(site, updated)
+        test = _run_privileged(["nginx", "-t"], timeout=30)
+        if test.returncode != 0:
+            raise RuntimeError((test.stderr or test.stdout or "").strip() or "nginx -t failed")
+        reload = _run_privileged(["systemctl", "reload", "nginx"], timeout=30)
+        logger.info(
+            "Nginx /api/platform/events location repaired (auth_basic off / SSE timeouts). reload_ok=%s",
+            reload.returncode == 0,
+        )
+        return {"repaired": True, "reload_ok": reload.returncode == 0}
+    except Exception as exc:
+        logger.warning("Nginx SSE location repair failed: %s", exc)
+        try:
+            if site.read_text(encoding="utf-8") != original:
+                _write_file_privileged(site, original)
+        except Exception as rollback_exc:
+            logger.warning("Failed to rollback nginx site after SSE repair error: %s", rollback_exc)
         return None
 
 

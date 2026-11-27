@@ -90,9 +90,13 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("panel TLS startup hook: %s", exc)
         try:
-            from modules.panel_settings.logic import maybe_auto_repair_nginx_gate
+            from modules.panel_settings.logic import (
+                maybe_auto_repair_nginx_gate,
+                maybe_repair_events_sse_location,
+            )
 
             maybe_auto_repair_nginx_gate()
+            maybe_repair_events_sse_location()
         except Exception as exc:
             logger.warning("panel_settings startup hook: %s", exc)
         try:

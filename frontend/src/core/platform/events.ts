@@ -4,7 +4,7 @@
  * so multiple UI surfaces (Task Center, Notification Center, Dashboard
  * widgets) can listen without each opening their own SSE connection.
  */
-import { fetchStreamTicket, getAuthToken } from '../authHeaders';
+import { fetchStreamTicket, getAuthToken, SESSION_EXPIRED_EVENT } from '../authHeaders';
 
 type Handler = (payload: any) => void;
 
@@ -21,6 +21,7 @@ class EventHub {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private failureCount = 0;
   private connecting = false;
+  private authFailed = false;
 
   on(topic: string, handler: Handler): () => void {
     let set = this.handlers.get(topic);
@@ -64,7 +65,7 @@ class EventHub {
   }
 
   private ensureConnected() {
-    if (this.source || this.connecting) return;
+    if (this.authFailed || this.source || this.connecting) return;
     if (typeof document !== 'undefined' && document.hidden) return;
     if (!getAuthToken()) return;
     this.connecting = true;
@@ -73,6 +74,11 @@ class EventHub {
         this.connecting = false;
         if (this.source || this.handlers.size === 0) return;
         if (!url) {
+          // Ticket request 401s clear the JWT; do not hammer the events URL.
+          if (!getAuthToken()) {
+            this.stopForAuthFailure();
+            return;
+          }
           this.failureCount += 1;
           this.scheduleRetry();
           return;
@@ -87,7 +93,9 @@ class EventHub {
 
   private openSource(url: string) {
     try {
-      this.source = new EventSource(url, { withCredentials: false });
+      // Same-origin: include cached nginx Basic Auth if a live vhost still
+      // requires it on this location (legacy site before startup rewrite).
+      this.source = new EventSource(url, { withCredentials: true });
     } catch {
       this.scheduleRetry();
       return;
@@ -160,8 +168,26 @@ class EventHub {
     this.retryDelay = MIN_RETRY_MS;
   }
 
+  private stopForAuthFailure() {
+    this.authFailed = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.source) {
+      this.source.close();
+      this.source = null;
+    }
+  }
+
+  /** Close the stream and do not retry until reconnect() (called after login). */
+  stop() {
+    this.stopForAuthFailure();
+  }
+
   /** Drop the SSE connection and open a new one if handlers exist and a token is present. */
   reconnect() {
+    this.authFailed = false;
     if (this.source) {
       this.source.close();
       this.source = null;
@@ -172,7 +198,7 @@ class EventHub {
     }
     this.failureCount = 0;
     this.retryDelay = MIN_RETRY_MS;
-    if (this.handlers.size > 0) {
+    if (this.handlers.size > 0 && getAuthToken()) {
       this.ensureConnected();
     }
   }
@@ -188,7 +214,14 @@ export function reconnectPlatformEvents() {
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
+      // Always mint a fresh stream ticket; the previous one was single-use.
       reconnectPlatformEvents();
     }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener(SESSION_EXPIRED_EVENT, () => {
+    events.stop();
   });
 }
