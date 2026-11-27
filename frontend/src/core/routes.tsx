@@ -10,6 +10,7 @@ import Dashboard from './Dashboard';
 import Login from './Login';
 import ExtensionErrorBoundary from './ExtensionErrorBoundary';
 import { DEFAULT_BRANDING, BRANDING_UPDATED_EVENT, fetchPublicBranding, normalizeBranding, type BrandingSettings } from './brandingTypes';
+import { SESSION_EXPIRED_EVENT } from './authHeaders';
 
 const DEFAULT_FAVICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d4ed8'/%3E%3Cpath d='M41 20a16 16 0 1 0 0 24' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
@@ -124,6 +125,12 @@ export function createRoutes() {
     setToken(null);
     setUser(null);
   };
+
+  useEffect(() => {
+    const onExpired = () => handleLogout();
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
 
   // Check if session token still valid on load
   useEffect(() => {

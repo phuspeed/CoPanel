@@ -6,6 +6,13 @@ All notable changes to CoPanel are documented in this file.
 
 ### English
 
+**CoPanel 1.1.20: EventSource no longer trips nginx Basic Auth after an idle tab**
+
+- Root cause: `location /api/platform/events` is more specific than `location /api/`, so it does not inherit `auth_basic off`. With the panel htpasswd gate enabled, `EventSource` (which cannot set `Authorization` and may drop cached Basic credentials after the tab is hidden) got nginx `401` with `WWW-Authenticate: Basic`. The retry loop spammed the console, and those 401s made the browser forget the gate login — F5 then re-prompted for Basic Auth even though the JWT was still valid and the rest of the UI kept working.
+- `config/nginx.conf` and `scripts/install.sh` now set `auth_basic off` on the events (and `/health`) locations. The installer also writes the SSE location (buffering off, 86400s timeouts, empty `Connection`) that was previously only in the reference config.
+- On startup and when the nginx gate is applied, the backend rewrites a live vhost: inject `auth_basic off` into an existing events location, or insert the block before `location /api/` if it is missing. Panel Update therefore picks this up without a manual nginx edit. Exemption injection looks only inside each location block, so a nearby tag can no longer skip `/api/` or events.
+- Client: EventSource sends same-origin credentials (`withCredentials: true`) so an unpatched vhost still works until the rewrite runs; every reconnect (including coming back to a hidden tab) fetches a fresh stream ticket; a 401 on `/api/auth/stream-ticket` or other authenticated `apiFetch` calls stops the SSE retry loop and signs out.
+
 **CoPanel 1.1.19: File Manager bookmarks stay above the folder tree (file_manager 1.0.18)**
 
 - The sidebar is now Places, then Bookmarks, then the folder tree. Opening at `/` no longer buries bookmarks under a long tree. The tree scrolls on its own, so Places and Bookmarks stay visible (including in the mobile drawer). A long bookmark list has its own short scroll.
@@ -177,6 +184,11 @@ All notable changes to CoPanel are documented in this file.
 - Project list status uses a single `docker ps` instead of N× `compose ps`.
 
 ### Tiếng Việt (tóm tắt)
+
+- CoPanel 1.1.20:
+  - Sửa lỗi `GET /api/platform/events` trả 401 sau khi để tab idle: `location /api/platform/events` cụ thể hơn `/api/` nên không kế thừa `auth_basic off`. EventSource bị nginx Basic Auth chặn, vòng reconnect spam 401, trình duyệt quên mật khẩu cổng htpasswd, F5 hiện lại hộp đăng nhập dù JWT vẫn còn hạn.
+  - `config/nginx.conf` và `scripts/install.sh` đặt `auth_basic off` cho events (và `/health`). Installer ghi luôn location SSE (tắt buffer, timeout 86400s). Khi backend khởi động hoặc bật cổng nginx, vhost đang chạy được sửa: thêm `auth_basic off` vào location events, hoặc chèn khối này nếu chưa có.
+  - Client: EventSource gửi credentials cùng origin; mỗi lần reconnect (kể cả khi tab hiện lại) lấy ticket mới; 401 thì dừng retry và đăng xuất.
 
 - CoPanel 1.1.19 (Quản lý file 1.0.18):
   - **Đánh dấu đứng trên cây thư mục.** Thanh bên giờ là Vị trí, rồi Đánh dấu, rồi cây thư mục. Mở ở `/` không còn đẩy bookmark xuống dưới. Cây thư mục cuộn riêng, nên Vị trí và Đánh dấu vẫn hiện (kể cả ngăn kéo trên điện thoại).

@@ -3442,7 +3442,31 @@ server {
     # END COPANEL PHPMYADMIN
     
     # API endpoints
+    # More specific than location /api/, so it does NOT inherit that block's
+    # auth_basic off. Keep this exemption in the installer template and in
+    # startup repair (ensure_events_sse_location) so upgrades rewrite live vhosts.
+    location /api/platform/events {
+        auth_basic off;
+        proxy_pass http://copanel_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        gzip off;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_send_timeout 86400s;
+        proxy_read_timeout 86400s;
+        chunked_transfer_encoding on;
+        add_header Cache-Control "no-cache, no-transform" always;
+        add_header X-Accel-Buffering "no" always;
+    }
+
     location /api/ {
+        auth_basic off;
         proxy_pass http://copanel_backend;
         proxy_intercept_errors off;
         proxy_http_version 1.1;
@@ -3463,6 +3487,7 @@ server {
     
     # Health check. X-Real-IP lets the API tell localhost probes from proxied clients.
     location /health {
+        auth_basic off;
         proxy_pass http://copanel_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
