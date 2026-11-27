@@ -17,15 +17,21 @@ interface Props {
   onNavigate: (path: string) => void;
   /** Navigate to typed text; resolves true on success. */
   onNavigateTyped?: (input: string) => Promise<boolean>;
+  /** Bump to switch into the editable path field (Ctrl+L). */
+  editSignal?: number;
+  /** Drop handlers so crumbs act as move/copy targets. */
+  onCrumbDragOver?: (e: React.DragEvent, path: string) => boolean;
+  onCrumbDrop?: (e: React.DragEvent, path: string) => void;
 }
 
-export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, canGoForward, onBack, onForward, onUp, onRefresh, onNavigate, onNavigateTyped }: Props) {
+export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, canGoForward, onBack, onForward, onUp, onRefresh, onNavigate, onNavigateTyped, editSignal, onCrumbDragOver, onCrumbDrop }: Props) {
   const crumbs = pathBreadcrumbs(currentPath);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const [dropPath, setDropPath] = useState<string | null>(null);
 
   const startEditing = () => {
     if (!onNavigateTyped) return;
@@ -43,6 +49,14 @@ export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, can
       inputRef.current.select();
     }
   }, [editing]);
+
+  useEffect(() => {
+    if (editSignal && onNavigateTyped) {
+      setDraft(currentPath || '/');
+      setEditing(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editSignal]);
 
   // Leave edit mode when the folder changes from elsewhere (sidebar, back, …).
   useEffect(() => {
@@ -75,22 +89,22 @@ export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, can
   };
 
   const btn = cn(
-    'flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-35',
-    isDark ? 'border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition disabled:opacity-30',
+    isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100',
   );
 
   return (
     <div className="flex items-center gap-1.5 min-w-0 flex-1">
-      <button type="button" className={btn} onClick={onBack} disabled={!canGoBack} title={tr.back}>
+      <button type="button" className={btn} onClick={onBack} disabled={!canGoBack} title={`${tr.back} (Alt+←)`}>
         <Icons.ChevronLeft className="h-4 w-4" />
       </button>
-      <button type="button" className={btn} onClick={onForward} disabled={!canGoForward} title={tr.forward}>
+      <button type="button" className={cn(btn, 'hidden sm:flex')} onClick={onForward} disabled={!canGoForward} title={`${tr.forward} (Alt+→)`}>
         <Icons.ChevronRight className="h-4 w-4" />
       </button>
-      <button type="button" className={btn} onClick={onUp} title={tr.up}>
+      <button type="button" className={btn} onClick={onUp} title={`${tr.up} (Alt+↑)`}>
         <Icons.ArrowUp className="h-4 w-4" />
       </button>
-      <button type="button" className={btn} onClick={onRefresh} title={tr.refresh}>
+      <button type="button" className={cn(btn, 'hidden sm:flex')} onClick={onRefresh} title={`${tr.refresh} (F5)`}>
         <Icons.RefreshCw className="h-4 w-4" />
       </button>
       {editing ? (
@@ -147,12 +161,22 @@ export default function FileBreadcrumb({ isDark, tr, currentPath, canGoBack, can
       >
         {crumbs.map((c, i) => (
           <span key={c.path} className="flex items-center shrink-0">
-            {i > 0 && <span className={cn('mx-1', isDark ? 'text-slate-600' : 'text-slate-300')}>/</span>}
+            {i > 0 && crumbs[i - 1].path !== '/' && <span className={cn('mx-1', isDark ? 'text-slate-600' : 'text-slate-300')}>/</span>}
             <button
               type="button"
+              data-fm-crumb={c.path}
               onClick={() => onNavigate(c.path)}
+              onDragOver={(e) => {
+                if (onCrumbDragOver?.(e, c.path)) setDropPath(c.path);
+              }}
+              onDragLeave={() => setDropPath((d) => (d === c.path ? null : d))}
+              onDrop={(e) => {
+                setDropPath(null);
+                onCrumbDrop?.(e, c.path);
+              }}
               className={cn(
                 'rounded px-1 py-0.5 transition hover:underline',
+                dropPath === c.path && (isDark ? 'bg-sky-500/20 ring-1 ring-sky-500' : 'bg-blue-50 ring-1 ring-blue-500'),
                 i === crumbs.length - 1
                   ? isDark
                     ? 'text-sky-300 font-bold'

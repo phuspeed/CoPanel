@@ -1,170 +1,98 @@
-import type { MouseEvent } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { formatDate, formatSize } from '../utils';
-import type { FileItem, SortKey } from '../types';
-import type { FileManagerTranslations } from '../i18n';
-import FileActionsBar from './FileActionsBar';
+import type { FileManagerState } from '../hooks/useFileManager';
+import type { ItemInteractions } from '../hooks/useItemInteractions';
+import type { SortKey } from '../types';
+import { FileIcon } from './FileIcon';
 
-interface Props {
-  isDark: boolean;
-  tr: FileManagerTranslations;
-  files: FileItem[];
-  selectedPaths: string[];
-  sortKey: SortKey;
-  sortAsc: boolean;
-  bookmarkPathSet: Set<string>;
-  bookmarksUiEnabled: boolean;
-  onSort: (key: SortKey) => void;
-  onOpen: (item: FileItem) => void;
-  onToggleSelect: (path: string, multi?: boolean) => void;
-  onSelectAll: () => void;
-  onEdit: (item: FileItem) => void;
-  onDownload: (item: FileItem) => void;
-  onRename: (item: FileItem) => void;
-  onBookmarkToggle: (item: FileItem) => void;
-  onCut: (item: FileItem) => void;
-  onCopy: (item: FileItem) => void;
-  onDelete: (item: FileItem) => void;
-  onItemContextMenu: (e: MouseEvent, item: FileItem) => void;
-  onBlankContextMenu: (e: MouseEvent) => void;
-}
-
-function SortBtn({ label, active, asc, isDark, onClick }: { label: string; active: boolean; asc: boolean; isDark: boolean; onClick: () => void }) {
+function SortHeader({ label, k, fm, className }: { label: string; k: SortKey; fm: FileManagerState; className?: string }) {
+  const active = fm.sortKey === k;
   return (
-    <button type="button" onClick={onClick} className={cn('inline-flex items-center gap-1 font-bold uppercase tracking-wider text-[10px]', active ? (isDark ? 'text-sky-400' : 'text-blue-600') : isDark ? 'text-slate-400 hover:text-sky-400' : 'text-slate-500 hover:text-blue-600')}>
-      {label}
-      <Icons.ChevronUp className={cn('h-3 w-3 transition', active ? (asc ? '' : 'rotate-180') : 'opacity-30')} />
-    </button>
+    <th className={cn('px-2 py-1.5 font-semibold', className)}>
+      <button
+        type="button"
+        onClick={() => fm.handleSort(k)}
+        className={cn(
+          'inline-flex items-center gap-1 text-[11px]',
+          active ? (fm.isDark ? 'text-sky-300' : 'text-blue-600') : fm.isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800',
+        )}
+      >
+        {label}
+        <Icons.ChevronUp className={cn('h-3 w-3 transition', active ? (fm.sortAsc ? '' : 'rotate-180') : 'opacity-0')} />
+      </button>
+    </th>
   );
 }
 
-export default function FileListView({
-  isDark,
-  tr,
-  files,
-  selectedPaths,
-  sortKey,
-  sortAsc,
-  bookmarkPathSet,
-  bookmarksUiEnabled,
-  onSort,
-  onOpen,
-  onToggleSelect,
-  onSelectAll,
-  onEdit,
-  onDownload,
-  onRename,
-  onBookmarkToggle,
-  onCut,
-  onCopy,
-  onDelete,
-  onItemContextMenu,
-  onBlankContextMenu,
-}: Props) {
-  if (files.length === 0) {
-    return (
-      <div
-        className={cn('flex h-full min-h-[200px] items-center justify-center text-xs', isDark ? 'text-slate-500' : 'text-slate-400')}
-        onContextMenu={onBlankContextMenu}
-      >
-        {tr.noFiles}
-      </div>
-    );
-  }
-
-  const actionTr = {
-    editFile: tr.editFile,
-    renameItem: tr.renameItem,
-    cut: tr.cut,
-    copy: tr.copy,
-    deleteItem: tr.deleteItem,
-    downloadFile: tr.downloadFile,
-    addBookmark: tr.addBookmark,
-    removeBookmark: tr.removeBookmark,
-  };
+export default function FileListView({ fm, ix }: { fm: FileManagerState; ix: ItemInteractions }) {
+  const { isDark, tr, files, selectedPaths, focusPath } = fm;
+  const allSelected = selectedPaths.length === files.length && files.length > 0;
 
   return (
-    <div
-      className="overflow-auto h-full min-h-full"
-      onContextMenu={(e) => {
-        if (!(e.target as HTMLElement).closest('[data-fm-item]')) onBlankContextMenu(e);
-      }}
-    >
-      <table className="w-full text-left text-xs border-collapse">
-        <thead className={cn('sticky top-0 z-10', isDark ? 'bg-slate-950/95 text-slate-400' : 'bg-slate-50 text-slate-500')}>
-          <tr className="border-b border-inherit">
-            <th className="w-10 p-2">
-              <button type="button" onClick={onSelectAll} className="p-1 rounded hover:bg-black/5">
-                {selectedPaths.length === files.length && files.length > 0 ? (
-                  <Icons.CheckSquare className="h-4 w-4 text-blue-500" />
-                ) : (
-                  <Icons.Square className="h-4 w-4" />
-                )}
-              </button>
-            </th>
-            <th className="p-2"><SortBtn label={tr.name} active={sortKey === 'name'} asc={sortAsc} isDark={isDark} onClick={() => onSort('name')} /></th>
-            <th className="p-2 w-24"><SortBtn label={tr.size} active={sortKey === 'size'} asc={sortAsc} isDark={isDark} onClick={() => onSort('size')} /></th>
-            <th className="p-2 w-40 hidden sm:table-cell"><SortBtn label={tr.dateModified} active={sortKey === 'modified'} asc={sortAsc} isDark={isDark} onClick={() => onSort('modified')} /></th>
-            <th className="p-2 text-center hidden lg:table-cell">{tr.actions}</th>
-          </tr>
-        </thead>
-        <tbody className={cn('divide-y', isDark ? 'divide-slate-800/60' : 'divide-slate-100')}>
-          {files.map((item) => {
-            const selected = selectedPaths.includes(item.path);
-            return (
-              <tr
-                key={item.path}
-                data-fm-item
-                onDoubleClick={() => onOpen(item)}
-                onClick={(e) => onToggleSelect(item.path, e.ctrlKey || e.metaKey)}
-                onContextMenu={(e) => onItemContextMenu(e, item)}
-                className={cn(
-                  'cursor-pointer transition',
-                  selected
-                    ? isDark
-                      ? 'bg-blue-950/25'
-                      : 'bg-blue-50'
-                    : isDark
-                      ? 'hover:bg-slate-800/30'
-                      : 'hover:bg-slate-50',
-                )}
-              >
-                <td className="p-2" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" onClick={() => onToggleSelect(item.path, true)}>
-                    {selected ? <Icons.CheckSquare className="h-4 w-4 text-blue-500" /> : <Icons.Square className="h-4 w-4 text-slate-400" />}
-                  </button>
-                </td>
-                <td className="p-2">
-                  <div className="flex items-center gap-2 min-w-0 font-semibold">
-                    {item.is_dir ? <Icons.Folder className="h-4 w-4 shrink-0 text-sky-400" /> : <Icons.File className="h-4 w-4 shrink-0 text-slate-400" />}
-                    <span className="truncate">{item.name}</span>
-                  </div>
-                </td>
-                <td className={cn('p-2 font-mono', isDark ? 'text-slate-500' : 'text-slate-400')}>{item.is_dir ? '—' : formatSize(item.size)}</td>
-                <td className={cn('p-2 hidden sm:table-cell', isDark ? 'text-slate-500' : 'text-slate-400')}>{formatDate(item.modified)}</td>
-                <td className="p-2 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                  <FileActionsBar
-                    item={item}
-                    isDark={isDark}
-                    compact
-                    tr={actionTr}
-                    bookmarked={bookmarkPathSet.has(item.path)}
-                    bookmarksUiEnabled={bookmarksUiEnabled}
-                    onEdit={() => onEdit(item)}
-                    onDownload={() => onDownload(item)}
-                    onRename={() => onRename(item)}
-                    onBookmarkToggle={() => onBookmarkToggle(item)}
-                    onCut={() => onCut(item)}
-                    onCopy={() => onCopy(item)}
-                    onDelete={() => onDelete(item)}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <table className="w-full border-collapse text-left text-xs" data-testid="fm-list">
+      <thead className={cn('sticky top-0 z-10 backdrop-blur', isDark ? 'bg-slate-950/90' : 'bg-white/95')}>
+        <tr className={cn('border-b', isDark ? 'border-slate-800' : 'border-slate-200')}>
+          <th className="w-8 py-1.5 pl-3 pr-1">
+            <button type="button" aria-label={tr.selectAllTitle} onClick={fm.handleSelectAll} className="flex items-center">
+              {allSelected ? <Icons.CheckSquare className="h-3.5 w-3.5 text-blue-500" /> : <Icons.Square className="h-3.5 w-3.5 opacity-40" />}
+            </button>
+          </th>
+          <SortHeader label={tr.name} k="name" fm={fm} />
+          <SortHeader label={tr.dateModified} k="modified" fm={fm} className="hidden w-40 md:table-cell" />
+          <SortHeader label={tr.size} k="size" fm={fm} className="w-24 text-right" />
+        </tr>
+      </thead>
+      <tbody>
+        {files.map((item) => {
+          const selected = selectedPaths.includes(item.path);
+          const focused = focusPath === item.path;
+          const drop = ix.dropTarget === item.path;
+          return (
+            <tr
+              key={item.path}
+              {...ix.bind(item)}
+              aria-selected={selected}
+              className={cn(
+                'cursor-default transition-colors',
+                selected
+                  ? isDark
+                    ? 'bg-sky-500/15'
+                    : 'bg-blue-50'
+                  : isDark
+                    ? 'hover:bg-slate-800/40'
+                    : 'hover:bg-slate-50',
+                focused && (isDark ? 'outline outline-1 -outline-offset-1 outline-sky-500/60' : 'outline outline-1 -outline-offset-1 outline-blue-400'),
+                drop && (isDark ? 'bg-sky-500/25 outline outline-2 -outline-offset-2 outline-sky-400' : 'bg-blue-100 outline outline-2 -outline-offset-2 outline-blue-500'),
+                ix.isCut(item.path) && 'opacity-50',
+              )}
+            >
+              <td className="py-1.5 pl-3 pr-1" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  aria-label={item.name}
+                  onClick={() => fm.selectItem(item.path, { ctrl: true })}
+                  className="flex items-center"
+                >
+                  {selected ? <Icons.CheckSquare className="h-3.5 w-3.5 text-blue-500" /> : <Icons.Square className="h-3.5 w-3.5 opacity-30" />}
+                </button>
+              </td>
+              <td className="max-w-0 px-2 py-1.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <FileIcon item={item} className="h-4 w-4" />
+                  <span className={cn('truncate', item.is_dir ? 'font-semibold' : 'font-medium')} title={item.name}>
+                    {item.name}
+                  </span>
+                </div>
+              </td>
+              <td className={cn('hidden px-2 py-1.5 md:table-cell', isDark ? 'text-slate-500' : 'text-slate-500')}>{formatDate(item.modified)}</td>
+              <td className={cn('px-2 py-1.5 text-right font-mono tabular-nums', isDark ? 'text-slate-500' : 'text-slate-500')}>
+                {item.is_dir ? '' : formatSize(item.size)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

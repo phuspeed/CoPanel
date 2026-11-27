@@ -1,5 +1,5 @@
 import type { FileItem } from './types';
-import type { SortKey } from './types';
+import type { PreviewKind, SortKey } from './types';
 
 export function joinPath(parent: string, child: string): string {
   if (!parent || parent === '/') return `/${child}`;
@@ -75,13 +75,120 @@ export function getAuthHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export function fileIconKind(name: string, isDir: boolean): 'folder' | 'archive' | 'image' | 'code' | 'file' {
-  if (isDir) return 'folder';
+export type FileIconKind = 'folder' | 'archive' | 'image' | 'code' | 'video' | 'audio' | 'pdf' | 'text' | 'file';
+
+function extOf(name: string): string {
   const lower = name.toLowerCase();
-  if (lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.gz')) return 'archive';
-  if (/\.(png|jpe?g|gif|webp|svg|ico)$/.test(lower)) return 'image';
-  if (/\.(js|ts|tsx|py|php|json|html|css|sh|yml|yaml|md)$/.test(lower)) return 'code';
+  const i = lower.lastIndexOf('.');
+  return i > 0 ? lower.slice(i + 1) : '';
+}
+
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif']);
+const VIDEO_EXT = new Set(['mp4', 'webm', 'ogv', 'mov', 'm4v']);
+const AUDIO_EXT = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'flac', 'aac', 'opus']);
+const ARCHIVE_EXT = new Set(['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar']);
+const CODE_EXT = new Set([
+  'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'php', 'json', 'html', 'htm', 'css', 'scss', 'sh', 'bash',
+  'yml', 'yaml', 'md', 'go', 'rs', 'java', 'rb', 'pl', 'lua', 'sql', 'xml', 'vue', 'toml', 'c', 'h', 'cpp',
+]);
+const TEXT_EXT = new Set([
+  'txt', 'log', 'conf', 'cfg', 'ini', 'env', 'csv', 'tsv', 'service', 'timer', 'socket', 'properties',
+  'htaccess', 'htpasswd', 'gitignore', 'gitattributes', 'dockerignore', 'editorconfig', 'lock', 'pem', 'crt',
+  'key', 'pub', 'list', 'sources', 'rules', 'repo', 'nginx', 'vhost', 'example', 'sample', 'dist', 'bak',
+]);
+const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'procfile', 'license', 'readme', 'caddyfile', 'vagrantfile', 'crontab', 'hosts', 'authorized_keys', 'known_hosts']);
+
+export function fileIconKind(name: string, isDir: boolean): FileIconKind {
+  if (isDir) return 'folder';
+  const ext = extOf(name);
+  if (ARCHIVE_EXT.has(ext)) return 'archive';
+  if (IMAGE_EXT.has(ext)) return 'image';
+  if (VIDEO_EXT.has(ext)) return 'video';
+  if (AUDIO_EXT.has(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
+  if (CODE_EXT.has(ext)) return 'code';
+  const lower = name.toLowerCase();
+  if (TEXT_EXT.has(ext) || TEXT_NAMES.has(lower) || (lower.startsWith('.') && !lower.slice(1).includes('.'))) return 'text';
   return 'file';
+}
+
+/** Browser-previewable media (opened in the lightbox). */
+export function previewKind(name: string): PreviewKind | null {
+  const ext = extOf(name);
+  if (IMAGE_EXT.has(ext)) return 'image';
+  if (VIDEO_EXT.has(ext)) return 'video';
+  if (AUDIO_EXT.has(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
+  return null;
+}
+
+/** Files opened in the text editor (configs, code, logs, dotfiles, extension-less names). */
+export function isTextLike(name: string): boolean {
+  const lower = name.toLowerCase();
+  const ext = extOf(name);
+  if (CODE_EXT.has(ext) || TEXT_EXT.has(ext)) return true;
+  if (TEXT_NAMES.has(lower)) return true;
+  if (lower.startsWith('.') && !lower.slice(1).includes('.')) return true; // .env, .bashrc
+  return ext === '';
+}
+
+export function isZipName(name: string): boolean {
+  return extOf(name) === 'zip';
+}
+
+/** True for inputs, textareas, selects and contenteditable (keyboard shortcuts stay off). */
+export function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+/** Copy text to the clipboard; falls back to execCommand on plain-HTTP panels. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  const prevFocus = document.activeElement as HTMLElement | null;
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-1000px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  prevFocus?.focus?.({ preventScroll: true });
+  return ok;
+}
+
+export function baseName(p: string): string {
+  const norm = p.replace(/[\\/]+$/, '');
+  const i = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf('\\'));
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+/** True when `child` is `parent` or inside it. */
+export function isSameOrInside(child: string, parent: string): boolean {
+  const c = child.replace(/[\\/]+$/, '') || '/';
+  const p = parent.replace(/[\\/]+$/, '') || '/';
+  if (c === p) return true;
+  return c.startsWith(p === '/' ? '/' : `${p}/`);
+}
+
+export function newId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**

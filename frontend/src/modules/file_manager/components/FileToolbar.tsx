@@ -1,104 +1,81 @@
+import { useEffect, useRef } from 'react';
 import * as Icons from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import type { ViewMode } from '../types';
-import type { FileManagerTranslations } from '../i18n';
+import type { FileManagerState } from '../hooks/useFileManager';
 import FileBreadcrumb from './FileBreadcrumb';
 
 interface Props {
-  isDark: boolean;
-  tr: FileManagerTranslations;
-  currentPath: string;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  viewMode: ViewMode;
-  filterQuery: string;
-  onBack: () => void;
-  onForward: () => void;
-  onUp: () => void;
-  onRefresh: () => void;
-  onNavigate: (path: string) => void;
-  onNavigateTyped?: (input: string) => Promise<boolean>;
-  onViewMode: (mode: ViewMode) => void;
-  onFilterQuery: (q: string) => void;
-  onCreateFile: () => void;
-  onCreateDir: () => void;
-  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  fm: FileManagerState;
+  /** Bumped by Ctrl+L. */
+  editPathSignal: number;
+  /** Bumped by Ctrl+F or "/". */
+  focusFilterSignal: number;
+  onCrumbDragOver: (e: React.DragEvent, path: string) => boolean;
+  onCrumbDrop: (e: React.DragEvent, path: string) => void;
 }
 
-export default function FileToolbar({
-  isDark,
-  tr,
-  currentPath,
-  canGoBack,
-  canGoForward,
-  viewMode,
-  filterQuery,
-  onBack,
-  onForward,
-  onUp,
-  onRefresh,
-  onNavigate,
-  onNavigateTyped,
-  onViewMode,
-  onFilterQuery,
-  onCreateFile,
-  onCreateDir,
-  onUpload,
-}: Props) {
-  const toolBtn = cn(
-    'flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition',
-    isDark ? 'border-slate-700 bg-slate-800/80 text-slate-200 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-  );
-  const iconBtn = cn(
-    'flex h-8 w-8 items-center justify-center rounded-lg border transition',
-    isDark ? 'border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-  );
+/** Address row: history + up, editable breadcrumb path, filter box. */
+export default function FileToolbar({ fm, editPathSignal, focusFilterSignal, onCrumbDragOver, onCrumbDrop }: Props) {
+  const { isDark, tr, currentPath, canGoBack, canGoForward, filterQuery, setFilterQuery } = fm;
+  const filterRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (focusFilterSignal) {
+      filterRef.current?.focus();
+      filterRef.current?.select();
+    }
+  }, [focusFilterSignal]);
 
   return (
-    <div className={cn('shrink-0 border-b px-3 py-2 space-y-2', isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white/90')}>
-      <div className="flex flex-wrap items-center gap-2">
-        <FileBreadcrumb
-          isDark={isDark}
-          tr={tr}
-          currentPath={currentPath}
-          canGoBack={canGoBack}
-          canGoForward={canGoForward}
-          onBack={onBack}
-          onForward={onForward}
-          onUp={onUp}
-          onRefresh={onRefresh}
-          onNavigate={onNavigate}
-          onNavigateTyped={onNavigateTyped}
+    <div
+      className={cn(
+        'flex shrink-0 flex-wrap items-center gap-2 border-b px-2 py-1.5 sm:flex-nowrap',
+        isDark ? 'border-slate-800 bg-slate-900/40' : 'border-slate-200 bg-white/90',
+      )}
+    >
+      <FileBreadcrumb
+        isDark={isDark}
+        tr={tr}
+        currentPath={currentPath}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        onBack={fm.goBack}
+        onForward={fm.goForward}
+        onUp={fm.handleGoUp}
+        onRefresh={fm.refresh}
+        onNavigate={fm.navigateTo}
+        onNavigateTyped={fm.navigateToTyped}
+        editSignal={editPathSignal}
+        onCrumbDragOver={onCrumbDragOver}
+        onCrumbDrop={onCrumbDrop}
+      />
+      <div
+        className={cn(
+          'flex h-8 w-full items-center gap-2 rounded-lg border px-2.5 sm:w-56 sm:shrink-0',
+          isDark ? 'border-slate-700 bg-slate-950/50' : 'border-slate-200 bg-slate-50',
+        )}
+      >
+        <Icons.Search className={cn('h-3.5 w-3.5 shrink-0', isDark ? 'text-slate-500' : 'text-slate-400')} />
+        <input
+          ref={filterRef}
+          data-testid="fm-filter"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              setFilterQuery('');
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          placeholder={tr.searchPlaceholder}
+          className={cn('w-full bg-transparent text-xs outline-none', isDark ? 'text-slate-200 placeholder:text-slate-600' : 'text-slate-800 placeholder:text-slate-400')}
         />
-        <div className="flex items-center gap-1 shrink-0">
-          <button type="button" className={cn(iconBtn, viewMode === 'grid' && 'border-blue-500 text-blue-500')} onClick={() => onViewMode('grid')} title={tr.gridView}>
-            <Icons.LayoutGrid className="h-4 w-4" />
+        {filterQuery && (
+          <button type="button" aria-label={tr.cancel} onClick={() => setFilterQuery('')} className="opacity-60 hover:opacity-100">
+            <Icons.X className="h-3.5 w-3.5" />
           </button>
-          <button type="button" className={cn(iconBtn, viewMode === 'list' && 'border-blue-500 text-blue-500')} onClick={() => onViewMode('list')} title={tr.listView}>
-            <Icons.List className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <div className={cn('flex flex-1 min-w-[140px] items-center gap-2 rounded-lg border px-2.5 h-8', isDark ? 'border-slate-700 bg-slate-950/50' : 'border-slate-200 bg-slate-50')}>
-          <Icons.Search className={cn('h-3.5 w-3.5 shrink-0', isDark ? 'text-slate-500' : 'text-slate-400')} />
-          <input
-            value={filterQuery}
-            onChange={(e) => onFilterQuery(e.target.value)}
-            placeholder={tr.searchPlaceholder}
-            className={cn('w-full bg-transparent text-xs outline-none', isDark ? 'text-slate-200 placeholder:text-slate-600' : 'text-slate-800 placeholder:text-slate-400')}
-          />
-        </div>
-        <button type="button" className={toolBtn} onClick={onCreateFile}>
-          <Icons.FilePlus className="h-3.5 w-3.5" /> {tr.createFile}
-        </button>
-        <button type="button" className={toolBtn} onClick={onCreateDir}>
-          <Icons.FolderPlus className="h-3.5 w-3.5" /> {tr.createDir}
-        </button>
-        <label className={cn(toolBtn, 'cursor-pointer')}>
-          <Icons.Upload className="h-3.5 w-3.5" /> {tr.upload}
-          <input type="file" className="hidden" onChange={onUpload} />
-        </label>
+        )}
       </div>
     </div>
   );

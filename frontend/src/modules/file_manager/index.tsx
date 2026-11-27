@@ -19,7 +19,7 @@ export default function FileManagerDashboard() {
         windowed ? 'p-0' : 'p-3 md:p-4',
       )}
     >
-      <FileManagerShell {...fm} />
+      <FileManagerShell fm={fm} />
     </ModuleViewport>
   );
 }

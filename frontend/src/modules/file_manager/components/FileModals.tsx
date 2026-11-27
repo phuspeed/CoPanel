@@ -67,7 +67,17 @@ export default function FileModals({ fm }: { fm: FileManagerState }) {
 
       <WindowModal open={!!editingFile} onClose={() => setEditingFile(null)} title={`${tr.editing} ${editingFile?.split(/[\\/]/).pop()}`} maxWidth="2xl" className="!max-w-3xl h-[min(80vh,520px)]">
         <div className="flex h-full min-h-[320px] flex-col p-4">
-          <textarea value={fileContent} onChange={(e) => setFileContent(e.target.value)} className={cn(inputClass, 'flex-1 resize-none font-mono')} spellCheck={false} />
+          <textarea
+            data-testid="fm-editor"
+            value={fileContent}
+            onChange={(e) => setFileContent(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                void handleSaveFile();
+              }
+            }}
+            className={cn(inputClass, 'flex-1 resize-none font-mono')} spellCheck={false} />
           <div className="mt-3 flex justify-end gap-2">
             <button type="button" onClick={() => setEditingFile(null)} className={cn('rounded-xl px-3 py-2 text-xs font-bold', isDark ? 'bg-slate-800' : 'bg-slate-100')}>{tr.cancel}</button>
             <button type="button" onClick={() => void handleSaveFile()} className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white">{tr.saveChanges}</button>
