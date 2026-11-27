@@ -104,8 +104,8 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-2 py-3">
-        <section>
+      <div className="flex min-h-0 flex-1 flex-col px-2 py-3">
+        <section className="shrink-0">
           <p className={sectionTitle}>{tr.places}</p>
           <nav className="space-y-0.5">
             {PLACES.map((place) => {
@@ -127,17 +127,7 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
           </nav>
         </section>
 
-        <FileTree
-          isDark={isDark}
-          title={tr.folders}
-          currentPath={currentPath}
-          fsVersion={fsVersion}
-          onNavigate={navigateTo}
-          onTransfer={(paths, dir, mode) => void transferItems(paths, dir, mode)}
-          onUpload={(entries, dir) => void enqueueUploads(entries, dir)}
-        />
-
-        <section>
+        <section className="mt-4 shrink-0" data-testid="fm-bookmarks">
           <div className="mb-1 flex items-center justify-between gap-1 px-2">
             <p className={cn(sectionTitle, 'mb-0 px-0')}>{tr.bookmarks}</p>
             <button
@@ -161,7 +151,7 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
           ) : bookmarks.length === 0 ? (
             <p className={cn('px-2 text-[10px]', isDark ? 'text-slate-600' : 'text-slate-400')}>{tr.bookmarksEmpty}</p>
           ) : (
-            <div className="space-y-0.5">
+            <div className="max-h-36 space-y-0.5 overflow-y-auto">
               {bookmarks.map((b) => (
                 <div key={b.path} className="group flex items-center gap-0.5">
                   <button
@@ -192,6 +182,18 @@ export default function FileSidebar({ fm }: { fm: FileManagerState }) {
             </div>
           )}
         </section>
+
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto" data-testid="fm-tree-scroll">
+          <FileTree
+            isDark={isDark}
+            title={tr.folders}
+            currentPath={currentPath}
+            fsVersion={fsVersion}
+            onNavigate={navigateTo}
+            onTransfer={(paths, dir, mode) => void transferItems(paths, dir, mode)}
+            onUpload={(entries, dir) => void enqueueUploads(entries, dir)}
+          />
+        </div>
       </div>
 
       <div
